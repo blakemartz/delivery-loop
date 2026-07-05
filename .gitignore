@@ -1,0 +1,5 @@
+# macOS
+.DS_Store
+
+# delivery-loop task worktrees (if this repo ever dogfoods itself)
+.worktrees/

@@ -1,0 +1,9 @@
+{
+  "name": "delivery-loop",
+  "description": "Agentic software-delivery loop: turn specs into a dependency-ordered GitHub Issues backlog, then let agents claim, implement, adversarially review, patch, and merge tasks in isolated git worktrees behind a single correctness gate.",
+  "version": "0.1.0",
+  "author": { "name": "Blake Martz" },
+  "homepage": "https://github.com/blakemartz/delivery-loop",
+  "repository": "https://github.com/blakemartz/delivery-loop",
+  "license": "MIT"
+}
