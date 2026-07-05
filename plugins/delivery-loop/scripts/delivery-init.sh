@@ -55,6 +55,95 @@ if ! grep -qxF '.worktrees/' .gitignore 2>/dev/null; then
   echo "==> gitignore: added .worktrees/"
 fi
 
+# --- seed scripts/check.sh from detected tooling -----------------------------
+# The gate is a checked-in, extensible artifact: init writes a best-effort
+# starter from the linters / type-checkers / test frameworks it detects, and
+# tasks extend it as the repo grows. Prefer the repo's own declared commands
+# (package.json scripts) over guessed tool invocations. An undefined gate must
+# FAIL rather than pass green, so a no-tooling seed exits 1 until you define it.
+if [ -f scripts/check.sh ]; then
+  echo "==> scripts/check.sh already exists — leaving it untouched"
+else
+  gate_steps=""
+  add_step() { gate_steps="${gate_steps}$1"$'\n'; }
+
+  # JS / TS — use the repo's own package.json scripts (jq is a prerequisite).
+  if [ -f package.json ]; then
+    pm=npm
+    [ -f pnpm-lock.yaml ] && pm=pnpm
+    [ -f yarn.lock ]      && pm=yarn
+    for s in lint typecheck build test; do
+      if jq -e --arg s "$s" '(.scripts // {})[$s] // empty' package.json >/dev/null 2>&1; then
+        add_step "echo '==> $s'; $pm run $s"
+      fi
+    done
+  fi
+
+  # Python — detect configured tools; run through uv if a uv.lock is present.
+  if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f requirements.txt ]; then
+    py=""; [ -f uv.lock ] && py="uv run "
+    if [ -f ruff.toml ] || [ -f .ruff.toml ] || grep -q 'tool\.ruff' pyproject.toml 2>/dev/null; then
+      add_step "echo '==> ruff';   ${py}ruff check ."
+    fi
+    if [ -f mypy.ini ] || [ -f .mypy.ini ] || grep -q 'tool\.mypy' pyproject.toml 2>/dev/null; then
+      add_step "echo '==> mypy';   ${py}mypy ."
+    fi
+    if [ -f pytest.ini ] || [ -f tox.ini ] || grep -q 'tool\.pytest' pyproject.toml 2>/dev/null || [ -d tests ]; then
+      add_step "echo '==> pytest'; ${py}pytest"
+    fi
+  fi
+
+  # Go / Rust — standard toolchains.
+  if [ -f go.mod ]; then
+    add_step "echo '==> vet';    go vet ./..."
+    add_step "echo '==> build';  go build ./..."
+    add_step "echo '==> tests';  go test ./..."
+  fi
+  if [ -f Cargo.toml ]; then
+    add_step "echo '==> clippy'; cargo clippy -- -D warnings"
+    add_step "echo '==> build';  cargo build"
+    add_step "echo '==> tests';  cargo test"
+  fi
+
+  mkdir -p scripts
+  {
+    cat <<'HDR'
+#!/usr/bin/env bash
+# check.sh — THE verification gate for this repo.
+#
+# The single definition of "is this repo correct": the delivery loop runs this
+# identically for implementers, reviewers, and patchers (it is GATE_CMD in
+# .claude/delivery.conf). Change what "correct" means HERE, nowhere else.
+#
+# Keep it honest as the repo grows: a task that adds a linter, test suite, or
+# build step should extend this file to cover it.
+#
+# Seeded by /delivery-loop:init from detected tooling — review and adjust.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+HDR
+    if [ -z "$gate_steps" ]; then
+      cat <<'EMPTY'
+# init detected no linters, type-checkers, or test frameworks in this repo.
+# An undefined gate must fail rather than pass green — define your checks below
+# (each must exit non-zero on failure), then delete this guard.
+echo "check.sh: no checks defined yet — edit scripts/check.sh (see /delivery-loop:init)." >&2
+exit 1
+EMPTY
+    else
+      printf '%s' "$gate_steps"
+      printf '\necho "==> gate passed"\n'
+    fi
+  } > scripts/check.sh
+  chmod +x scripts/check.sh
+  if [ -z "$gate_steps" ]; then
+    echo "==> wrote scripts/check.sh — NO tooling detected; it fails until you define checks"
+  else
+    echo "==> wrote scripts/check.sh from detected tooling — review it before running the loop"
+  fi
+fi
+
 # --- scaffold .claude/delivery.conf ------------------------------------------
 mkdir -p .claude
 if [ -f .claude/delivery.conf ]; then
@@ -105,7 +194,8 @@ fi
 
 echo
 echo "Done. Next:"
-echo "  1. Edit .claude/delivery.conf — set GATE_CMD to your repo's check command."
+echo "  1. Review scripts/check.sh — init seeded it from detected tooling; make"
+echo "     sure it runs your repo's real checks (GATE_CMD points at it)."
 echo "  2. Recommended repo merge settings (run yourself; outward-facing):"
 echo "       gh repo edit --enable-squash-merge --enable-merge-commit=false \\"
 echo "                    --enable-rebase-merge=false --delete-branch-on-merge"

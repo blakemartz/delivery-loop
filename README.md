@@ -36,12 +36,13 @@ rests on trusting the implementer's machine; merge waits on that same command in
 CI. Because "correct" is one reproducible command and not a human judgment call,
 the loop can run unattended.
 
-> **Where does that command come from?** You set it. Running `/delivery-loop:init`
-> once in a repo scaffolds a config file — `.claude/delivery.conf` — with
-> `GATE_CMD` pre-filled to a default (`bash scripts/check.sh`). You edit that one
-> line to your repo's real check: `pnpm test && pnpm lint`, `uv run pytest`,
-> anything that exits 0 on success. That file is the *only* thing you configure;
-> the rest of the loop is generic.
+> **Where does that command come from?** `/delivery-loop:init` sets it up for you.
+> Run once in a repo, it scans your stack — the linters, type-checkers, and test
+> frameworks you actually use — and **seeds a starter `scripts/check.sh`** that
+> runs them, with `GATE_CMD` (in `.claude/delivery.conf`) pointing at it. You
+> review that script and adjust it; if init finds no tooling, it says so and the
+> gate fails until you define your checks (an empty gate never passes green).
+> From then on it's a checked-in file the loop extends as your repo grows.
 
 **4 — An orchestrator turns the crank.** `delivery-tick` is one step of the loop:
 it reads the board, reconciles anything stale, and takes the next sensible
@@ -96,9 +97,11 @@ Once per repo you want to run the loop in:
 /delivery-loop:init
 ```
 
-That creates the label taxonomy, scaffolds `.claude/delivery.conf`, and
-gitignores `.worktrees/`. Then **edit `.claude/delivery.conf`** — at minimum set
-`GATE_CMD` to your repo's check command.
+That creates the label taxonomy, scaffolds `.claude/delivery.conf`, gitignores
+`.worktrees/`, and **seeds `scripts/check.sh` from your detected tooling**. Then
+**review `scripts/check.sh`** — it's your gate — and adjust it so it runs your
+repo's real checks. (If init found no tooling, the seeded gate fails on purpose
+until you fill it in.)
 
 ### `.claude/delivery.conf` — the whole adapter
 
