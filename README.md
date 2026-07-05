@@ -1,10 +1,54 @@
 # delivery-loop
 
 A self-contained **agentic software-delivery loop** for [Claude Code](https://code.claude.com),
-packaged as a plugin. It turns specs into a dependency-ordered GitHub Issues
-backlog, then lets agents **claim → implement → adversarially review → patch →
-merge** tasks in isolated git worktrees, each gated by a single "is this repo
-correct" command.
+packaged as a plugin. You write specs; it files them as a dependency-ordered
+GitHub Issues backlog, then agents **claim → implement → adversarially review →
+patch → merge** the tasks — each in its own git worktree, all behind a single
+correctness check you define per repo. No server and no database: the state is
+your repo, its Issues, and `gh` + `git` + `jq`.
+
+## How it works
+
+The delivery loop is a way to build software where **agents do the work and
+GitHub holds the state**. The whole model is four ideas.
+
+**1 — Your backlog is GitHub Issues.** You describe what to build in specs (plain
+Markdown). `decompose` reads them and files the work as Issues: *epics* (big
+trackers) split into *tasks* (small, independently shippable units), with
+`Depends-on:` lines recording what has to come first. From then on the backlog
+*is* your Issues — `status:*` labels track where each task stands.
+
+**2 — Each task runs one fixed loop: claim → implement → review → patch → merge.**
+An agent takes the next ready task and **claims** it, so no two agents grab the
+same one. It **implements** the task in its own git worktree — a private,
+throwaway checkout — so many agents can work at once without colliding, then
+opens a PR. A *different* agent **reviews** that PR adversarially from a clean
+checkout, trying to find what's wrong. If it finds something, a bounded **patch**
+cycle fixes it (after 3 rounds it escalates to a human). When the PR is clean, it
+**merges**.
+
+**3 — One command decides "correct," and it's yours.** Everything above hangs on
+a single question: *is the repo correct right now?* You answer it once per repo,
+as one command — your **gate**. It runs your typecheck, tests, linter, whatever
+matters, and exits 0 only if all is well. The implementer must pass it before
+opening a PR; the reviewer re-runs it in a clean checkout, so approval never
+rests on trusting the implementer's machine; merge waits on that same command in
+CI. Because "correct" is one reproducible command and not a human judgment call,
+the loop can run unattended.
+
+> **Where does that command come from?** You set it. Running `/delivery-loop:init`
+> once in a repo scaffolds a config file — `.claude/delivery.conf` — with
+> `GATE_CMD` pre-filled to a default (`bash scripts/check.sh`). You edit that one
+> line to your repo's real check: `pnpm test && pnpm lint`, `uv run pytest`,
+> anything that exits 0 on success. That file is the *only* thing you configure;
+> the rest of the loop is generic.
+
+**4 — An orchestrator turns the crank.** `delivery-tick` is one step of the loop:
+it reads the board, reconciles anything stale, and takes the next sensible
+action. Run it under `/loop` and it keeps going on its own — serially at first,
+then `--parallel N` to run several tasks at once, and `--auto-merge` to merge
+approved, green PRs for you. You start supervised and loosen the reins as you
+come to trust it.
 
 ## What you get
 
@@ -24,8 +68,7 @@ Nine skills, namespaced `/delivery-loop:*`:
 
 The queue, claim arbitration (a comment-ordered Lamport lock), and worktree
 management are shell scripts under `plugins/delivery-loop/scripts/`. The skills
-call them; they never re-derive the mechanics. Everything runs on `gh` + `git` +
-`jq` — no server, no database.
+call them; they never re-derive the mechanics.
 
 ## Prerequisites
 
@@ -91,7 +134,9 @@ gh repo edit --enable-squash-merge --enable-merge-commit=false \
 Start **serial and supervised**; graduate to `--parallel` / `--auto-merge` once
 free runs are boringly reliable.
 
-## How it works
+## Under the hood
+
+The mechanics behind the four ideas above:
 
 - **State lives in GitHub, not a database.** Issue labels are a derived cache of
   ground truth (issue/PR state); `task-queue.sh --fix` reconciles them each tick.
@@ -100,7 +145,8 @@ free runs are boringly reliable.
   (`scripts/lib/*.jq`, unit-tested in `scripts/tests/`).
 - **Every task runs in its own worktree** under `.worktrees/`, so parallel agents
   never collide in the working tree.
-- **The gate is the only definition of "correct."** The loop never bypasses it.
+- **The gate is never bypassed.** No stage may skip the `GATE_CMD` check — no
+  `--no-verify`, no merging red CI. It is the loop's only definition of "correct."
 
 See `plugins/delivery-loop/docs/delivery_runbook.md` for operating modes and the
 free-run playbook, and `plugins/delivery-loop/docs/agentic_delivery_spec.md` for
@@ -113,7 +159,7 @@ delivery-loop/
 ├── .claude-plugin/marketplace.json      # this repo as a marketplace
 └── plugins/delivery-loop/
     ├── .claude-plugin/plugin.json
-    ├── skills/                          # the 7 skills
+    ├── skills/                          # the 9 skills
     ├── scripts/                         # engine: task-queue, claim-task, task-worktree, delivery-init, lib/, tests/
     └── docs/                            # design spec + operator runbook
 ```
