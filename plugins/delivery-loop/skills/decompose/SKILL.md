@@ -22,6 +22,7 @@ You are the **decomposer** role from the delivery spec (`${CLAUDE_PLUGIN_ROOT}/d
 - Epics ≈ major spec sections or modules. Tasks are children of exactly one epic.
 - Dependency edges follow the natural build order: scaffold → models → repositories → services → endpoints → wiring/integration (adapt to the stack).
 - Every task gets: title, exactly one module, size, command-shaped acceptance criteria, and its `Depends-on:` edges.
+- **A task that introduces a tool, test suite, or build step must include extending the gate (`GATE_CMD` / `scripts/check.sh`) to cover it as one of its acceptance criteria.** This is how the gate self-maintains — it grows with the repo instead of going stale.
 
 ## Hard rules (violating any of these means your backlog is wrong)
 

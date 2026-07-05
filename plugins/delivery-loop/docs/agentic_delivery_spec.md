@@ -62,6 +62,14 @@ The engine and skills read it; nothing else needs editing to adopt the loop:
 | `MODULES` | (empty) | Allowed `module:` labels — the concurrency unit (§8). |
 | `NOTIFY_APPROVE_CMD` / `NOTIFY_ESCALATE_CMD` | (empty) | Optional hooks on approval / escalation. |
 
+`delivery-init.sh` does more than scaffold the config: it scans the repo for
+linters, type-checkers, and test frameworks and seeds a starter `scripts/check.sh`
+(the file `GATE_CMD` points at by default) from what it finds — preferring the
+repo's own declared commands. If it finds no tooling, the seeded gate *fails*
+until a human defines the checks (an undefined gate must never report green).
+The `init` skill surfaces the seed for human review and suggests a starter
+toolset when none is present.
+
 ## 3. Roles
 
 ### 3.1 Orchestrator
@@ -279,6 +287,7 @@ Many codebases have a few **central registration files** that every new module t
 Three enforcement points, one definition:
 
 * **`GATE_CMD`** (from `.claude/delivery.conf`; default `bash scripts/check.sh`) is the gate — one command that exits 0 iff the repo is correct, and the single definition of "correct." The implementer, patcher, and reviewer all run it. Keep it fast enough to run on every change and honest enough that green means mergeable.
+* **The gate is a checked-in, self-maintaining artifact.** `init` seeds `scripts/check.sh` from the repo's detected tooling; from then on a task that introduces a tool, test suite, or build step extends it (decomposer Hard-adjacent rule; implementer step 5). So "correct" grows with the repo rather than freezing at bootstrap — no human hand-maintains the gate.
 * Git hooks (optional, the consumer repo's own): hygiene/format at pre-commit on changed files; the gate at pre-push. Never bypassed — `--no-verify` is banned.
 * CI runs the same gate on every PR. **A PR without a green check is unreviewable** — reviewers reject on sight.
 
