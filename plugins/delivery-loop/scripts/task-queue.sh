@@ -6,8 +6,10 @@
 # it is not size:L (L = "split me", never claimable), and it is not
 # `needs-human` (an escalated task awaits a human — never auto-claimable).
 #
-# Ordering: unblocks the most open tasks first, then size:S before size:M,
-# then oldest first.
+# Ordering: tasks whose epic is already in progress (>=1 child task closed)
+# first, then unblocks the most open tasks, then size:S before size:M, then
+# oldest first. The started-epic bias finishes partway-done epics before opening
+# new ones, so stragglers aren't stranded when fresh epics arrive.
 #
 # --fix additionally reconciles derived state (labels are a cache, ground
 # truth is issue/PR state — see docs/agentic_delivery_spec.md §5.1):
@@ -40,10 +42,11 @@ annotated=$(jq -c --argjson states "$all_states" --argjson prs "$open_prs" '
                    | capture("Depends-on:(?<line>[^\n]*)"; "g").line
                    | scan("#[0-9]+") | ltrimstr("#") | tonumber ] | unique)
       | .depsClosed = ([.deps[] as $d | ($st[$d|tostring] // "OPEN") == "CLOSED"] | all)
+      | .epic = ([ (.body // "") | scan("[Ee]pic #([0-9]+)") | .[0] | tonumber ] | first // null)
       | .number as $n
       | .hasOpenPr = ([$prs[] | select((.body + " " + .title) | test("#\($n)\\b"))] | length > 0)
       | .idleSeconds = (now - (.updatedAt | fromdateiso8601))
-      | {number, title, labelNames, deps, depsClosed, hasOpenPr, idleSeconds,
+      | {number, title, labelNames, deps, depsClosed, epic, hasOpenPr, idleSeconds,
          createdAt, assignees: [.assignees[].login]}
     )' <<<"$open_tasks")
 
@@ -123,13 +126,36 @@ if [ "$FIX" = 1 ]; then
                      | capture("Depends-on:(?<line>[^\n]*)"; "g").line
                      | scan("#[0-9]+") | ltrimstr("#") | tonumber ] | unique)
         | .depsClosed = ([.deps[] as $d | ($st[$d|tostring] // "OPEN") == "CLOSED"] | all)
-        | {number, title, labelNames, deps, depsClosed, createdAt,
+        | .epic = ([ (.body // "") | scan("[Ee]pic #([0-9]+)") | .[0] | tonumber ] | first // null)
+        | {number, title, labelNames, deps, depsClosed, epic, createdAt,
            assignees: [.assignees[].login]}
       )' <<<"$open_tasks")
 fi
 
+# Epics that are "in progress" — at least one child task is already CLOSED.
+# Children are the union of the epic checklist's "#N" refs and every task whose
+# body backlinks it via "epic #N". The `[Ee]pic #N` match also catches the older
+# "Part of epic #N" phrasing (that string contains "epic #N"), so both decompose
+# conventions count — deliberately broader than the auto-close reconciler's
+# `Part of epic`-only arm, so a started epic is detected whichever convention its
+# children use. A task's epic inherits this flag; the ready set then finishes
+# started epics before opening new ones. Computed after --fix so it reflects
+# just-reconciled closures.
+all_issues=$(gh issue list --state all --limit 1000 --json number,state,body,labels)
+started_epics=$(jq -c '
+  (map(.labelNames = [.labels[].name])) as $all
+  | ($all | map({key: (.number|tostring), value: .state}) | from_entries) as $st
+  | [ $all[]
+      | select(.labelNames | index("epic"))
+      | .number as $e
+      | ([ (.body // "") | scan("(?im)^[ \t]*[-*] \\[[ xX]\\][ \t]*#([0-9]+)") | .[0] | tonumber ]) as $checklist
+      | ([ $all[] | select((.body // "") | test("[Ee]pic #\($e)([^0-9]|$)")) | .number ]) as $tasks
+      | (($checklist + $tasks) | unique) as $children
+      | select([ $children[] | ($st[(.|tostring)] // "OPEN") == "CLOSED" ] | any)
+      | $e ]' <<<"$all_issues")
+
 # The ready set, best first.
-jq -c '
+jq -c --argjson started "$started_epics" '
   . as $all
   | [ .[]
       | select(.assignees == []
@@ -139,9 +165,12 @@ jq -c '
       | .number as $n
       | .unblocks = ([$all[] | select(.deps | index($n))] | length)
       | .sizeRank = (if (.labelNames | index("size:S")) then 0 else 1 end)
+      | (.epic) as $ep
+      | .epicStartedRank = (if ($ep != null) and (($started | index($ep)) != null) then 0 else 1 end)
     ]
-  | sort_by([-.unblocks, .sizeRank, .createdAt])
+  | sort_by([.epicStartedRank, -.unblocks, .sizeRank, .createdAt])
   | .[]
   | {number, title, unblocks, size: (if .sizeRank == 0 then "S" else "M" end),
+     started: (.epicStartedRank == 0), epic: .epic,
      module: ([.labelNames[] | select(startswith("module:"))] | first // "none")}
 ' <<<"$annotated"

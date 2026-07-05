@@ -10,7 +10,7 @@ This repo is **both the plugin and its own marketplace**.
 
 ## What you get
 
-Seven skills, namespaced `/delivery-loop:*`:
+Eight skills, namespaced `/delivery-loop:*`:
 
 | Skill | Role |
 |---|---|
@@ -19,6 +19,7 @@ Seven skills, namespaced `/delivery-loop:*`:
 | `next-task` | Claim the next ready task, implement it in a worktree, pass the gate, open a PR. |
 | `review-task` | Independently, adversarially review a PR against its task's acceptance criteria — in a clean checkout. |
 | `patch-task` | Answer review findings / failing CI on a PR (bounded to 3 iterations, then escalate). |
+| `deliver-task` | Drive one issue end-to-end — `next-task` → fresh `review-task` → bounded `patch-task` loop → hand to a human. The single-task path. |
 | `delivery-tick` | One orchestrator tick — reconcile the board and take the next action (serial, or `--parallel N`, with opt-in `--auto-merge`). |
 | `task-status` | Render the board; `--reclaim` reconciles labels and frees stale claims. |
 

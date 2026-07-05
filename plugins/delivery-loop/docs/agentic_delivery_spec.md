@@ -197,6 +197,8 @@ claim → worktree → implement to acceptance criteria (consulting the module's
 
 The review/patch loop: reviewer executes criteria in a clean checkout → approve (`status:approved`, report "ready for human merge") or request changes (`status:changes-requested`) → patcher fixes and pushes → repeat, at most 3 times → `needs-human`.
 
+The `deliver-task` skill runs this whole implement → review → patch sequence for a single issue in one invocation — the Level-0 counterpart to the loop. The reviewer is always spawned as a fresh agent, so review independence (§3.4) holds by construction; the loop (`delivery-tick`) instead spreads the same roles across ticks so it stays crash-recoverable and replans from GitHub each tick.
+
 Human merge (or auto-merge) closes the issue; the next tick's `--fix` promotes any dependents whose last dependency just closed.
 
 ## 7. Queue Mechanics (deterministic scripts)

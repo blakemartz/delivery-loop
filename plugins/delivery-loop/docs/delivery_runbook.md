@@ -64,6 +64,7 @@ backlog — each level is the pilot for the next (pilot-before-scaling).
 |---|---|
 | See the board | `/delivery-loop:task-status` (add `--reclaim` to also reconcile labels / free stale claims) |
 | Implement one task | `/delivery-loop:next-task <n>` |
+| Deliver one task end-to-end | `/delivery-loop:deliver-task <n>` — implement → fresh review → bounded patch loop → hand to a human |
 | Review a PR | `/delivery-loop:review-task <pr>` — always a **fresh session/agent**, never the one that implemented |
 | Answer review findings | `/delivery-loop:patch-task <pr>` |
 | Grow the backlog | `/delivery-loop:decompose <scope>` → read the table → `--create` |
