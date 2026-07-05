@@ -6,8 +6,6 @@ backlog, then lets agents **claim → implement → adversarially review → pat
 merge** tasks in isolated git worktrees, each gated by a single "is this repo
 correct" command.
 
-This repo is **both the plugin and its own marketplace**.
-
 ## What you get
 
 Nine skills, namespaced `/delivery-loop:*`:
