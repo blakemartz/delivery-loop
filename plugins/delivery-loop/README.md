@@ -3,8 +3,8 @@
 The plugin implementation. See the [repo README](../../README.md) for install,
 configuration, and the full walkthrough.
 
-- `skills/` — the eight `/delivery-loop:*` skills (init, decompose, next-task,
-  review-task, patch-task, deliver-task, delivery-tick, task-status).
+- `skills/` — the nine `/delivery-loop:*` skills (init, author-spec, decompose,
+  next-task, review-task, patch-task, deliver-task, delivery-tick, task-status).
 - `scripts/` — the engine the skills drive:
   - `task-queue.sh` — compute the ready set; `--fix` reconciles labels, reaps
     stale claims, and closes delivered epics.

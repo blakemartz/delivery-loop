@@ -14,17 +14,21 @@ runbook writes them that way.
 
 ## 1. What the human owns (and nothing else)
 
-The system is designed so exactly four things require a person:
+The system is designed so exactly five things require a person:
 
-1. **Approving backlogs.** `/delivery-loop:decompose` is dry-run by default;
+1. **Pinning and nodding on specs.** `/delivery-loop:author-spec` presents design
+   forks as explicit decision sets and the finished draft for a nod before any PR
+   exists (spec §3.7); normative text is never written over an unpinned fork.
+2. **Approving backlogs.** `/delivery-loop:decompose` is dry-run by default;
    issues are only created after you approve the printed table (`--create`).
-2. **Merging.** Every PR (unless you opt into `--auto-merge`, §6). Agents stop at
-   `status:approved`; your merge queue is `gh pr list --label agent-authored`
-   filtered to approved issues, or the "approved, awaiting human merge" bucket of
+3. **Merging.** Every PR — unless you opt into `--auto-merge` (§6) or grant an
+   equivalent explicit standing authorization. Agents stop at `status:approved`;
+   your merge queue is `gh pr list --label agent-authored` filtered to approved
+   issues, or the "approved, awaiting human merge" bucket of
    `/delivery-loop:task-status`.
-3. **Triaging `needs-human`.** Patch budget exhausted, blocked implementers,
+4. **Triaging `needs-human`.** Patch budget exhausted, blocked implementers,
    reviewer/patcher deadlocks. The loop *never* acts on these; they wait for you.
-4. **Deciding to free-run, and for how long.** The loop has no opinion about
+5. **Deciding to free-run, and for how long.** The loop has no opinion about
    whether it should be running.
 
 Everything else — claiming, implementing, gating, reviewing, patching, label
@@ -67,6 +71,7 @@ backlog — each level is the pilot for the next (pilot-before-scaling).
 | Deliver one task end-to-end | `/delivery-loop:deliver-task <n>` — implement → fresh review → bounded patch loop → hand to a human |
 | Review a PR | `/delivery-loop:review-task <pr>` — always a **fresh session/agent**, never the one that implemented |
 | Answer review findings | `/delivery-loop:patch-task <pr>` |
+| Author a spec for a subsystem | `/delivery-loop:author-spec <subsystem>` — pin → ground → draft → docs-review → merge → hand to decompose |
 | Grow the backlog | `/delivery-loop:decompose <scope>` → read the table → `--create` |
 
 ### Level 1 — supervised loop (default working mode)

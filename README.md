@@ -10,11 +10,12 @@ This repo is **both the plugin and its own marketplace**.
 
 ## What you get
 
-Eight skills, namespaced `/delivery-loop:*`:
+Nine skills, namespaced `/delivery-loop:*`:
 
 | Skill | Role |
 |---|---|
 | `init` | One-time per-repo bootstrap: create labels, scaffold `.claude/delivery.conf`, gitignore `.worktrees/`. |
+| `author-spec` | Turn a subsystem into a merged, decompose-ready sub-spec — pin → ground → draft → adversarial docs-review → hand to `decompose`. Upstream of the backlog. |
 | `decompose` | Specs → a dependency-ordered backlog of epic/task Issues (dry-run by default; `--create` after approval). |
 | `next-task` | Claim the next ready task, implement it in a worktree, pass the gate, open a PR. |
 | `review-task` | Independently, adversarially review a PR against its task's acceptance criteria — in a clean checkout. |

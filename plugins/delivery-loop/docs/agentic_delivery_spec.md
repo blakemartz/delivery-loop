@@ -72,7 +72,7 @@ The orchestrator never implements, reviews, or merges. It dispatches.
 
 ### 3.2 Decomposer
 
-Reads the spec sources (`SPEC_SOURCES`) and the conventions (`STYLEGUIDES_DIR`), and proposes epics and tasks. Runs dry by default; creates issues only after a human approves the proposed backlog.
+Reads the spec sources (`SPEC_SOURCES`) and the conventions (`STYLEGUIDES_DIR`), and proposes epics and tasks. Runs dry by default; creates issues only after a human approves the proposed backlog. For subsystems covered by a focused sub-spec, the sub-spec's decompose-ready cutline is the primary source (authored upstream by the spec author, §3.7) — translate it, don't re-derive it.
 
 ### 3.3 Implementer
 
@@ -88,7 +88,11 @@ Responds to review findings or failing CI on an existing PR. Usually the impleme
 
 ### 3.6 Human
 
-Approves proposed backlogs, merges every PR (or opts into auto-merge, §8.2), breaks ties, handles `needs-human` escalations, and may claim any task off the same queue on equal footing with agents.
+Approves proposed backlogs, pins spec-level design decisions and nods on spec drafts before they become PRs, merges every PR (or opts into auto-merge, §8.2), breaks ties, handles `needs-human` escalations, and may claim any task off the same queue on equal footing with agents.
+
+### 3.7 Spec author
+
+Upstream of the decomposer: turns a subsystem into a merged, decompose-ready sub-spec (`/delivery-loop:author-spec`). Collects operator pins before drafting, grounds every claim against the repo and primary sources, drafts to a house template, and lands the spec through a fresh-agent adversarial **docs review** (grounding, consistency, and buildability instead of executable criteria; verdict as a single GitHub review comment — the single-account form of record, §13.2 and runbook §7). Docs-review fix rounds resume the *same* reviewer — its grounding context is the asset — a deliberate deviation from §3.4's fresh-reviewer rule, scoped to docs reviews only. Two human gates: the draft nod before any PR, and the `/decompose` backlog approval after merge. The spec PR's merge follows the same authority model as every other PR (§3.6, §8.2): human by default, agent only under the operator's explicit standing authorization. The spec author never implements tasks — it hands the merged cutline to the decomposer and stops. Sequencing is deliberate: decomposition always runs against the **merged** spec, because review rounds change cutlines.
 
 ## 4. Task Model
 
