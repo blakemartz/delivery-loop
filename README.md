@@ -7,6 +7,34 @@ patch → merge** the tasks — each in its own git worktree, all behind a singl
 correctness check you define per repo. No server and no database: the state is
 your repo, its Issues, and `gh` + `git` + `jq`.
 
+## Two ways to run it
+
+Once a repo is set up, there's a dial between "supervised" and "let it rip."
+
+**Stay in the loop.** Steer with `author-spec` and `decompose` — you shape the
+specs and approve the backlog — then run the orchestrator with **auto-merge off**:
+
+```
+/loop /delivery-loop:delivery-tick
+```
+
+Agents implement, review, and patch on their own, but **you are the merge gate**:
+every PR waits for you before it lands. The machine writes the code; you decide
+what ships.
+
+**Let it rip.** When you trust the loop, turn on parallelism and auto-merge:
+
+```
+/loop /delivery-loop:delivery-tick --parallel 3 --auto-merge
+```
+
+Now approved, green PRs merge themselves and several tasks run at once. Your only
+job is keeping the hopper full — a well-shaped backlog and a gate you trust. Feed
+it well and you've got a code factory that'll have you tokenmaxxing in no time.
+
+(The terms above — `decompose`, `delivery-tick`, the gate — are all explained
+next.)
+
 ## How it works
 
 The delivery loop is a way to build software where **agents do the work and
