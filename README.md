@@ -9,34 +9,33 @@ your repo, its Issues, and `gh` + `git` + `jq`.
 
 ## Two ways to run it
 
-Once a repo is set up, you steer the system the same way in both modes:
-**`author-spec` and `decompose` shape the specs and approve the backlog.** That's
-the wheel. What changes between the two is whether a human gates the merge.
+Both modes run the same loop — agents claim, implement, review, and patch on
+their own. They differ in **exactly one thing: who gates the merge.**
 
-> **A note on models.** The Issues you author *are* the build prompts the loop
-> agents run from — so spend your strongest model where it compounds: authoring
-> specs and decomposing the backlog. Once the tasks are concrete, the loop itself
-> (implement / review / patch) runs fine on cheaper, faster models.
-
-**a) Human in the loop.** Run the orchestrator with **auto-merge off**:
+**a) Human in the loop.** Auto-merge stays off, so **every PR waits for your
+approval before it lands.** The machine writes the code; you decide what ships.
 
 ```
 /loop /delivery-loop:delivery-tick
 ```
 
-Agents implement, review, and patch on their own, but **you are the merge gate**:
-every PR waits for you before it lands. The machine writes the code; you decide
-what ships.
-
-**b) Let it rip.** When you trust the loop, turn on parallelism and auto-merge:
+**b) Let it rip.** Turn on auto-merge (and parallelism), and approved, green PRs
+merge themselves while several tasks run at once. Your only job is keeping it fed
+with tasks in GitHub Issues — feed it well and you've got a code factory that'll
+have you tokenmaxxing in no time.
 
 ```
 /loop /delivery-loop:delivery-tick --parallel 3 --auto-merge
 ```
 
-Now approved, green PRs merge themselves and several tasks run at once. Your only
-job is keeping it fed with tasks in GitHub Issues. Feed it well and you've got a
-code factory that'll have you tokenmaxxing in no time.
+Either way, you steer it the same way: **`author-spec` and `decompose` shape the
+specs and approve the backlog.** That's the wheel — in both modes the loop only
+ever builds what the backlog tells it to.
+
+> **A note on models.** The Issues you author *are* the build prompts the loop
+> agents run from — so spend your strongest model where it compounds: authoring
+> specs and decomposing the backlog. Once the tasks are concrete, the loop itself
+> (implement / review / patch) runs fine on cheaper, faster models.
 
 ## How it works
 
