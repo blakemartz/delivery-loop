@@ -9,10 +9,16 @@ your repo, its Issues, and `gh` + `git` + `jq`.
 
 ## Two ways to run it
 
-Once a repo is set up, there's a dial between "supervised" and "let it rip."
+Once a repo is set up, you steer the system the same way in both modes:
+**`author-spec` and `decompose` shape the specs and approve the backlog.** That's
+the wheel. What changes between the two is whether a human gates the merge.
 
-**a) Stay in the loop.** Steer with `author-spec` and `decompose` — you shape the
-specs and approve the backlog — then run the orchestrator with **auto-merge off**:
+> **A note on models.** The Issues you author *are* the build prompts the loop
+> agents run from — so spend your strongest model where it compounds: authoring
+> specs and decomposing the backlog. Once the tasks are concrete, the loop itself
+> (implement / review / patch) runs fine on cheaper, faster models.
+
+**a) Human in the loop.** Run the orchestrator with **auto-merge off**:
 
 ```
 /loop /delivery-loop:delivery-tick
