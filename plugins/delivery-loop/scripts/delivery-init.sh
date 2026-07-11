@@ -199,8 +199,9 @@ EOF
 fi
 
 # --- GitHub: a connected repo is required from here --------------------------
-repo_slug="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
-if [ -z "$repo_slug" ]; then
+# "No remote" is decided from local git state (can't flake); once a remote
+# exists, a gh failure is surfaced as a gh failure — never misread as "no repo".
+if [ -z "$(git remote)" ]; then
   cat >&2 <<EOF
 
 ==> Local scaffolding is done, but no GitHub repo is connected — the loop's
@@ -212,15 +213,26 @@ if [ -z "$repo_slug" ]; then
 EOF
   exit 2
 fi
-echo "==> repo: $repo_slug"
-
-issues_enabled="$(gh repo view --json hasIssuesEnabled --jq .hasIssuesEnabled 2>/dev/null || echo true)"
-if [ "$issues_enabled" != "true" ]; then
-  echo "WARNING: Issues are DISABLED on $repo_slug (common on forks) — the loop cannot file or claim tasks until you run: gh repo edit --enable-issues" >&2
+if ! repo_json="$(gh repo view --json nameWithOwner,hasIssuesEnabled)"; then
+  echo "ERROR: a git remote exists but gh could not resolve the GitHub repo (see error above)." >&2
+  echo "       Check auth/network (gh auth status); on a fork, pick the repo: gh repo set-default" >&2
+  exit 1
 fi
+repo_slug="$(jq -r .nameWithOwner <<<"$repo_json")"
+issues_enabled="$(jq -r .hasIssuesEnabled <<<"$repo_json")"
+echo "==> repo: $repo_slug"
+case "$issues_enabled" in
+  true)  : ;;
+  false) echo "WARNING: Issues are DISABLED on $repo_slug (common on forks) — the loop cannot file or claim tasks until you run: gh repo edit --enable-issues" >&2 ;;
+  *)     echo "WARNING: could not verify Issues are enabled on $repo_slug — check manually; enable with: gh repo edit --enable-issues" >&2 ;;
+esac
 
 # --- labels (idempotent via --force) ----------------------------------------
-label() { gh label create "$1" --color "$2" --description "$3" --force >/dev/null && echo "  label: $1"; }
+label() {
+  gh label create "$1" --color "$2" --description "$3" --force >/dev/null \
+    || { echo "ERROR: creating label '$1' failed (see above) — the label set is incomplete; fix the cause and re-run (idempotent)." >&2; exit 1; }
+  echo "  label: $1"
+}
 
 echo "==> labels: type / status / claim / authorship / size"
 label "task" "1D76DB" "A unit of claimable work"
@@ -241,14 +253,16 @@ label "size:L" "F9D0C4" "Too big to claim - decompose further"
 
 # --- module labels: built-ins + MODULES from conf + CLI args -----------------
 echo "==> labels: module:*"
+set -f  # $MODULES splits on words; don't let a stray glob match repo files
 for m in infra docs $MODULES "$@"; do
   [ -n "$m" ] && label "module:$m" "5319E7" "Owning module: $m"
 done
+set +f
 
 echo
 echo "Done. Next:"
 if [ "$issues_enabled" != "true" ]; then
-  echo "  0. Issues are DISABLED on $repo_slug — enable them or the loop is inert:"
+  echo "  0. Ensure Issues are enabled on $repo_slug (the loop is inert without them):"
   echo "       gh repo edit --enable-issues"
 fi
 echo "  1. Review scripts/check.sh — init seeded it from detected tooling; make"
