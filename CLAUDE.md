@@ -1,9 +1,10 @@
 # CLAUDE.md
 
 Guidance for Claude Code working **on this repository**. This repo *is* the
-delivery-loop plugin — you are editing a shareable package, not running the loop.
-For how the loop works and how a consumer uses it, read `README.md`; don't
-duplicate it here.
+delivery-loop plugin — you are editing a shareable package. It also **dogfoods
+the loop on itself** (see "Dogfooding"), so you may additionally be *running*
+the loop here. For how the loop works and how a consumer uses it, read
+`README.md`; don't duplicate it here.
 
 ## What this is
 
@@ -77,28 +78,46 @@ variables (for CI). Keys: `GATE_CMD`, `BASE_BRANCH`, `WORKTREE_SETUP_CMD`,
 3. `README.md` — the config table.
 4. Any skill that reads it — reference the key, never a hardcoded value.
 
-## Verify a change (this repo's de-facto gate)
+## Verify a change (the gate)
 
-This repo does **not** run the loop on itself (no `.claude/delivery.conf`, no
-Issues backlog, no `scripts/check.sh`). It's maintained by hand. Before any
-commit, run the checks that stand in for the gate:
+Before any commit, run the gate:
 
 ```bash
-# 1. every script parses
-for f in $(find plugins -name '*.sh'); do bash -n "$f"; done
-# 2. claim-logic unit tests pass
-bash plugins/delivery-loop/scripts/tests/claim-winner-test.sh
-bash plugins/delivery-loop/scripts/tests/orphan-claims-test.sh
-# 3. manifests are valid
-claude plugin validate ./plugins/delivery-loop
-# 4. no consumer leaked in
-grep -ri lineage plugins/ ; echo "(empty = good)"
+bash scripts/check.sh
 ```
+
+It encodes this package's invariants: every script parses (`bash -n`), the
+claim-logic unit tests pass, the plugin manifest validates, **both manifests
+agree on the version**, and `grep -ri lineage plugins/` stays empty. A change
+that adds a new class of check belongs **in** `scripts/check.sh`, not in prose
+here — the gate is the single definition of "correct" (it is `GATE_CMD` in
+`.claude/delivery.conf`).
 
 To smoke-test an install without touching your real config, point Claude Code at
 a throwaway config dir: `CLAUDE_CONFIG_DIR=$(mktemp -d) claude plugin marketplace
 add ./ && … install …` (the CLI rejects bare `.` — use `./`). Never mutate
 `~/.claude` to test.
+
+## Dogfooding
+
+This repo runs the delivery loop **on itself** (since v0.1.4): the GitHub repo
+carries the label taxonomy, `.claude/delivery.conf` is checked in, and the gate
+is `scripts/check.sh`. Two things to keep straight:
+
+- **What ships vs. what steers.** Only `plugins/delivery-loop/**` is the
+  shippable package (version bump required — see Release protocol). The
+  repo-root dogfood artifacts — `.claude/delivery.conf`, `scripts/check.sh`,
+  `styleguides/`, root `docs/` specs — steer the loop here and are **not**
+  shipped; changing only them needs no version bump.
+- **Sessions run the installed copy** (from the `delivery-loop` marketplace),
+  not this working tree. After merging a plugin change, `claude plugin update
+  delivery-loop` to dogfood it; a task's acceptance criteria can only rely on
+  loop behavior that is already installed.
+
+Modules: `engine` (`plugins/delivery-loop/scripts/**`), `skills`
+(`plugins/delivery-loop/skills/**`), plus the built-in `infra` and `docs`.
+A task that touches shipped plugin content must include the version bump (both
+manifests) in its acceptance criteria.
 
 ## Release protocol
 
