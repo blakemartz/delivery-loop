@@ -83,11 +83,12 @@ come to trust it.
 
 ## What you get
 
-Nine skills, namespaced `/delivery-loop:*`:
+Ten skills, namespaced `/delivery-loop:*`:
 
 | Skill | Role |
 |---|---|
-| `init` | One-time per-repo bootstrap: create labels, scaffold `.claude/delivery.conf`, gitignore `.worktrees/`. |
+| `init` | One-time per-repo bootstrap: create/connect the GitHub repo if needed, create labels, scaffold `.claude/delivery.conf`, seed the gate + styleguides stub, gitignore `.worktrees/`. |
+| `author-styleguides` | Draft the repo's styleguides — the conventions agents implement and review against — from your stack and existing code. You ratify before anything lands; re-runnable as stacks grow. |
 | `author-spec` | Turn a subsystem into a merged, decompose-ready sub-spec — pin → ground → draft → adversarial docs-review → hand to `decompose`. Upstream of the backlog. |
 | `decompose` | Specs → a dependency-ordered backlog of epic/task Issues (dry-run by default; `--create` after approval). |
 | `next-task` | Claim the next ready task, implement it in a worktree, pass the gate, open a PR. |
@@ -104,7 +105,8 @@ call them; they never re-derive the mechanics.
 ## Prerequisites
 
 - `gh` (authenticated, repo scope), `git`, `jq`, `bash`.
-- A GitHub repo with Issues enabled.
+- A GitHub repo with Issues enabled — don't have one yet? `init` checks both and
+  walks you through creating or connecting one.
 
 ## Install
 
@@ -128,10 +130,22 @@ Once per repo you want to run the loop in:
 ```
 
 That creates the label taxonomy, scaffolds `.claude/delivery.conf`, gitignores
-`.worktrees/`, and **seeds `scripts/check.sh` from your detected tooling**. Then
-**review `scripts/check.sh`** — it's your gate — and adjust it so it runs your
-repo's real checks. (If init found no tooling, the seeded gate fails on purpose
-until you fill it in.)
+`.worktrees/`, and **seeds `scripts/check.sh` from your detected tooling**. (No
+GitHub remote yet? It scaffolds everything local, then tells you exactly how to
+create or connect one and finishes on re-run.) Then **review `scripts/check.sh`**
+— it's your gate — and adjust it so it runs your repo's real checks. (If init
+found no tooling, the seeded gate fails on purpose until you fill it in.)
+
+The loop hangs three per-repo artifacts, and init only establishes the first:
+
+1. **The gate** — what is *correct* (seeded above; you review it).
+2. **The styleguides** — what is *good*: `/delivery-loop:author-styleguides`
+   drafts coding conventions from your stack and existing code into
+   `STYLEGUIDES_DIR`; you ratify them before they land. From then on decompose
+   fits tasks to them, implementers follow them, reviewers enforce them.
+3. **The specs** — what to *build*: if nothing matches `SPEC_SOURCES` yet,
+   `/delivery-loop:author-spec` authors your first spec; `decompose` turns
+   specs into the backlog.
 
 ### `.claude/delivery.conf` — the whole adapter
 
@@ -192,7 +206,7 @@ delivery-loop/
 ├── .claude-plugin/marketplace.json      # this repo as a marketplace
 └── plugins/delivery-loop/
     ├── .claude-plugin/plugin.json
-    ├── skills/                          # the 9 skills
+    ├── skills/                          # the 10 skills
     ├── scripts/                         # engine: task-queue, claim-task, task-worktree, delivery-init, lib/, tests/
     └── docs/                            # design spec + operator runbook
 ```

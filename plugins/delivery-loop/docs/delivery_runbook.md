@@ -46,7 +46,15 @@ Install the plugin (once, user or project scope), then bootstrap the repo:
 
 Then **edit `.claude/delivery.conf`** — at minimum point `GATE_CMD` at your
 repo's check command, and set `WORKTREE_SETUP_CMD` if a fresh worktree needs a
-dependency install. Recommended GitHub settings (run yourself; outward-facing):
+dependency install.
+
+Then seed the other two seams the loop hangs on: run
+`/delivery-loop:author-styleguides` to draft the conventions in
+`STYLEGUIDES_DIR` (you ratify them; implementers follow them, reviewers enforce
+them), and — if nothing matches `SPEC_SOURCES` yet —
+`/delivery-loop:author-spec` to author the first spec.
+
+Recommended GitHub settings (run yourself; outward-facing):
 
 ```bash
 gh auth login   # repo scope

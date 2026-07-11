@@ -12,7 +12,7 @@ You are the **decomposer** role from the delivery spec (`${CLAUDE_PLUGIN_ROOT}/d
 ## Inputs
 
 1. **The spec sources** — every file matched by `SPEC_SOURCES`. These are the primary source of tasks and their acceptance criteria. If a spec ends with a "decompose-ready cutline" (a dependency-ordered task list with module / size / command-checkable seams), translate it — don't re-derive it.
-2. **The conventions** in `STYLEGUIDES_DIR` — read the ones relevant to what you're decomposing; tasks must fit them.
+2. **The conventions** in `STYLEGUIDES_DIR` — read the ones relevant to what you're decomposing; tasks must fit them. If the directory is missing or holds no ratified guides, say so and suggest `/delivery-loop:author-styleguides` — then proceed against the stack's idiomatic best practice (spec §2.1).
 3. **The existing backlog:** `gh issue list --label task --state all --limit 500 --json number,title,labels` — never propose a duplicate of an open or closed task.
 4. Any product/context docs the specs reference — consult for a task's **Context** section (the *why*); **never** source acceptance criteria from prose (Hard rule 1).
 5. Optional scope argument narrowing what to decompose (default: the next unstarted slice of work in the specs).

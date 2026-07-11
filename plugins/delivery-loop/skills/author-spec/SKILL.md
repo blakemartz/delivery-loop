@@ -12,7 +12,7 @@ Read `.claude/delivery.conf` for `SPEC_SOURCES` (where specs live / what `/decom
 ## Inputs
 
 1. The subsystem argument (e.g. "object storage") — refuse politely if a spec for it already exists among `SPEC_SOURCES` (propose a vN+1 amendment instead).
-2. The **parent/architecture specs** among `SPEC_SOURCES` — the frame the sub-spec derives from — and the product-intent doc if the repo keeps one (for the *why*, never for criteria).
+2. The **parent/architecture specs** among `SPEC_SOURCES` — the frame the sub-spec derives from — and the product-intent doc if the repo keeps one (for the *why*, never for criteria). **If `SPEC_SOURCES` matches nothing, this is the repo's first spec:** frame it as the root architecture spec later sub-specs will derive from (§Frame states the whole system, not a parent), and skip the sibling pass in input 3.
 3. Every **sibling sub-spec** the new one extends, consumes, or must not contradict, and the relevant conventions in `STYLEGUIDES_DIR`.
 4. The live board: `gh issue list` + `bash "${CLAUDE_PLUGIN_ROOT}/scripts/task-queue.sh"` — cross-wave dependencies must name real issue numbers, and your repo's **serialization hazards** (e.g. DB migration single-head, generated-artifact/client regen, one-start-per-`module:`) are facts about *today's* in-flight waves.
 5. Research notes, when the repo keeps them for the area.
