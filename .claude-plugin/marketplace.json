@@ -7,7 +7,7 @@
       "name": "delivery-loop",
       "source": "./plugins/delivery-loop",
       "description": "Specs -> backlog -> claim -> implement -> review -> patch -> merge, as Claude Code skills over a GitHub Issues queue and git worktrees.",
-      "version": "0.1.3"
+      "version": "0.1.4"
     }
   ]
 }

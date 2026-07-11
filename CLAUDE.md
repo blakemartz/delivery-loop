@@ -44,7 +44,7 @@ delivery-loop/
 ├── README.md                            # user-facing: how it works, install, config
 └── plugins/delivery-loop/
     ├── .claude-plugin/plugin.json        # the plugin manifest (version B — keep == A)
-    ├── skills/                           # the 9 /delivery-loop:* skills (SKILL.md each)
+    ├── skills/                           # the 10 /delivery-loop:* skills (SKILL.md each)
     ├── scripts/                          # the engine the skills drive
     │   ├── task-queue.sh                 # compute ready set; --fix reconciles labels
     │   ├── claim-task.sh + lib/*.jq      # comment-ordered Lamport claim lock
@@ -97,7 +97,8 @@ grep -ri lineage plugins/ ; echo "(empty = good)"
 
 To smoke-test an install without touching your real config, point Claude Code at
 a throwaway config dir: `CLAUDE_CONFIG_DIR=$(mktemp -d) claude plugin marketplace
-add . && … install …`. Never mutate `~/.claude` to test.
+add ./ && … install …` (the CLI rejects bare `.` — use `./`). Never mutate
+`~/.claude` to test.
 
 ## Release protocol
 

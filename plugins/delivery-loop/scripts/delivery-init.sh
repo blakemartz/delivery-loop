@@ -4,50 +4,26 @@
 #
 #   bash "${CLAUDE_PLUGIN_ROOT}/scripts/delivery-init.sh" [module ...]
 #
-# Creates the label taxonomy the engine + skills depend on, scaffolds
-# .claude/delivery.conf with sensible detected defaults, and gitignores
-# .worktrees/. Optional args become extra module:<name> labels; you can also
-# list modules in .claude/delivery.conf (MODULES=...).
+# Local scaffolding runs first (gitignore, gate seed, .claude/delivery.conf,
+# styleguides stub) so a repo with no GitHub remote still gets it; the GitHub
+# steps (labels) follow, and if no remote is connected the script says exactly
+# how to create one and exits 2 — re-run after connecting to finish. Optional
+# args become extra module:<name> labels; you can also list modules in
+# .claude/delivery.conf (MODULES=...).
 #
-# It deliberately does NOT change repo merge settings (an outward-facing change)
-# — it only prints the recommended command for you to run.
+# It deliberately does NOT change repo settings (outward-facing changes like
+# merge strategy or enabling Issues) — it only prints the commands for you.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# --- preflight: the tools the whole engine needs --------------------------------
+command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required (the engine parses all GitHub state with it). Install jq and re-run." >&2; exit 1; }
+command -v gh >/dev/null 2>&1 || { echo "ERROR: gh (GitHub CLI) is required. Install it, then: gh auth login" >&2; exit 1; }
 if ! gh auth status >/dev/null 2>&1; then
   echo "ERROR: gh is not authenticated. Run: gh auth login" >&2
   exit 1
 fi
-
-echo "==> repo: $(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || echo '(no remote yet)')"
-
-# --- labels (idempotent via --force) ----------------------------------------
-label() { gh label create "$1" --color "$2" --description "$3" --force >/dev/null && echo "  label: $1"; }
-
-echo "==> labels: type / status / claim / authorship / size"
-label "task" "1D76DB" "A unit of claimable work"
-label "epic" "3E4B9E" "Tracker for a group of tasks; never claimable"
-label "status:blocked"           "D93F0B" "Has unmet Depends-on issues"
-label "status:ready"             "0E8A16" "Claimable now"
-label "status:claimed"           "FBCA04" "Someone is working on it"
-label "status:in-review"         "C5DEF5" "PR open, awaiting review"
-label "status:changes-requested" "E99695" "Reviewer requested changes"
-label "status:approved"          "2EA44F" "Reviewed and ready for human merge"
-label "needs-human"              "B60205" "Escalated: a human must intervene"
-label "claim:agent" "BFD4F2" "Claimed by an agent (absence + assignee = human claim)"
-label "agent-authored" "EDEDED" "Produced by an agent"
-label "human-authored" "EDEDED" "Produced by a human"
-label "size:S" "C2E0C6" "Small: single-sitting change"
-label "size:M" "FEF2C0" "Medium: max claimable size"
-label "size:L" "F9D0C4" "Too big to claim - decompose further"
-
-# --- module labels: built-ins + MODULES from conf + CLI args -----------------
-modules_from_conf=""
-[ -f .claude/delivery.conf ] && modules_from_conf="$( ( . .claude/delivery.conf 2>/dev/null; echo "${MODULES:-}" ) )"
-echo "==> labels: module:*"
-for m in infra docs $modules_from_conf "$@"; do
-  [ -n "$m" ] && label "module:$m" "5319E7" "Owning module: $m"
-done
 
 # --- .worktrees/ gitignore ---------------------------------------------------
 if ! grep -qxF '.worktrees/' .gitignore 2>/dev/null; then
@@ -192,11 +168,109 @@ EOF
   echo "==> wrote .claude/delivery.conf (edit GATE_CMD to your repo's gate)"
 fi
 
+# --- resolve config (delivery.conf exists by now) -----------------------------
+# shellcheck source=lib/config.sh
+. "$SCRIPT_DIR/lib/config.sh"
+
+# --- seed the styleguides directory ------------------------------------------
+# STYLEGUIDES_DIR is the constitutional layer: decompose fits tasks to it,
+# implementers read it before writing code, reviewers enforce it. Init only
+# marks the spot — /delivery-loop:author-styleguides drafts the actual guides
+# (with the human ratifying them).
+if [ -d "$STYLEGUIDES_DIR" ]; then
+  echo "==> $STYLEGUIDES_DIR already exists — leaving it untouched"
+else
+  mkdir -p "$STYLEGUIDES_DIR"
+  cat > "$STYLEGUIDES_DIR/README.md" <<'EOF'
+# Styleguides
+
+The coding conventions the delivery loop treats as constitutional: the
+decomposer fits tasks to them, implementers read the relevant guide before
+writing code, and reviewers enforce them as a review bar.
+
+This directory is empty because no guides have been authored yet. Run
+`/delivery-loop:author-styleguides` to draft them from your stack and your
+codebase's existing conventions — you review and ratify before anything lands.
+
+Keep each guide short and prescriptive. A rule that can be checked mechanically
+belongs in the gate (see GATE_CMD in .claude/delivery.conf), not in prose here.
+EOF
+  echo "==> seeded $STYLEGUIDES_DIR (empty constitution — run /delivery-loop:author-styleguides)"
+fi
+
+# --- GitHub: a connected repo is required from here --------------------------
+# "No remote" is decided from local git state (can't flake); once a remote
+# exists, a gh failure is surfaced as a gh failure — never misread as "no repo".
+if [ -z "$(git remote)" ]; then
+  cat >&2 <<EOF
+
+==> Local scaffolding is done, but no GitHub repo is connected — the loop's
+    backlog lives in GitHub Issues, so the labels can't be created yet.
+
+    Connect one, then RE-RUN this script (it is idempotent) to finish:
+      gh repo create <name> --private --source=. --push    # brand-new repo
+      git remote add origin <url> && git push -u origin $BASE_BRANCH   # existing repo
+EOF
+  exit 2
+fi
+if ! repo_json="$(gh repo view --json nameWithOwner,hasIssuesEnabled)"; then
+  echo "ERROR: a git remote exists but gh could not resolve the GitHub repo (see error above)." >&2
+  echo "       Check auth/network (gh auth status); on a fork, pick the repo: gh repo set-default" >&2
+  exit 1
+fi
+repo_slug="$(jq -r .nameWithOwner <<<"$repo_json")"
+issues_enabled="$(jq -r .hasIssuesEnabled <<<"$repo_json")"
+echo "==> repo: $repo_slug"
+case "$issues_enabled" in
+  true)  : ;;
+  false) echo "WARNING: Issues are DISABLED on $repo_slug (common on forks) — the loop cannot file or claim tasks until you run: gh repo edit --enable-issues" >&2 ;;
+  *)     echo "WARNING: could not verify Issues are enabled on $repo_slug — check manually; enable with: gh repo edit --enable-issues" >&2 ;;
+esac
+
+# --- labels (idempotent via --force) ----------------------------------------
+label() {
+  gh label create "$1" --color "$2" --description "$3" --force >/dev/null \
+    || { echo "ERROR: creating label '$1' failed (see above) — the label set is incomplete; fix the cause and re-run (idempotent)." >&2; exit 1; }
+  echo "  label: $1"
+}
+
+echo "==> labels: type / status / claim / authorship / size"
+label "task" "1D76DB" "A unit of claimable work"
+label "epic" "3E4B9E" "Tracker for a group of tasks; never claimable"
+label "status:blocked"           "D93F0B" "Has unmet Depends-on issues"
+label "status:ready"             "0E8A16" "Claimable now"
+label "status:claimed"           "FBCA04" "Someone is working on it"
+label "status:in-review"         "C5DEF5" "PR open, awaiting review"
+label "status:changes-requested" "E99695" "Reviewer requested changes"
+label "status:approved"          "2EA44F" "Reviewed and ready for human merge"
+label "needs-human"              "B60205" "Escalated: a human must intervene"
+label "claim:agent" "BFD4F2" "Claimed by an agent (absence + assignee = human claim)"
+label "agent-authored" "EDEDED" "Produced by an agent"
+label "human-authored" "EDEDED" "Produced by a human"
+label "size:S" "C2E0C6" "Small: single-sitting change"
+label "size:M" "FEF2C0" "Medium: max claimable size"
+label "size:L" "F9D0C4" "Too big to claim - decompose further"
+
+# --- module labels: built-ins + MODULES from conf + CLI args -----------------
+echo "==> labels: module:*"
+set -f  # $MODULES splits on words; don't let a stray glob match repo files
+for m in infra docs $MODULES "$@"; do
+  [ -n "$m" ] && label "module:$m" "5319E7" "Owning module: $m"
+done
+set +f
+
 echo
 echo "Done. Next:"
+if [ "$issues_enabled" != "true" ]; then
+  echo "  0. Ensure Issues are enabled on $repo_slug (the loop is inert without them):"
+  echo "       gh repo edit --enable-issues"
+fi
 echo "  1. Review scripts/check.sh — init seeded it from detected tooling; make"
 echo "     sure it runs your repo's real checks (GATE_CMD points at it)."
 echo "  2. Recommended repo merge settings (run yourself; outward-facing):"
 echo "       gh repo edit --enable-squash-merge --enable-merge-commit=false \\"
 echo "                    --enable-rebase-merge=false --delete-branch-on-merge"
-echo "  3. Propose a backlog: /delivery-loop:decompose"
+echo "  3. Author your styleguides — the conventions every agent implements and"
+echo "     reviews against: /delivery-loop:author-styleguides"
+echo "  4. Specs: if none exist yet, author the first with /delivery-loop:author-spec;"
+echo "     then propose a backlog: /delivery-loop:decompose"
