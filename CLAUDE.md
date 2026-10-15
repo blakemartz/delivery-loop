@@ -52,7 +52,7 @@ delivery-loop/
     │   ├── task-worktree.sh              # per-task isolated worktree lifecycle
     │   ├── delivery-init.sh              # one-time consumer bootstrap (labels+conf+gate seed)
     │   ├── lib/config.sh                 # resolve .claude/delivery.conf (defaults<file<env)
-    │   └── tests/                        # jq unit tests for the claim logic
+    │   └── tests/                        # unit tests: claim logic (jq) + config resolution
     └── docs/                             # agentic_delivery_spec.md (design) + delivery_runbook.md (ops)
 ```
 
@@ -70,13 +70,17 @@ Two artifact types, two audiences:
 built-in defaults → the consumer's `.claude/delivery.conf` → environment
 variables (for CI). Keys: `GATE_CMD`, `BASE_BRANCH`, `WORKTREE_SETUP_CMD`,
 `SPEC_SOURCES`, `STYLEGUIDES_DIR`, `MODULES`, `NOTIFY_APPROVE_CMD`,
-`NOTIFY_ESCALATE_CMD` (documented in the README table).
+`NOTIFY_ESCALATE_CMD`, and the cost-control keys `MODEL_IMPLEMENT_S`/`_M`/`_L`,
+`MODEL_REVIEW`, `MODEL_REREVIEW`, `MODEL_PATCH`, `REREVIEW_SCOPE`,
+`AGENT_RULES_FILE` (documented in the README table).
 
-**Adding a config key touches four places** — miss one and it silently defaults:
+**Adding a config key touches six places** — miss one and it silently defaults:
 1. `lib/config.sh` — add to `_DL_VARS`, the `:` default, and the `export` list.
 2. `delivery-init.sh` — scaffold it into the generated `.claude/delivery.conf`.
-3. `README.md` — the config table.
-4. Any skill that reads it — reference the key, never a hardcoded value.
+3. `delivery-config.sh` — add a `KEY=$KEY` line to the printed config.
+4. `README.md` and `docs/agentic_delivery_spec.md` — the config tables.
+5. `scripts/tests/config-test.sh` — cover its default/override resolution.
+6. Any skill that reads it — reference the key, never a hardcoded value.
 
 ## Verify a change (the gate)
 
@@ -87,7 +91,7 @@ bash scripts/check.sh
 ```
 
 It encodes this package's invariants: every script parses (`bash -n`), the
-claim-logic unit tests pass, the plugin manifest validates, **both manifests
+claim-logic and config unit tests pass, the plugin manifest validates, **both manifests
 agree on the version**, and `grep -ri lineage plugins/` stays empty. A change
 that adds a new class of check belongs **in** `scripts/check.sh`, not in prose
 here — the gate is the single definition of "correct" (it is `GATE_CMD` in
