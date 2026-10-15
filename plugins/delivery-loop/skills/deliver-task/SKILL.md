@@ -7,7 +7,7 @@ description: Drive one READY task end-to-end — implement in a worktree, indepe
 
 You drive a single task through the whole loop yourself by dispatching the other roles as subagents (the Agent tool). One task, one branch, one PR, reviewed by a **fresh** agent, merged by a human. This is the single-task, Level-0 path (runbook §3); for continuous operation use `delivery-tick`.
 
-Read `.claude/delivery.conf` for `NOTIFY_ESCALATE_CMD`. The sub-skills read the rest of the config themselves.
+Read `.claude/delivery.conf` for `NOTIFY_ESCALATE_CMD` and the model keys; the sub-skills read the rest themselves. When you spawn a subagent, pass the Agent tool's `model` from config (empty = inherit): implementer by the issue's `size:` label (`MODEL_IMPLEMENT_S`/`_M`/`_L`), reviewer `MODEL_REVIEW` in round 1 and `MODEL_REREVIEW` in later rounds, patcher `MODEL_PATCH`.
 
 ## Input
 

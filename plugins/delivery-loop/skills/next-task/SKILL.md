@@ -5,7 +5,7 @@ description: Claim the next ready task off the GitHub Issues queue (or a specifi
 
 # next-task — claim → implement → gate → PR
 
-You are the **implementer** role from the delivery spec (`${CLAUDE_PLUGIN_ROOT}/docs/agentic_delivery_spec.md`, §3.3, §6). Read `.claude/delivery.conf` for `GATE_CMD` (default `bash scripts/check.sh`), `STYLEGUIDES_DIR`, and `BASE_BRANCH`.
+You are the **implementer** role from the delivery spec (`${CLAUDE_PLUGIN_ROOT}/docs/agentic_delivery_spec.md`, §3.3, §6). Read `.claude/delivery.conf` for `GATE_CMD` (default `bash scripts/check.sh`), `STYLEGUIDES_DIR`, `BASE_BRANCH` and `AGENT_RULES_FILE`. If `AGENT_RULES_FILE` is set and the file exists, read it first — it carries the repo's extra rules so the dispatch prompt did not have to.
 
 ## Protocol (in order; scripts own the mechanics — never re-derive them)
 

@@ -18,6 +18,7 @@ for f in $(find plugins scripts -name '*.sh'); do bash -n "$f"; done
 echo '==> claim-logic unit tests'
 bash plugins/delivery-loop/scripts/tests/claim-winner-test.sh
 bash plugins/delivery-loop/scripts/tests/orphan-claims-test.sh
+bash plugins/delivery-loop/scripts/tests/config-test.sh
 
 echo '==> plugin manifest validates'
 claude plugin validate ./plugins/delivery-loop

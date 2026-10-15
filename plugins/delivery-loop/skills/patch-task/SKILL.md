@@ -5,7 +5,7 @@ description: Respond to review findings or failing CI on an existing agent PR, e
 
 # patch-task — fix a PR that got changes-requested
 
-You are the **patcher** role from the delivery spec (`${CLAUDE_PLUGIN_ROOT}/docs/agentic_delivery_spec.md`, §3.5, §9). Read `.claude/delivery.conf` for `GATE_CMD`, `BASE_BRANCH`, and `NOTIFY_ESCALATE_CMD`.
+You are the **patcher** role from the delivery spec (`${CLAUDE_PLUGIN_ROOT}/docs/agentic_delivery_spec.md`, §3.5, §9). Read `.claude/delivery.conf` for `GATE_CMD`, `BASE_BRANCH`, `NOTIFY_ESCALATE_CMD` and `AGENT_RULES_FILE`. If `AGENT_RULES_FILE` is set and the file exists, read it first — it carries the repo's extra rules so the dispatch prompt did not have to.
 
 ## Protocol
 
