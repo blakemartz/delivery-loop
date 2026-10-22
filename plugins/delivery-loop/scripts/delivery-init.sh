@@ -164,6 +164,25 @@ MODULES=""
 #   NOTIFY_ESCALATE_CMD="afplay /System/Library/Sounds/Basso.aiff"
 NOTIFY_APPROVE_CMD=""
 NOTIFY_ESCALATE_CMD=""
+
+# Cost control. Model passed to the Agent tool per role (e.g. opus, sonnet, haiku).
+# Empty = inherit the session model, which is the pre-0.1.5 behaviour. The
+# implementer model is chosen by the issue's size: label.
+MODEL_IMPLEMENT_S=""
+MODEL_IMPLEMENT_M=""
+MODEL_IMPLEMENT_L=""
+MODEL_REVIEW=""      # first review of a PR
+MODEL_REREVIEW=""    # review after a patch push
+MODEL_PATCH=""
+
+# narrow = a re-review checks only the incremental diff, the previously failing
+# criteria, the criteria that diff touches, and the full gate; earlier passes are
+# carried forward. full = re-execute every criterion every time.
+REREVIEW_SCOPE="narrow"
+
+# Optional file of extra rules every implementer/patcher/reviewer reads (evidence
+# standard, known command traps). Keeps dispatch prompts short. Empty = none.
+AGENT_RULES_FILE=""
 EOF
   echo "==> wrote .claude/delivery.conf (edit GATE_CMD to your repo's gate)"
 fi

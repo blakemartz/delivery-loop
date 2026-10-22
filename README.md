@@ -160,6 +160,10 @@ One per-repo file is the entire seam between the generic engine and your project
 | `STYLEGUIDES_DIR` | `styleguides/` | Where coding conventions live. |
 | `MODULES` | (empty) | Allowed `module:` labels — the concurrency unit (≤ 1 in-flight task per module). |
 | `NOTIFY_APPROVE_CMD` / `NOTIFY_ESCALATE_CMD` | (empty) | Optional hooks run on approval / escalation (e.g. a sound). |
+| `MODEL_IMPLEMENT_S` / `_M` / `_L` | (empty = inherit) | Model for implementers, chosen by the issue's `size:` label. |
+| `MODEL_REVIEW` / `MODEL_REREVIEW` / `MODEL_PATCH` | (empty = inherit) | Model for a first review, a review after a patch, and patching. |
+| `REREVIEW_SCOPE` | `narrow` | `narrow`: a re-review checks the incremental diff, failing and touched criteria, and the full gate, carrying earlier passes forward. `full`: re-execute every criterion. |
+| `AGENT_RULES_FILE` | (empty) | Repo file of extra rules every role reads, so dispatch prompts stay short. |
 
 Recommended repo settings (run once, yourself — it changes GitHub state):
 

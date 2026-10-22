@@ -10,7 +10,7 @@
 # Do NOT `set -e`/`set -u` here — this file is sourced into scripts that own
 # their own shell options, and the expansions below are all guard-quoted.
 
-_DL_VARS="BASE_BRANCH WORKTREE_SETUP_CMD GATE_CMD SPEC_SOURCES STYLEGUIDES_DIR MODULES NOTIFY_APPROVE_CMD NOTIFY_ESCALATE_CMD"
+_DL_VARS="BASE_BRANCH WORKTREE_SETUP_CMD GATE_CMD SPEC_SOURCES STYLEGUIDES_DIR MODULES NOTIFY_APPROVE_CMD NOTIFY_ESCALATE_CMD MODEL_IMPLEMENT_S MODEL_IMPLEMENT_M MODEL_IMPLEMENT_L MODEL_REVIEW MODEL_REREVIEW MODEL_PATCH REREVIEW_SCOPE AGENT_RULES_FILE"
 
 # 1/3 snapshot any env-provided overrides so they can win over the file.
 for _v in $_DL_VARS; do eval "_env_$_v=\${$_v:-}"; done
@@ -35,6 +35,17 @@ for _v in $_DL_VARS; do eval "if [ -n \"\$_env_$_v\" ]; then $_v=\"\$_env_$_v\";
 : "${MODULES:=}"
 : "${NOTIFY_APPROVE_CMD:=}"
 : "${NOTIFY_ESCALATE_CMD:=}"
+: "${MODEL_IMPLEMENT_S:=}"
+: "${MODEL_IMPLEMENT_M:=}"
+: "${MODEL_IMPLEMENT_L:=}"
+: "${MODEL_REVIEW:=}"
+: "${MODEL_REREVIEW:=}"
+: "${MODEL_PATCH:=}"
+: "${REREVIEW_SCOPE:=narrow}"
+: "${AGENT_RULES_FILE:=}"
+
+# Anything but narrow|full falls back to the thorough choice, never the cheap one.
+case "$REREVIEW_SCOPE" in narrow|full) ;; *) REREVIEW_SCOPE=full ;; esac
 
 export BASE_BRANCH WORKTREE_SETUP_CMD GATE_CMD SPEC_SOURCES \
-       STYLEGUIDES_DIR MODULES NOTIFY_APPROVE_CMD NOTIFY_ESCALATE_CMD
+       STYLEGUIDES_DIR MODULES NOTIFY_APPROVE_CMD NOTIFY_ESCALATE_CMD        MODEL_IMPLEMENT_S MODEL_IMPLEMENT_M MODEL_IMPLEMENT_L        MODEL_REVIEW MODEL_REREVIEW MODEL_PATCH REREVIEW_SCOPE AGENT_RULES_FILE

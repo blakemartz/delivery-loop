@@ -61,6 +61,10 @@ The engine and skills read it; nothing else needs editing to adopt the loop:
 | `STYLEGUIDES_DIR` | `styleguides/` | Coding conventions implementers/reviewers consult. |
 | `MODULES` | (empty) | Allowed `module:` labels — the concurrency unit (§8). |
 | `NOTIFY_APPROVE_CMD` / `NOTIFY_ESCALATE_CMD` | (empty) | Optional hooks on approval / escalation. |
+| `MODEL_IMPLEMENT_S` / `_M` / `_L` | (empty = inherit) | Model for implementers, chosen by the issue's `size:` label. (orchestrator passes it as the Agent `model`) |
+| `MODEL_REVIEW` / `MODEL_REREVIEW` / `MODEL_PATCH` | (empty = inherit) | Model for a first review, a review after a patch, and patching. |
+| `REREVIEW_SCOPE` | `narrow` | `narrow`: a re-review checks the incremental diff, failing and touched criteria, and the full gate, carrying earlier passes forward. `full`: re-execute every criterion. |
+| `AGENT_RULES_FILE` | (empty) | Repo file of extra rules every role reads, so dispatch prompts stay short. |
 
 `delivery-init.sh` does more than scaffold the config: it scans the repo for
 linters, type-checkers, and test frameworks and seeds a starter `scripts/check.sh`
