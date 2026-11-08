@@ -12,6 +12,14 @@
 #
 # Adapter notes (github):
 #   - every list passes an explicit `--limit $LIST_LIMIT`; gh pages internally.
+#   - `pr-list --state merged --since T` goes through GitHub search, which never
+#     returns more than 1000 results whatever `--limit` says. Its ceiling is
+#     therefore min(LIST_LIMIT, 1000): reaching it exits 3 (§11), since a capped
+#     search is indistinguishable from a complete one.
+#   - a post (`pr-comment`, the comment-form `pr-review`) reports `posted:true`
+#     only when gh succeeded; a failed post exits 1 with no JSON. gh's exit
+#     status is authoritative: a successful post that printed no URL keeps
+#     `url: ""`.
 #   - `pr-list` hydrates each listed PR through the `pr-view` path, because the
 #     list's `comments`/`reviews` are what `patch_iteration`/`reviewed_at_head`
 #     come from and mergeability may still be computing.
@@ -44,6 +52,7 @@ fi
 # The `gh pr view --json` field set of §7.2.
 PR_FIELDS="number,url,state,headRefName,baseRefName,headRefOid,mergeable,mergeStateStatus,statusCheckRollup,body,labels,comments,reviews,author,closingIssuesReferences"
 POLLS=3   # re-polls of a still-computing mergeability (§7.3, GC57)
+SEARCH_CAP=1000   # GitHub search's hard result cap (`gh pr list --search`)
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/dl-forge-github.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
@@ -80,12 +89,30 @@ require_head() {
   jq -r '.headRefName' <<<"$cur"
 }
 
-# Fail (exit 3) when a list came back at the ceiling: it may be truncated.
+# check_limit <file> <what> [ceiling]: fail (exit 3) when a list came back at
+# the ceiling (default LIST_LIMIT): it may be truncated.
 check_limit() {
-  local got
+  local got cap="${3:-$LIST_LIMIT}" why
   got=$(jq 'length' "$1")
-  [ "$got" -lt "$LIST_LIMIT" ] \
-    || { echo "forge-github: $2 returned $got items = LIST_LIMIT ($LIST_LIMIT); raise LIST_LIMIT, refusing to truncate" >&2; exit 3; }
+  [ "$got" -lt "$cap" ] && return 0
+  if [ "$cap" -lt "$LIST_LIMIT" ]; then
+    why="GitHub search's $SEARCH_CAP-result cap (< LIST_LIMIT $LIST_LIMIT); narrow the window"
+  else
+    why="LIST_LIMIT ($LIST_LIMIT); raise LIST_LIMIT"
+  fi
+  echo "forge-github: $2 returned $got items = $why, refusing to truncate" >&2
+  exit 3
+}
+
+# post_comment <n> <body-file> [gh-runner]: posts a PR comment and prints its
+# URL ("" if gh printed none). Exits 1 if gh failed: nothing was posted.
+post_comment() {
+  local runner="${3:-gh}"
+  "$runner" pr comment "$1" --body-file "$2" > "$tmp/comment.out" 2> "$tmp/comment.err" || {
+    cat "$tmp/comment.err" >&2
+    die "gh pr comment #$1 failed; nothing posted"
+  }
+  grep -E '^https?://' "$tmp/comment.out" | tail -n 1 || true
 }
 
 op_whoami() { gh api user | jq -r .login; }
@@ -135,7 +162,9 @@ op_pr_list() {
     # gh has no --since: search narrows server-side, the jq filter is exact.
     gh pr list --state merged --search "merged:>=$since" --limit "$LIST_LIMIT" \
       --json number,mergedAt > "$tmp/list.json"
-    check_limit "$tmp/list.json" "pr-list"
+    local cap="$LIST_LIMIT"
+    [ "$cap" -le "$SEARCH_CAP" ] || cap="$SEARCH_CAP"
+    check_limit "$tmp/list.json" "pr-list --state merged --since" "$cap"
     fjq --arg t "$since" 'include "forge-github"; gh_merged_since($t)' "$tmp/list.json" > "$tmp/sel.json"
   else
     gh pr list --state "$state" --limit "$LIST_LIMIT" --json number,mergedAt > "$tmp/list.json"
@@ -175,8 +204,16 @@ op_pr_review() {
   done
   [ -n "$sha" ] && [ -f "$body" ] || usage "$u"
   require_head "$n" "$sha" >/dev/null
-  # Every verdict body ends with the trailer that ties it to the head (§4.2).
-  { cat "$body"; printf '\n\nReviewed-Head: %s\n' "$sha"; } > "$tmp/verdict.md"
+  # Every verdict body ends with the trailer that ties it to the head (§4.2),
+  # exactly once: a body already ending in it is sent as is, and one ending in
+  # another head's trailer is refused rather than sent with two.
+  local last
+  last=$(awk 'NF { l = $0 } END { print l }' "$body")
+  case "$last" in
+    "Reviewed-Head: $sha") cp "$body" "$tmp/verdict.md" ;;
+    Reviewed-Head:*) die "body ends with '$last', not head $sha; refusing" ;;
+    *) { cat "$body"; printf '\n\nReviewed-Head: %s\n' "$sha"; } > "$tmp/verdict.md" ;;
+  esac
 
   if [ -n "${GH_REVIEW_TOKEN:-}" ]; then
     rv() { GH_TOKEN="$GH_REVIEW_TOKEN" gh "$@"; }
@@ -190,7 +227,7 @@ op_pr_review() {
     # GitHub rejects approve/request-changes on one's own PR (GC29): post the
     # same body as a comment; the graph status is the verdict of record.
     form=comment
-    out=$(rv pr comment "$n" --body-file "$tmp/verdict.md" | grep -E '^https?://' | tail -n 1) || out=""
+    out=$(post_comment "$n" "$tmp/verdict.md" rv) || exit 1
   else
     cat "$tmp/review.err" >&2
     die "gh pr review #$n failed"
@@ -207,7 +244,7 @@ op_pr_comment() {
   need_n "${1:-}" "pr-comment <n> --body-file F"
   [ "${2:-}" = --body-file ] && [ -f "${3:-}" ] || usage "pr-comment <n> --body-file F"
   local url
-  url=$(gh pr comment "$1" --body-file "$3" | grep -E '^https?://' | tail -n 1) || url=""
+  url=$(post_comment "$1" "$3") || exit 1
   jq -cn --arg url "$url" '{posted: true, url: $url}'
 }
 

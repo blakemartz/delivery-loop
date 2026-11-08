@@ -1,0 +1,231 @@
+[
+  {
+    "case": "TIMED_OUT beside a SUCCESS",
+    "rollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "ok",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      },
+      {
+        "__typename": "CheckRun",
+        "name": "slow",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "TIMED_OUT",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "want": "failure"
+  },
+  {
+    "case": "ACTION_REQUIRED beside a SUCCESS",
+    "rollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "ok",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      },
+      {
+        "__typename": "CheckRun",
+        "name": "gate",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "ACTION_REQUIRED",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "want": "failure"
+  },
+  {
+    "case": "STARTUP_FAILURE beside a SUCCESS",
+    "rollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "ok",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      },
+      {
+        "__typename": "CheckRun",
+        "name": "boot",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "STARTUP_FAILURE",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "want": "failure"
+  },
+  {
+    "case": "CANCELLED beside a SUCCESS",
+    "rollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "ok",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      },
+      {
+        "__typename": "CheckRun",
+        "name": "cx",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "CANCELLED",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "want": "failure"
+  },
+  {
+    "case": "STALE alone",
+    "rollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "old",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "STALE",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "want": "pending"
+  },
+  {
+    "case": "STALE beside a SUCCESS",
+    "rollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "ok",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      },
+      {
+        "__typename": "CheckRun",
+        "name": "old",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "STALE",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "want": "pending"
+  },
+  {
+    "case": "STALE beside a TIMED_OUT (failure wins)",
+    "rollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "old",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "STALE",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      },
+      {
+        "__typename": "CheckRun",
+        "name": "slow",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "TIMED_OUT",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "want": "failure"
+  },
+  {
+    "case": "in-progress CheckRun beside a SUCCESS",
+    "rollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "ok",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      },
+      {
+        "__typename": "CheckRun",
+        "name": "run",
+        "workflowName": "ci",
+        "status": "IN_PROGRESS",
+        "conclusion": "",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "want": "pending"
+  },
+  {
+    "case": "StatusContext ERROR",
+    "rollup": [
+      {
+        "__typename": "StatusContext",
+        "context": "ext/ci",
+        "state": "ERROR",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "targetUrl": "https://ci.example.com/1"
+      }
+    ],
+    "want": "failure"
+  },
+  {
+    "case": "StatusContext EXPECTED",
+    "rollup": [
+      {
+        "__typename": "StatusContext",
+        "context": "ext/ci",
+        "state": "EXPECTED",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "targetUrl": "https://ci.example.com/1"
+      }
+    ],
+    "want": "pending"
+  },
+  {
+    "case": "empty rollup",
+    "rollup": [],
+    "want": "none"
+  }
+]

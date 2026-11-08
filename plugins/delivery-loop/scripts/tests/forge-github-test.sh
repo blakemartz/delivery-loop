@@ -75,6 +75,15 @@ else
   fail "GC28: validate_pr rejected adapter output"
 fi
 
+# GC28: the statusCheckRollup -> checks mapping (§7.3) over every conclusion
+# the PR fixtures do not reach (fixtures/forge-github/rollups.json).
+while IFS= read -r c; do
+  name=$(jq -r .case <<<"$c"); want=$(jq -r .want <<<"$c")
+  got=$(jq -r -L "$here/../lib" -L "$here/../backends" 'include "forge-github"; .rollup | {statusCheckRollup: .} | gh_checks' <<<"$c")
+  rc=0; out="$got"; err=""
+  expect "GC28: checks for $name -> $want" '[ "$got" = "$want" ]'
+done < <(jq -c '.[]' "$fx/rollups.json")
+
 # --- GC33 / GC46: task_id linkage precedence (§4.3) ---------------------------
 reset
 check_task() { # <pr> <expected task_id json> <label> [GRAPH_BACKEND]
@@ -124,6 +133,18 @@ expect "GC67: an offset T compares by instant" '[ "$rc" = 0 ] && [ "$(jq -c '\''
 run -- pr-list --since "$T"
 expect "pr-list --since without --state merged -> usage exit 2" '[ "$rc" = 2 ]'
 
+# GitHub search caps at 1000 results: on the --since path that is the ceiling
+# even when LIST_LIMIT is higher, so a capped window exits 3 (§11, §7.1).
+reset
+touch "$tmp/state/many-merged"
+run -- pr-list --state merged --since "$T"
+expect "GC67: search capped at 1000 (< LIST_LIMIT 5000) -> exit 3, no silent truncation" '[ "$rc" = 3 ] && grep -qF 1000 <<<"$err" && [ -z "$out" ]'
+expect "GC67: a capped search hydrates nothing" '[ "$(log_count '\''gh pr view'\'')" = 0 ]'
+reset
+touch "$tmp/state/many-merged"
+run LIST_LIMIT=500 -- pr-list --state merged --since "$T"
+expect "GC67: LIST_LIMIT below the search cap is the ceiling -> exit 3 naming LIST_LIMIT" '[ "$rc" = 3 ] && grep -qF "LIST_LIMIT (500)" <<<"$err"'
+
 # --- GC29: self-review rejected -> comment-form fallback ----------------------
 reset
 touch "$tmp/state/reject-self-review"
@@ -133,6 +154,23 @@ expect "GC29: fallback -> {posted:true, form:\"comment\"}" '[ "$rc" = 0 ] && jq_
 expect "GC29: formal review was attempted first" 'log_has "gh pr review 101 --approve"'
 expect "GC29: comment body ends with Reviewed-Head: <sha>" '[ "$(tail -n 1 "$tmp/state/comment-body")" = "Reviewed-Head: $(sha 101)" ]'
 expect "GC29: comment body keeps the verdict text" 'grep -qF '\''verdict: APPROVE'\'' "$tmp/state/comment-body"'
+
+# A failed fallback comment is never reported as posted.
+reset
+touch "$tmp/state/reject-self-review" "$tmp/state/fail-comment"
+run -- pr-review 101 approve --sha "$(sha 101)" --body-file "$tmp/verdict.md"
+expect "GC29: fallback comment fails -> exit 1, no posted JSON" '[ "$rc" = 1 ] && [ -z "$out" ] && grep -qF "nothing posted" <<<"$err"'
+
+# The trailer is appended exactly once.
+reset
+touch "$tmp/state/reject-self-review"
+printf 'verdict: APPROVE\n\nReviewed-Head: %s\n\n' "$(sha 101)" > "$tmp/trailed.md"
+run -- pr-review 101 approve --sha "$(sha 101)" --body-file "$tmp/trailed.md"
+expect "pr-review: a body already ending in Reviewed-Head: <sha> gets no second one" '[ "$rc" = 0 ] && [ "$(grep -c "^Reviewed-Head:" "$tmp/state/comment-body")" = 1 ]'
+reset
+printf 'verdict: APPROVE\n\nReviewed-Head: %s\n' "$OLD" > "$tmp/trailed.md"
+run -- pr-review 101 approve --sha "$(sha 101)" --body-file "$tmp/trailed.md"
+expect "pr-review: a body ending in another head's trailer -> exit 1, nothing posted" '[ "$rc" = 1 ] && [ "$(log_count '\''pr review'\'')" = 0 ] && [ "$(log_count '\''pr comment'\'')" = 0 ]'
 
 # --- GC58: GH_REVIEW_TOKEN -> formal review under that identity ---------------
 reset
@@ -186,7 +224,11 @@ expect "pr-find --head with no PR -> empty, exit 0" '[ "$rc" = 0 ] && [ -z "$out
 run -- pr-reviews 101
 expect "pr-reviews -> [{author, verdict, body, at, commit}]" '[ "$rc" = 0 ] && jq_true "map(.verdict) == [\"request-changes\", \"approve\"] and .[1].commit == \"$(sha 101)\" and (.[0] | keys) == [\"at\",\"author\",\"body\",\"commit\",\"verdict\"]"'
 run -- pr-comment 101 --body-file "$tmp/body.md"
-expect "pr-comment -> posted" '[ "$rc" = 0 ] && jq_true '\''.posted == true'\'''
+expect "pr-comment -> posted" '[ "$rc" = 0 ] && jq_true '\''.posted == true and (.url | test("issuecomment"))'\'''
+touch "$tmp/state/fail-comment"
+run -- pr-comment 101 --body-file "$tmp/body.md"
+expect "pr-comment: gh pr comment fails -> exit 1, no posted JSON" '[ "$rc" = 1 ] && [ -z "$out" ]'
+rm -f "$tmp/state/fail-comment"
 run -- pr-comments 101
 expect "pr-comments -> 3 comments" '[ "$rc" = 0 ] && jq_true '\''length == 3 and .[0].author == "astra"'\'''
 run -- pr-set-base 101 main
