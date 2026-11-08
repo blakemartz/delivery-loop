@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# Tests for lib/reconcile.jq (docs/delivery_graph_spec.md §5 `reconcile.jq`):
+# the reconcile assertions of golden cases GC2, GC4, GC6, GC7, GC24 (record),
+# GC25 (record), GC42 (record), GC43, GC44, GC45 (record) and GC65 (§12, §17
+# row A5), plus the amended §5 rows of lib/transitions.jq that reconcile's
+# records depend on (merged PR -> done from every open status; epic ready -> done).
+#
+# Offline. GC2/GC4/GC6/GC7 reuse the ready fixtures (fixtures/ready/); the other
+# cases are sparse fixtures in fixtures/reconcile/, filled out by expand.jq.
+# Every case asserts the exact record list, so a control node that wrongly gets
+# a record fails the case too.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+lib="$here/../lib"
+fx="$here/fixtures/reconcile"
+rfx="$here/fixtures/ready"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/dl-reconcile-test.XXXXXX")"
+trap 'rm -rf "$tmp"' EXIT
+
+fails=0
+pass() { echo "ok   - $1"; }
+fail() { echo "FAIL - $1" >&2; shift; for l in "$@"; do echo "        $l" >&2; done; fails=1; }
+eq() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1" "want: $2" "got:  $3"; fi; }
+
+now=1798761600 # 2027-01-01T00:00:00Z, expand.jq's fixture_now
+
+# run_sparse <fixture> [input filter]: `reconcile` over a sparse fixture; the
+# records go to $tmp/out, stderr to $tmp/err.
+run_sparse() {
+  jq -c -L "$lib" -L "$fx" "include \"expand\"; include \"reconcile\";
+    full_input | ${2:-.} | reconcile" "$fx/$1.json" >"$tmp/out" 2>"$tmp/err"
+}
+# run_nodes <ready fixture>: `reconcile` over a full node array, no PRs.
+run_nodes() {
+  jq -c -L "$lib" --argjson now "$now" 'include "reconcile";
+    {nodes: ., prs: [], now: $now} | reconcile' "$rfx/$1" >"$tmp/out" 2>"$tmp/err"
+}
+# moves: the records in $tmp/out as "<op> <id> <from>-><to>" strings.
+moves() { jq -c '[.[] | "\(.op) \(.id) \(.from)->\(.to)"]' "$tmp/out"; }
+# stderr_has <name> <substring>
+stderr_has() {
+  if grep -qF -- "$2" "$tmp/err"; then pass "$1"
+  else fail "$1" "stderr lacks: $2" "stderr: $(cat "$tmp/err")"; fi
+}
+
+# --- rule 8 warnings, and the rule 1/2 records on the ready fixtures -----------------
+run_nodes gc2.json
+stderr_has "GC2 reconcile warns on a cancelled dep" \
+  "warn: gc2-blocked: blocked on cancelled dep gc2-dep-cancelled"
+eq "GC2 the cancelled dep never unblocks (no records)" '[]' "$(moves)"
+
+run_nodes gc4.json
+eq "GC4 needs_human, deps done, blocked -> no blocked -> ready (control unblocks)" \
+  '["transition gc4-unflagged blocked->ready"]' "$(moves)"
+
+run_nodes gc6.json
+stderr_has "GC6 reconcile warns on the cycle" "warn: cycle: gc6-a → gc6-b → gc6-a"
+eq "GC6 cycle members are not ready: both ready -> blocked" \
+  '["transition gc6-a ready->blocked","transition gc6-b ready->blocked"]' "$(moves)"
+
+run_nodes gc7.json
+stderr_has "GC7 reconcile warns on an unknown dep" "warn: gc7-orphan: unknown dep gc7-missing"
+eq "GC7 the unknown dep is unmet: ready -> blocked" \
+  '["transition gc7-orphan ready->blocked"]' "$(moves)"
+if grep -q 'gc7-control' "$tmp/err"; then fail "GC7 control has no warning" "$(cat "$tmp/err")"
+else pass "GC7 control has no warning"; fi
+
+# --- rule 5: stale agent claims -----------------------------------------------------
+# Staleness compares instants: gc24-offset is 4.5h old (lexically 1.5h) and
+# gc24-offset-fresh 2.5h old (lexically 4.5h), so a raw-string or offset-dropping
+# parse fails one of them.
+run_sparse gc24
+eq "GC24 agent claim idle >4h, no PR -> one reclaim record (offsets normalized)" \
+  '["reclaim gc24-stale claimed->ready","reclaim gc24-offset claimed->ready"]' "$(moves)"
+eq "GC24 reclaim reason keeps the v0.1.4 RECLAIMED text" \
+  '"RECLAIMED: agent claim was idle >4h with no open PR; task is ready again."' \
+  "$(jq -c '.[0].reason' "$tmp/out")"
+eq "GC24 records carry exactly {op, id, from, to, reason}" '[["from","id","op","reason","to"]]' \
+  "$(jq -c '[.[] | keys] | unique' "$tmp/out")"
+# Any open PR for the node (agent or not) protects the claim (GC33's reaper).
+run_sparse gc24 '.prs = []'
+eq "GC24 without the PR, the in-review stale claim is reclaimed only if legal" \
+  '["reclaim gc24-stale claimed->ready","reclaim gc24-offset claimed->ready"]' "$(moves)"
+stderr_has "GC24 in-review -> ready is not a reconcile move: warned and skipped" \
+  'skipped reclaim gc24-has-pr: illegal transition "gc24-has-pr": in-review -> ready by reconcile'
+
+# --- rule 3: merged PR -> done ---------------------------------------------------------
+run_sparse gc25
+eq "GC25 merged PR -> x done, its dependent -> ready in the same pass" \
+  '["transition gc25-x in-review->done","transition gc25-dependent blocked->ready"]' "$(moves)"
+
+run_sparse gc42
+eq "GC42 merged agent PR into the node's target release/x -> done (wrong base, non-agent: none)" \
+  '["transition 42 approved->done"]' "$(moves)"
+eq "GC42 the done record names the PR" '"PR #142 merged into release/x"' \
+  "$(jq -c '.[0].reason' "$tmp/out")"
+# The amended §5 row: every open status may go done on a merged PR (label drift,
+# human-driven PRs), never a closed one.
+for s in blocked ready claimed in-review changes-requested approved; do
+  run_sparse gc42 ".nodes[0].status = \"$s\""
+  eq "GC42 merged PR -> done from $s" "[\"transition 42 $s->done\"]" "$(moves)"
+done
+run_sparse gc42 '.nodes[0].status = "cancelled"'
+eq "GC42 a cancelled node is not reopened as done" '[]' "$(moves)"
+# Several merged PRs for one node: one record, naming the newest PR.
+run_sparse gc42 '.prs += [.prs[0] | .number = 150 | .url = "https://forge.example/pr/150"]'
+eq "GC42 two merged PRs for one node -> one record, newest PR" '["PR #150 merged into release/x"]' \
+  "$(jq -c 'map(.reason)' "$tmp/out")"
+# The base is checked per PR before picking the newest: a newer merge into another
+# base (a cherry-pick into main) must not hide the merge into target_branch.
+run_sparse gc42 '.nodes = [.nodes[0] | .id = "1"]
+                 | .prs = ([{number: 10, state: "merged", task_id: "1", base: "release/x"},
+                            {number: 12, state: "merged", task_id: "1", base: "main"}]
+                           | map(full_pr))'
+eq "GC42 older merge into target, newer merge into main -> 1 done" \
+  '["transition 1 approved->done"]' "$(moves)"
+eq "GC42 the record names the qualifying PR, not the newer off-base one" \
+  '"PR #10 merged into release/x"' "$(jq -c '.[0].reason' "$tmp/out")"
+# A promotion PR targets promote_to (§9): head T, base P.
+run_sparse gc42 '.nodes[0] |= (.kind = "promote" | .status = "in-review" | .promote_to = "main")
+                 | .prs[0].base = "main"'
+eq "GC42 merged promotion PR into promote_to -> promote node done" \
+  '["transition 42 in-review->done"]' "$(moves)"
+
+# --- rule 4: open PR -> in-review --------------------------------------------------------
+run_sparse gc43
+eq "GC43 claimed + open agent PR -> claimed -> in-review (non-agent PR: none)" \
+  '["transition gc43-claimed claimed->in-review"]' "$(moves)"
+
+# --- rule 6: stale human claims ----------------------------------------------------------
+run_sparse gc44
+eq "GC44 human claim idle 73h: one ping when pinged_at is null, none when set; never released" \
+  '["ping gc44-unpinged claimed->claimed"]' "$(moves)"
+eq "GC44 ping reason keeps the v0.1.4 STALE-CLAIM-PING text" true \
+  "$(jq '.[0].reason | startswith("STALE-CLAIM-PING: this claim has been inactive for 72h")' "$tmp/out")"
+run_sparse gc44 '.now += 30 * 24 * 3600'
+eq "GC44 a month later: still one ping, still no reclaim" \
+  '["ping gc44-unpinged claimed->claimed","ping gc44-recent claimed->claimed"]' "$(moves)"
+
+# --- rule 7: epics done -------------------------------------------------------------------
+run_sparse gc45
+eq "GC45 epic with done + cancelled (checklist-only) children -> done; drifted-blocked epic -> done" \
+  '["transition 1 ready->done","transition 4 blocked->done"]' "$(moves)"
+eq "GC45 the checklist-only child's own epic stays null" 'null' \
+  "$(jq -c -L "$fx" 'include "expand"; full_input | .nodes[] | select(.id == "3") | .epic' "$fx/gc45.json")"
+run_sparse gc45 '.nodes |= map(select(.id != "3"))'
+eq "GC45 control: without the checklist-only child epic 1 still has one done child" \
+  '["transition 1 ready->done","transition 4 blocked->done"]' "$(moves)"
+run_sparse gc45 '.nodes |= map(if .id == "3" then .status = "ready" else . end)'
+eq "GC45 an open checklist-only child keeps epic 1 open" \
+  '["transition 4 blocked->done"]' "$(moves)"
+# Cascade: the open child's PR merges -> child done -> epic 5 done, same pass.
+run_sparse gc45 '.prs[0].state = "merged"'
+eq "GC45 merged PR closes the last child, then its epic, in one pass" \
+  '["transition 9 in-review->done","transition 1 ready->done","transition 4 blocked->done","transition 5 ready->done"]' \
+  "$(moves)"
+# An epic of epics closes once its child epics do (rule 7 repeats).
+run_sparse gc45 '.nodes += [{id: "10", kind: "epic", size: null, checklist: ["1", "4"]}] | .nodes |= map(full_node)'
+eq "GC45 epic of epics closes in the same pass" \
+  '["transition 1 ready->done","transition 4 blocked->done","transition 10 ready->done"]' "$(moves)"
+
+# --- GC65: a record the table rejects is skipped; the rest stand ------------------------------
+run_sparse gc65
+eq "GC65 the done node's reclaim is skipped, the claimed node's is applied" \
+  '["transition gc65-blocked blocked->ready","reclaim gc65-claimed claimed->ready"]' "$(moves)"
+stderr_has "GC65 the rejected record is a warning on stderr" \
+  'warn: skipped reclaim gc65-done: illegal transition "gc65-done": done -> ready by reconcile'
+
+# --- input validation ----------------------------------------------------------------------
+if jq -c -L "$lib" -L "$fx" 'include "expand"; include "reconcile";
+     full_input | .nodes[0].status = "open" | reconcile' "$fx/gc65.json" >/dev/null 2>&1; then
+  fail "malformed node rejected" "accepted"
+else pass "malformed node rejected"; fi
+if jq -c -L "$lib" -L "$fx" 'include "expand"; include "reconcile";
+     full_input | .prs = [{number: 1}] | reconcile' "$fx/gc65.json" >/dev/null 2>&1; then
+  fail "malformed PR rejected" "accepted"
+else pass "malformed PR rejected"; fi
+if jq -c -L "$lib" -L "$fx" 'include "expand"; include "reconcile";
+     full_input | .now = "2027-01-01T00:00:00Z" | reconcile' "$fx/gc65.json" >/dev/null 2>&1; then
+  fail "non-numeric now rejected" "accepted"
+else pass "non-numeric now rejected"; fi
+
+# --- transitions.jq: the amended §5 rows reconcile depends on ------------------------------------
+# <kind> <from> <to> <actor> <legal: 0|1>
+while read -r kind from to actor want; do
+  [ -n "$kind" ] || continue
+  got=$(jq -n -L "$lib" --arg k "$kind" --arg f "$from" --arg t "$to" --arg a "$actor" \
+    'include "transitions"; {id: "x", kind: $k, status: $f}
+     | if transition_error($t; $a) == null then 1 else 0 end')
+  eq "transition $kind $from -> $to by $actor is $( [ "$want" = 1 ] && echo legal || echo illegal)" "$want" "$got"
+done <<'EOF'
+task blocked done reconcile 1
+task ready done reconcile 1
+promote ready done reconcile 1
+epic ready done reconcile 1
+epic blocked done reconcile 1
+epic in-review done reconcile 1
+epic ready done agent 0
+epic ready done human 0
+task ready done agent 0
+task done done reconcile 0
+task cancelled done reconcile 0
+EOF
+eq "the epic-completion row is guarded to kind epic" '[{"from":["ready"],"kinds":["epic"]}]' \
+  "$(jq -c -n -L "$lib" 'include "transitions"; [transitions[] | select(.kinds) | {from, kinds}]')"
+eq "the merged-PR row covers every open status" \
+  '["approved","blocked","changes-requested","claimed","in-review","ready"]' \
+  "$(jq -c -n -L "$lib" 'include "transitions";
+      [transitions[] | select(.to == "done" and .kinds == null and (.when | test("GC42")))][0].from | sort')"
+
+if [ "$fails" -ne 0 ]; then
+  echo "reconcile tests FAILED" >&2
+  exit 1
+fi
+echo "reconcile tests passed"

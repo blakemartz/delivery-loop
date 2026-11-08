@@ -8,7 +8,9 @@
 # needs_human is a flag, not a status, so it never appears here. Pure: no I/O.
 #
 #   transition_actors — the actor kinds: agent | human | promote | reconcile.
-#   transitions       — the table: [{from: [status], to, actors: [actor], when}].
+#   transitions       — the table: [{from: [status], to, actors: [actor], when}],
+#                       plus `kinds: [kind]` on a row that applies only to those
+#                       node kinds (absent = every kind).
 #   transition_error($to; $actor)  — input node: null when legal, else the reason.
 #   assert_transition($to; $actor) — input node unchanged when legal; else the
 #                       reason on stderr and jq exits 2 (GC8, GC47), so a
@@ -40,9 +42,10 @@ def transitions: [
    when: "patcher pushed fixes"},
   {from: ["in-review"], to: "approved", actors: ["agent"],
    when: "reviewer verdict APPROVE"},
-  {from: ["claimed", "approved", "in-review", "changes-requested"], to: "done",
-   actors: ["reconcile"],
-   when: "PR with this task_id merged into the node's target_branch (GC42)"},
+  {from: open_statuses, to: "done", actors: ["reconcile"],
+   when: "PR with this task_id merged into the node's target_branch (GC42); claimed covers a merge that lands before the label edit, blocked/ready cover label drift and human-driven PRs (reconcile rule 3: any open status)"},
+  {from: ["ready"], to: "done", actors: ["reconcile"], kinds: ["epic"],
+   when: "kind==epic only: an open epic with >= 1 child, every child done or cancelled (reconcile rule 7, GC45)"},
   {from: ["claimed"], to: "done", actors: ["promote"],
    when: "promote node with identical trees (§9)"},
   {from: ["in-review"], to: "done", actors: ["reconcile"],
@@ -51,8 +54,17 @@ def transitions: [
    when: "graph.sh transition <id> cancelled --human <name> (GC47)"}
 ];
 
+# _row_allows($from; $to; $actor; $kind) — input: one table row. The row's
+# `kinds` guard is checked explicitly, like the promote-actor guard below.
+def _row_allows($from; $to; $actor; $kind):
+  .to == $to
+  and any(.from[]; . == $from)
+  and any(.actors[]; . == $actor)
+  and (.kinds == null or any(.kinds[]; . == $kind));
+
 def transition_error($to; $actor):
   .status as $from
+  | .kind as $kind
   | (.kind == "promote") as $promote_node
   | "\(.id | tojson): \($from) -> \($to) by \($actor)" as $move
   | if any(transition_actors[]; . == $actor) | not then
@@ -61,9 +73,7 @@ def transition_error($to; $actor):
       "unknown status \($to | tojson) (expected \(node_statuses | join("|")))"
     elif $actor == "promote" and ($promote_node | not) then
       "illegal transition \($move): the promote actor acts only on promote nodes"
-    elif any(transitions[];
-             (.to == $to) and any(.from[]; . == $from) and any(.actors[]; . == $actor))
-    then null
+    elif any(transitions[]; _row_allows($from; $to; $actor; $kind)) then null
     else "illegal transition \($move)" end;
 
 def assert_transition($to; $actor):

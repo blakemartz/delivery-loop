@@ -1,0 +1,11 @@
+{"nodes": [
+  {"id": "42", "status": "approved", "target_branch": "release/x",
+   "claim": {"actor": "agent-1", "run": "run-1", "at": "2026-12-31T22:00:00Z", "by": "agent"}},
+  {"id": "43", "status": "approved", "target_branch": "release/x",
+   "claim": {"actor": "agent-2", "run": "run-2", "at": "2026-12-31T22:00:00Z", "by": "agent"}},
+  {"id": "44", "status": "approved", "target_branch": "release/x",
+   "claim": {"actor": "agent-3", "run": "run-3", "at": "2026-12-31T22:00:00Z", "by": "agent"}}
+ ],
+ "prs": [{"number": 142, "state": "merged", "task_id": "42", "base": "release/x"},
+         {"number": 143, "state": "merged", "task_id": "43", "base": "main"},
+         {"number": 144, "state": "merged", "task_id": "44", "base": "release/x", "labels": []}]}
