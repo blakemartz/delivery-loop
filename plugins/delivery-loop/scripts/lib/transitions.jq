@@ -36,6 +36,8 @@ def transitions: [
    when: "stale reclaim; claimant releases (promote: red gate, GC50)"},
   {from: ["claimed"], to: "in-review", actors: ["agent", "reconcile", "promote"],
    when: "PR opened (reconcile: open PR exists, GC43; promote: promotion PR opened, GC51)"},
+  {from: ["ready", "blocked"], to: "in-review", actors: ["reconcile"],
+   when: "status drift: an open agent PR with this task_id while the claim was cleared or the status relabelled (reconcile rule 4, GC69)"},
   {from: ["in-review"], to: "changes-requested", actors: ["agent"],
    when: "reviewer verdict REQUEST_CHANGES"},
   {from: ["changes-requested"], to: "in-review", actors: ["agent"],

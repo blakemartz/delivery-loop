@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for lib/tick-plan.jq and tick-plan.sh (docs/delivery_graph_spec.md §5
-# `tick-plan.jq`, §9): golden cases GC12–GC20, GC39 (plan assertion), GC62 and
-# the `tick-plan.sh` part of GC59 (§12, §17 row A6).
+# `tick-plan.jq`, §9): golden cases GC12–GC20, GC39 (plan assertion), GC62, GC70
+# and the `tick-plan.sh` part of GC59 (§12, §17 rows A6, A7).
 #
 # Offline. The plan cases run tick_plan over the sparse fixtures in
 # fixtures/tick-plan/ (expand.jq fills in the §4.1/§4.2 defaults). The script
@@ -113,6 +113,34 @@ waits_for "GC39 the promotion PR awaits a human merge" gc39 "promotion PR #41 (p
 eq "GC62 changes-requested at patch_iteration 3 -> patch emitted" '["patch 62"]' "$(acts gc62)"
 eq "GC62 patch reason names the escalation" true \
   "$(plan gc62 '.actions[0].reason | test("3/3: patch-task escalates")')"
+
+# --- GC70 hardening: no duplicate starts or merges, base check ----------------------------
+# A claim-less, module-less node whose agent PR is still open (status drifted to
+# ready) is in ready.jq's set, but must not be started: that would spawn a
+# duplicate implementation. No module lock protects it.
+eq "GC70 claim-less, module-less node with an open agent PR -> no start (the free task starts)" \
+  '["start t-free"]' "$(acts gc70-start)"
+waits_for "GC70 the PR-held node is named in waiting" gc70-start \
+  "t-drift is not started: it has an open agent PR (#70)"
+eq "GC70 serial: the PR-held top task is skipped, the next ready task starts" \
+  '["start t-free"]' "$(acts gc70-start '.flags = {}')"
+eq "GC70 control: without the PR the drifted node is started" \
+  '["start t-drift","start t-free"]' "$(acts gc70-start '.prs = []')"
+# Any status: an in-review node whose claim a human cleared is reviewed, not started.
+eq "GC70 claim cleared on an in-review node -> review, no start" \
+  '["review 70","start t-free"]' \
+  "$(jq -c -L "$lib" -L "$fx" 'include "expand"; include "tick-plan";
+      full_input | .nodes[0] |= (.status = "in-review" | .claim = null)
+      | tick_plan | [.actions[] | "\(.action) \(.pr // .id)"]' "$fx/gc70-start.json")"
+
+eq "GC70 two approved clean PRs for one task -> one merge (lowest PR); base mismatch -> none" \
+  '["merge 71","merge 74"]' "$(acts gc70-merge)"
+waits_for "GC70 the duplicate approved PR waits for a human" gc70-merge \
+  "PR #72 (t-dup) is approved too, but PR #71 merges for the task"
+waits_for "GC70 the off-base PR waits for a human" gc70-merge \
+  "PR #73 (t-base) is approved but targets main, not the node's target release/x"
+eq "GC70 control: with the base fixed, the off-base PR merges" \
+  '["merge 71","merge 73","merge 74"]' "$(acts gc70-merge '.prs[2].base = "release/x"')"
 
 # --- batch and mode rules -------------------------------------------------------------
 eq "misc: merges, then promotes, then agent actions in priority order" \

@@ -1,0 +1,8 @@
+{"flags": {"auto_merge": true},
+ "nodes": [{"id": "t-dup", "status": "approved"},
+           {"id": "t-base", "status": "approved", "target_branch": "release/x"},
+           {"id": "t-ok", "status": "approved", "target_branch": "release/x"}],
+ "prs": [{"number": 72, "task_id": "t-dup"},
+         {"number": 71, "task_id": "t-dup"},
+         {"number": 73, "task_id": "t-base", "base": "main"},
+         {"number": 74, "task_id": "t-ok", "base": "release/x"}]}

@@ -247,6 +247,7 @@ spec's §5 table, which is amended to match (§16):
 | ready | claimed | agent \| human \| promote | `claim` (promote only on `kind=="promote"` nodes) |
 | claimed | ready | reconcile \| agent \| promote | stale reclaim; claimant releases (promote: red gate, GC50) |
 | claimed | in-review | agent \| reconcile \| promote | PR opened (reconcile: open PR exists, GC43; promote: promotion PR opened, GC51) |
+| ready \| blocked | in-review | reconcile | status drift: an open agent PR with this `task_id` while the claim was cleared or the status relabelled (reconcile rule 4, GC69) |
 | in-review | changes-requested | agent (reviewer) | verdict REQUEST_CHANGES |
 | changes-requested | in-review | agent (patcher) | fixes pushed |
 | in-review | approved | agent (reviewer) | verdict APPROVE |
@@ -277,8 +278,11 @@ backend applies them, and `--fix` prints them as `fix: …` lines.
    On github the backend applies this by closing the issue with `--reason completed`
    and a comment naming the PR. That is needed because GitHub's closing keywords
    only act on PRs into the default branch.
-4. **Open PR → in-review.** An open agent PR with `task_id` X while X is `claimed`
-   sets X to `in-review` (GC43).
+4. **Open PR → in-review.** An open agent PR with `task_id` X while X is `claimed`,
+   `ready` or `blocked` sets X to `in-review` (GC43). `ready`/`blocked` are status
+   drift: the claim was cleared or the status relabelled while the PR stayed open
+   (GC69). Rule 4 is applied before rules 1 and 2, so an open PR outranks the deps
+   and a drifted node is not first moved between `ready` and `blocked`.
 5. **Stale agent claims.** A claim with `by=="agent"`, no open PR for the node,
    `now - updated_at > 4h` and `needs_human` false is released to `ready`, with the
    reason `RECLAIMED` (GC24). The github backend keeps the
@@ -313,11 +317,17 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
    rather than silently stranded (GC62).
 3. **rebase.** The node is `approved`, `mergeable=="conflicting"`,
    `patch_iteration < 3`, and `needs_human` is false.
-4. **review.** The node is `in-review` and `reviewed_at_head` is false.
+4. **review.** The node is `in-review`, `reviewed_at_head` is false, and
+   `needs_human` is false; a PR labeled `needs-human` is not reviewed either
+   (parity with v0.1.4: never act on needs-human items).
 5. **promote.** The node is a promote node with status `ready` and `needs_human`
    false (§9). A promote node whose gate went red is not re-run every tick
    (GC19).
-6. **start.** The ready set, in `ready.jq` order.
+6. **start.** The ready set, in `ready.jq` order, minus every node with an open
+   agent PR. Such a node is never started, whatever its status (a cleared claim or
+   a drifted `ready` label would otherwise spawn a duplicate implementation, and a
+   module-less node has no lock to stop it); it is listed in `waiting`, and
+   reconcile rule 4 repairs its status (GC70).
 
 **Promotion PRs never produce merge actions**, even under `auto_merge` (GC39).
 
@@ -789,6 +799,7 @@ the case assertions it owns.
 | GC11 | body `Depends-on: #3`, native blockedBy #3 and #4 | `deps` ids `["3","4"]` |
 | GC42 | approved node X, target `release/x` (not the default branch); merged agent PR with `Delivery-Task: X`, base `release/x` | reconcile record X → `done`; the github backend closes the issue `completed` with a comment naming the PR |
 | GC43 | node `claimed`; open agent PR with its `task_id` | reconcile record `claimed → in-review` |
+| GC69 | open agent PRs for a `ready` node, a `blocked` node whose deps are done, and a `ready` node with an unmet dep; a `ready` node with only a non-agent PR | reconcile records `ready → in-review`, `blocked → in-review`, `ready → in-review` (no `blocked → ready` or `ready → blocked` first); none for the non-agent PR |
 | GC44 | human claim idle 73h, `pinged_at` null / set | exactly one `ping` record / none; never released |
 | GC45 | epic with children `done` + `cancelled`, one of them linked only through the epic's `- [ ] #N` checklist (github fixture) | epic → `done`; the checklist-only child counts toward completion, and its own `epic` stays null (parity) |
 | GC47 | `transition <id> cancelled` with `--actor agent` / `--human ann` | exit 2, unchanged / `cancelled` |
@@ -810,6 +821,7 @@ the case assertions it owns.
 | GC20 | nothing actionable | `actions: []`, `waiting` names the reason |
 | GC39 | `--auto-merge`; open promotion PR, clean+success | no `merge` action for it; `tick-merge.sh` on it exits 1 |
 | GC62 | changes-requested agent PR at `patch_iteration` 3 | `patch` action is emitted (the patcher escalates) |
+| GC70 | (a) claim-less, module-less `ready` node with an open agent PR, plus a free ready task; (b) `--auto-merge`; two approved clean PRs for one task, and an approved clean PR whose `base` differs from its node's `target_branch` | (a) no `start` for the node (listed in `waiting`), the free task starts; (b) one `merge`, the lower PR number; no `merge` for the off-base PR; both listed in `waiting` |
 
 **Local backend:**
 

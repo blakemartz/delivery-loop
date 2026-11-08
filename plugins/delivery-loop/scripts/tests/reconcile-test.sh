@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Tests for lib/reconcile.jq (docs/delivery_graph_spec.md §5 `reconcile.jq`):
 # the reconcile assertions of golden cases GC2, GC4, GC6, GC7, GC24 (record),
-# GC25 (record), GC42 (record), GC43, GC44, GC45 (record) and GC65 (§12, §17
-# row A5), plus the amended §5 rows of lib/transitions.jq that reconcile's
+# GC25 (record), GC42 (record), GC43, GC44, GC45 (record), GC65 and GC69 (§12,
+# §17 rows A5, A7), plus the amended §5 rows of lib/transitions.jq that reconcile's
 # records depend on (merged PR -> done from every open status; epic ready -> done).
 #
 # Offline. GC2/GC4/GC6/GC7 reuse the ready fixtures (fixtures/ready/); the other
@@ -128,6 +128,15 @@ run_sparse gc43
 eq "GC43 claimed + open agent PR -> claimed -> in-review (non-agent PR: none)" \
   '["transition gc43-claimed claimed->in-review"]' "$(moves)"
 
+# GC69: status drift. An open agent PR whose node drifted to ready/blocked is
+# repaired to in-review. Rule 4 runs before rules 1/2, so neither the done dep
+# (blocked -> ready) nor the unmet dep (ready -> blocked) wins.
+run_sparse gc69
+eq "GC69 open agent PR on a ready/blocked node -> in-review (non-agent PR: none)" \
+  '["transition gc69-ready ready->in-review","transition gc69-blocked blocked->in-review","transition gc69-ready-unmet ready->in-review"]' \
+  "$(moves)"
+eq "GC69 the drift record names the PR" '"open PR #69"' "$(jq -c '.[0].reason' "$tmp/out")"
+
 # --- rule 6: stale human claims ----------------------------------------------------------
 run_sparse gc44
 eq "GC44 human claim idle 73h: one ping when pinged_at is null, none when set; never released" \
@@ -190,6 +199,12 @@ while read -r kind from to actor want; do
      | if transition_error($t; $a) == null then 1 else 0 end')
   eq "transition $kind $from -> $to by $actor is $( [ "$want" = 1 ] && echo legal || echo illegal)" "$want" "$got"
 done <<'EOF'
+task ready in-review reconcile 1
+task blocked in-review reconcile 1
+promote ready in-review reconcile 1
+task ready in-review agent 0
+task ready in-review human 0
+task approved in-review reconcile 0
 task blocked done reconcile 1
 task ready done reconcile 1
 promote ready done reconcile 1
