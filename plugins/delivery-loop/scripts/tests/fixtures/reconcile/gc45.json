@@ -1,0 +1,13 @@
+{"nodes": [
+  {"id": "1", "kind": "epic", "checklist": ["3"], "size": null},
+  {"id": "2", "epic": "1", "status": "done"},
+  {"id": "3", "status": "cancelled"},
+  {"id": "4", "kind": "epic", "status": "blocked", "size": null},
+  {"id": "7", "epic": "4", "status": "done"},
+  {"id": "5", "kind": "epic", "size": null},
+  {"id": "8", "epic": "5", "status": "done"},
+  {"id": "9", "epic": "5", "status": "in-review",
+   "claim": {"actor": "agent-1", "run": "run-1", "at": "2026-12-31T22:00:00Z", "by": "agent"}},
+  {"id": "6", "kind": "epic", "size": null}
+ ],
+ "prs": [{"number": 90, "task_id": "9"}]}
