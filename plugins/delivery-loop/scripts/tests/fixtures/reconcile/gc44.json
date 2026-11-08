@@ -1,0 +1,10 @@
+{"nodes": [
+  {"id": "gc44-unpinged", "status": "claimed", "updated_at": "2026-12-28T23:00:00Z",
+   "claim": {"actor": "ann", "run": null, "at": null, "by": "human"}},
+  {"id": "gc44-pinged", "status": "claimed", "updated_at": "2026-12-28T23:00:00Z",
+   "pinged_at": "2026-12-28T23:00:00Z",
+   "claim": {"actor": "bob", "run": null, "at": null, "by": "human"}},
+  {"id": "gc44-recent", "status": "claimed", "updated_at": "2026-12-29T01:00:00Z",
+   "claim": {"actor": "cy", "run": null, "at": null, "by": "human"}}
+ ],
+ "prs": []}

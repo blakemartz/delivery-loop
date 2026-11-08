@@ -1,0 +1,8 @@
+{"nodes": [
+  {"id": "gc43-claimed", "status": "claimed",
+   "claim": {"actor": "agent-1", "run": "run-1", "at": "2026-12-31T22:00:00Z", "by": "agent"}},
+  {"id": "gc43-human-pr", "status": "claimed",
+   "claim": {"actor": "agent-2", "run": "run-2", "at": "2026-12-31T22:00:00Z", "by": "agent"}}
+ ],
+ "prs": [{"number": 43, "task_id": "gc43-claimed"},
+         {"number": 44, "task_id": "gc43-human-pr", "labels": []}]}

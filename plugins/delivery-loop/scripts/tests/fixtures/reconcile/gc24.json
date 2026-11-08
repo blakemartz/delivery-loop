@@ -1,0 +1,78 @@
+{
+  "nodes": [
+    {
+      "id": "gc24-stale",
+      "status": "claimed",
+      "updated_at": "2026-12-31T19:00:00Z",
+      "claim": {
+        "actor": "agent-1",
+        "run": "run-1",
+        "at": "2026-12-31T18:00:00Z",
+        "by": "agent"
+      }
+    },
+    {
+      "id": "gc24-fresh",
+      "status": "claimed",
+      "updated_at": "2026-12-31T21:00:00Z",
+      "claim": {
+        "actor": "agent-2",
+        "run": "run-2",
+        "at": "2026-12-31T21:00:00Z",
+        "by": "agent"
+      }
+    },
+    {
+      "id": "gc24-has-pr",
+      "status": "in-review",
+      "updated_at": "2026-12-01T00:00:00Z",
+      "claim": {
+        "actor": "agent-3",
+        "run": "run-3",
+        "at": "2026-12-01T00:00:00Z",
+        "by": "agent"
+      }
+    },
+    {
+      "id": "gc24-flagged",
+      "status": "claimed",
+      "needs_human": true,
+      "updated_at": "2026-12-01T00:00:00Z",
+      "claim": {
+        "actor": "agent-4",
+        "run": "run-4",
+        "at": "2026-12-01T00:00:00Z",
+        "by": "agent"
+      }
+    },
+    {
+      "id": "gc24-offset",
+      "status": "claimed",
+      "updated_at": "2026-12-31T22:30:00.500+03:00",
+      "claim": {
+        "actor": "agent-5",
+        "run": "run-5",
+        "at": "2026-12-31T22:30:00.500+03:00",
+        "by": "agent"
+      }
+    },
+    {
+      "id": "gc24-offset-fresh",
+      "status": "claimed",
+      "updated_at": "2026-12-31T19:30:00-02:00",
+      "claim": {
+        "actor": "agent-6",
+        "run": "run-6",
+        "at": "2026-12-31T19:30:00-02:00",
+        "by": "agent"
+      }
+    }
+  ],
+  "prs": [
+    {
+      "number": 3,
+      "task_id": "gc24-has-pr",
+      "labels": []
+    }
+  ]
+}

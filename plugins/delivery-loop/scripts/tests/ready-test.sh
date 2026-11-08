@@ -227,7 +227,7 @@ task approved done reconcile 1
 task in-review done reconcile 1
 task changes-requested done reconcile 1
 task approved done agent 0
-task ready done reconcile 0
+task ready done reconcile 1
 promote claimed done promote 1
 task claimed done promote 0
 promote in-review done reconcile 1
