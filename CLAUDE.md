@@ -114,10 +114,17 @@ is `scripts/check.sh`. Two things to keep straight:
   delivery-loop` to dogfood it; a task's acceptance criteria can only rely on
   loop behavior that is already installed.
 
-Modules: `engine` (`plugins/delivery-loop/scripts/**`), `skills`
-(`plugins/delivery-loop/skills/**`), plus the built-in `infra` and `docs`.
+Modules: `policy`, `graph`, `forge`, `plan`, `engine`, `skills`, plus the built-in
+`infra` and `docs`. Path ownership (first match wins) is the table in
+`docs/delivery_graph_spec.md` §14: `plan` = `plan.sh` + `lib/plan-*.jq`;
+`policy` = other `lib/*.jq` + `tick-plan.sh`; `graph` = `graph.sh`,
+`backends/graph-*`, `task-queue.sh`, `claim-task.sh`; `forge` = `forge.sh` +
+`backends/forge-*`; `engine` = every other script — all under
+`plugins/delivery-loop/scripts/`; `skills` = `plugins/delivery-loop/skills/**`.
 A task that touches shipped plugin content must include the version bump (both
-manifests) in its acceptance criteria.
+manifests) in its acceptance criteria — **except** on a release branch (e.g.
+`release/0.2.0`), where the bump happens once, in the release's final task, and
+nothing reaches `main` (what installed copies track) until the promotion PR.
 
 ## Release protocol
 
