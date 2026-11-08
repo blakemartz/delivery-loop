@@ -1,0 +1,18 @@
+{
+  "number": 39,
+  "url": "https://github.com/example/repo/pull/39",
+  "state": "open",
+  "head": "task/42-v0-2-a3-shapes",
+  "base": "release/0.2.0",
+  "head_sha": "767b6884d1c0f1e2a3b4c5d6e7f8091a2b3c4d5e",
+  "mergeable": "mergeable",
+  "checks": "none",
+  "task_id": "42",
+  "labels": [
+    "agent-authored"
+  ],
+  "patch_iteration": 1,
+  "reviewed_at_head": true,
+  "agent": true,
+  "author": "astra"
+}
