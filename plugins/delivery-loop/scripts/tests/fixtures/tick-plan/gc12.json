@@ -1,0 +1,6 @@
+{"flags": {},
+ "nodes": [{"id": "t-patch", "status": "changes-requested"},
+           {"id": "t-review", "status": "in-review"},
+           {"id": "t-ready"}],
+ "prs": [{"number": 1, "task_id": "t-patch", "patch_iteration": 1},
+         {"number": 2, "task_id": "t-review"}]}

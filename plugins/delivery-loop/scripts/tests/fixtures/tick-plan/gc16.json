@@ -1,0 +1,3 @@
+{"flags": {"parallel": 3},
+ "nodes": [{"id": "t-capped", "status": "approved"}],
+ "prs": [{"number": 21, "task_id": "t-capped", "mergeable": "conflicting", "patch_iteration": 3}]}
