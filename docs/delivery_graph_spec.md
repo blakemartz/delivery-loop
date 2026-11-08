@@ -250,7 +250,8 @@ spec's §5 table, which is amended to match (§16):
 | in-review | changes-requested | agent (reviewer) | verdict REQUEST_CHANGES |
 | changes-requested | in-review | agent (patcher) | fixes pushed |
 | in-review | approved | agent (reviewer) | verdict APPROVE |
-| claimed \| approved \| in-review \| changes-requested | done | reconcile | PR with this `task_id` merged into the node's `target_branch` (GC42). `claimed` covers a merge that lands before the label edit. |
+| blocked \| ready \| claimed \| in-review \| changes-requested \| approved | done | reconcile | PR with this `task_id` merged into the node's `target_branch` (GC42). `claimed` covers a merge that lands before the label edit; `blocked`/`ready` cover label drift and human-driven PRs (reconcile rule 3: any open status). |
+| ready | done | reconcile | `kind=="epic"` only: an open epic with ≥ 1 child, every child `done` or `cancelled` (reconcile rule 7, GC45) |
 | claimed | done | promote | promote node with identical trees (§9) |
 | in-review | done | reconcile | promotion PR merged (§9) |
 | any open status | cancelled | human | `graph.sh transition <id> cancelled --human <name>`; any other actor gets exit 2 (GC47) |

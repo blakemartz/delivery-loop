@@ -1,0 +1,4 @@
+{"flags": {},
+ "nodes": [{"id": "t-dep", "status": "approved"},
+           {"id": "t-blocked", "status": "blocked", "deps": ["t-dep"]}],
+ "prs": [{"number": 31, "task_id": "t-dep"}]}
