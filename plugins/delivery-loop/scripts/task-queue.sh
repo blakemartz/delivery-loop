@@ -71,6 +71,7 @@ if [ "$FIX" = 1 ]; then
   # and acts at most once per (issue, PR): an `AUTO-CLOSE: PR #<pr>` comment marks
   # it done, so a human who reopens the task is never overridden.
   default_branch=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo "")
+  [ -n "$default_branch" ] || echo "warn: could not read the repo default branch; skipping close-on-merge step" >&2
   if [ -n "$default_branch" ] && [ "$BASE_BRANCH" != "$default_branch" ]; then
     merged_limit=500
     merged=$(gh pr list --state merged --base "$BASE_BRANCH" --limit "$merged_limit" \
@@ -83,20 +84,21 @@ if [ "$FIX" = 1 ]; then
     while IFS=$'\t' read -r n pr; do
       [ -n "$n" ] || continue
       marked=$(gh issue view "$n" --json comments \
-        --jq "[.comments[] | select(.body | startswith(\"AUTO-CLOSE: PR #$pr \"))] | length")
+        --jq "[.comments[] | select(.body | startswith(\"AUTO-CLOSE: PR #\"))] | length" \
+        2>/dev/null || echo "unknown")
       [ "$marked" = "0" ] || continue
       gh issue close "$n" --reason completed --comment \
         "AUTO-CLOSE: PR #$pr merged into $BASE_BRANCH (closing keywords only fire on the default branch). (Reconciled by scripts/task-queue.sh --fix.)" >/dev/null
       echo "fix: #$n closed (PR #$pr merged into $BASE_BRANCH)" >&2
       closed_any=1
     done < <(jq -r --argjson open "$open_nums" '
-        .[] | .number as $pr
-        | [ (.body // "")
-            | scan("(?i)(?:^|[^A-Za-z0-9_-])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?[ \t]+#([0-9]+)(?![0-9A-Za-z_])")
-            | .[0] | tonumber ]
-        | unique[] | . as $n
-        | select($open | index($n) != null)
-        | "\($n)\t\($pr)"' <<<"$merged")
+        [ .[] | .number as $pr
+          | (.body // "")
+          | scan("(?i)(?:^|[^A-Za-z0-9_-])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?[ \t]+#([0-9]+)(?![0-9A-Za-z_])")
+          | {n: (.[0] | tonumber), pr: $pr} ]
+        | group_by(.n) | map(max_by(.pr))[]
+        | select(.n as $n | $open | index($n) != null)
+        | "\(.n)\t\(.pr)"' <<<"$merged")
     if [ "$closed_any" = 1 ]; then fetch_and_annotate; fi
   fi
   # blocked -> ready (never un-freeze a needs-human task)
