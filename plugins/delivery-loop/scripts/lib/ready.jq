@@ -11,7 +11,7 @@
 #                     target_branch}], best first.
 #   ready           — ready_set as a stream (one JSON line each with `jq -c`).
 #
-# Ready iff: a task; not done/cancelled; every dep exists and is done (a
+# Ready iff: a task; not done/cancelled; deps_done (graph.jq: every dep exists and is done; a
 # cancelled or unknown dep never satisfies readiness, GC2/GC7); unclaimed (a
 # human assignee is a `by: "human"` claim, §4.1); size is not L; not needs_human.
 # The status label is a cache (design spec §5.1), so it is deliberately not
@@ -29,7 +29,7 @@ include "graph";
 def is_ready($idx):
   .kind == "task"
   and is_open
-  and all(.deps[]; $idx[.id].status == "done")
+  and deps_done($idx)
   and .claim == null
   and .size != "L"
   and (.needs_human | not);

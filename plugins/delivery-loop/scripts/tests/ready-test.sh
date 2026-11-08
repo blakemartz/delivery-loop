@@ -97,6 +97,59 @@ eq "cycles: self-loop and two cycles sharing a node, each once" \
 eq "cycles: acyclic graph (unknown dep included) -> []" '[]' \
   "$(jq -c -L "$lib" 'include "graph"; cycles' "$fx/gc7.json")"
 
+eq "cycles: numeric ids root at the numerically smallest (98 < 100), slugs after" \
+  '[["98","100","99","98"],["x","x"]]' \
+  "$(jq -c -n -L "$lib" 'include "graph";
+      [{id:"x",deps:[{id:"x"}]},{id:"100",deps:[{id:"99"}]},
+       {id:"99",deps:[{id:"98"}]},{id:"98",deps:[{id:"100"}]}] | cycles')"
+
+# Regression (PR #41 review): cycles must not enumerate every path of an acyclic
+# graph. Both boards are acyclic; the old walk took ~16s on the first and did not
+# finish the second in 60s. Now each takes well under a second; the 10s bound
+# only catches a return to exponential behavior, even on a slow CI machine.
+# timed_cycles <name> <nodes-file>: assert `cycles` is [] within the bound.
+timed_cycles() {
+  local start=$SECONDS got
+  got=$(jq -c -L "$lib" 'include "graph"; cycles' "$2")
+  eq "$1 -> []" '[]' "$got"
+  if [ $((SECONDS - start)) -le 10 ]; then pass "$1 finishes within 10s"
+  else fail "$1 finishes within 10s" "took $((SECONDS - start))s"; fi
+}
+# Issues 972..1000, each depending on the two before it (crosses a digit boundary).
+jq -n '[range(972; 1001) as $i
+        | {id: "\($i)", deps: [range(1; 3) as $k | select($i - $k >= 972) | {id: "\($i - $k)"}]}]' \
+  >"$tmp/chain.json"
+timed_cycles "cycles: 29-issue two-back chain 972..1000" "$tmp/chain.json"
+# 1000 issues, each depending on 0-3 of the 15 before it (a fixed LCG, so the
+# board is the same on every run).
+jq -n '[foreach range(1; 1001) as $i ({x: 1}; .x = ((.x * 75 + 74) % 65537);
+          {id: "\($i)",
+           deps: ([range(0; .x % 4) as $k
+                   | $i - 1 - (((.x / (4 * ($k + 1))) | floor) % 15)
+                   | select(. >= 1) | {id: "\(.)"}] | unique)})]' >"$tmp/board.json"
+eq "random board has its edges (guards the generator)" true \
+  "$(jq '[.[].deps | length] | add > 1000' "$tmp/board.json")"
+timed_cycles "cycles: random acyclic 1000-issue board" "$tmp/board.json"
+eq "cycles: one 2-cycle added to the 1000-issue board is found alone" '[["1000","2000","1000"]]' \
+  "$(jq -c -L "$lib" 'include "graph";
+      map(if .id == "1000" then .deps += [{id: "2000"}] else . end)
+      + [{id: "2000", deps: [{id: "1000"}]}] | cycles' "$tmp/board.json")"
+
+eq "deps_done: all done; one cancelled; one unknown; none" '[true,false,false,true]' \
+  "$(jq -c -n -L "$lib" 'include "graph";
+      {d: {status: "done"}, c: {status: "cancelled"}} as $idx
+      | [{deps: [{id: "d"}]}, {deps: [{id: "d"}, {id: "c"}]}, {deps: [{id: "zz"}]}, {deps: []}]
+      | map(deps_done($idx))')"
+
+# started_epic only counts a real epic (v0.1.4 parity): an `epic` reference to
+# a non-epic node with a done child is not a started epic.
+eq "started_epic: epic with a done child yes; same shape on a non-epic no" '[true,false]' \
+  "$(jq -c -n -L "$lib" 'include "graph"; include "ready";
+      [{id: "p", kind: "epic"}, {id: "q", kind: "task"},
+       {id: "c1", kind: "task", epic: "p", status: "done"},
+       {id: "c2", kind: "task", epic: "q", status: "done"}]
+      | index_by_id as $idx | [started_epic("p"; $idx), started_epic("q"; $idx)]')"
+
 eq "unblocks counts open dependents only (cancelled 19 excluded)" '[2,0,2]' \
   "$(jq -c -L "$lib" 'include "graph"; [unblocks("12"), unblocks("15"), unblocks("12")]' "$fx/gc5-nodes.json")"
 
