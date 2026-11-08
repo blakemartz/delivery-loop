@@ -1,0 +1,6 @@
+{"flags": {},
+ "nodes": [{"id": "e1", "kind": "epic", "status": "done"},
+           {"id": "e2", "kind": "epic", "status": "done"},
+           {"id": "p", "kind": "promote", "deps": ["e1", "e2"], "status": "ready",
+            "target_branch": "release/x", "promote_to": "main"}],
+ "prs": []}
