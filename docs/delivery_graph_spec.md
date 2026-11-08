@@ -151,7 +151,9 @@ on drift).
 | `id` | string | github: the issue number as a string (`"42"`). local: a slug matching `^[a-z0-9]+(-[a-z0-9]+)*$`, ≤ 40 chars, must not contain `--`. |
 | `kind` | `task` \| `epic` \| `promote` | github: from the `task` / `epic` / `promote` labels. |
 | `title` | string | |
-| `epic` | string \| null | parent epic id. github, first match wins: native `parent.number`; then legacy `Part of epic #E` / `[Ee]pic #E` in the task body; then membership in an epic's `- [ ] #N` checklist. This is parity with v0.1.4's union of the three conventions. |
+| `epic` | string \| null | parent epic id, used for ordering and output. github: native `parent.number`, else the legacy `[Ee]pic #E` body match. That is parity with v0.1.4, whose task `epic` came from the body only. |
+| `checklist` | [string] | epic nodes only: ids from the epic's own `- [ ] #N` checklist (github). It is empty on local. `children(epic)` = nodes whose `epic` is this epic ∪ `checklist`. This is used only for the started-epic flag and epic completion, as in v0.1.4. |
+| `pinged_at` | ISO-8601 \| null | when a stale-human-claim ping was last posted. github: the newest `STALE-CLAIM-PING` comment; local: the newest `comment` event with that prefix. |
 | `module` | string \| null | from `module:<m>`. |
 | `size` | `S` \| `M` \| `L` \| null | |
 | `deps` | `[{id, via}]` | blocking edges. `via` is a string, or null for legacy edges. github: union of native `blockedBy.nodes[].number` and legacy `Depends-on:` lines, deduplicated (GC11). |
@@ -243,12 +245,12 @@ spec's §5 table, which is amended to match (§16):
 | blocked | ready | reconcile | every dep `done`, not `needs_human` |
 | ready | blocked | reconcile | a dep is not `done` |
 | ready | claimed | agent \| human \| promote | `claim` (promote only on `kind=="promote"` nodes) |
-| claimed | ready | reconcile \| agent | stale reclaim; claimant releases |
+| claimed | ready | reconcile \| agent \| promote | stale reclaim; claimant releases (promote: red gate, GC50) |
 | claimed | in-review | agent \| reconcile \| promote | PR opened (reconcile: open PR exists, GC43; promote: promotion PR opened, GC51) |
 | in-review | changes-requested | agent (reviewer) | verdict REQUEST_CHANGES |
 | changes-requested | in-review | agent (patcher) | fixes pushed |
 | in-review | approved | agent (reviewer) | verdict APPROVE |
-| approved \| in-review \| changes-requested | done | reconcile | PR with this `task_id` merged into the node's `target_branch` (GC42) |
+| claimed \| approved \| in-review \| changes-requested | done | reconcile | PR with this `task_id` merged into the node's `target_branch` (GC42). `claimed` covers a merge that lands before the label edit. |
 | claimed | done | promote | promote node with identical trees (§9) |
 | in-review | done | reconcile | promotion PR merged (§9) |
 | any open status | cancelled | human | `graph.sh transition <id> cancelled --human <name>`; any other actor gets exit 2 (GC47) |
@@ -258,7 +260,8 @@ spec's §5 table, which is amended to match (§16):
 - `graph.sh transition <id> <to> [--actor agent|human|promote]` validates
   `(from, to, actor)` and exits 2 on an illegal transition, without writing (GC8).
 - Reconcile's own fix records are validated against the same table before being
-  applied. A record that fails validation is printed as a warning and skipped.
+  applied. A record that fails validation is printed as a warning and skipped
+  (GC65).
 
 **`reconcile.jq`.** Input: `{nodes, prs, now}`. `prs` contains the open PRs plus the
 PRs merged since the oldest open node was created; §6.2 and §6.3 describe the
@@ -267,7 +270,8 @@ backend applies them, and `--fix` prints them as `fix: …` lines.
 
 1. `blocked → ready` when every dep is `done`. Never while `needs_human`.
 2. `ready → blocked` when deps are unmet.
-3. **Merged PR → done, on every backend.** An agent PR with `task_id` X,
+3. **Merged PR → done, on every backend.** An agent PR with `task_id` X (X in any
+   open status),
    `state=="merged"` and `base == X.target_branch` sets X to `done` (GC25, GC42).
    On github the backend applies this by closing the issue with `--reason completed`
    and a comment naming the PR. That is needed because GitHub's closing keywords
@@ -279,8 +283,7 @@ backend applies them, and `--fix` prints them as `fix: …` lines.
    reason `RECLAIMED` (GC24). The github backend keeps the
    `RECLAIMED: agent claim was idle >4h…` comment text verbatim.
 6. **Stale human claims.** A claim with `by=="human"` and `now - updated_at > 72h`
-   gets exactly one `ping` record. No ping is emitted if one already exists: github
-   detects a `STALE-CLAIM-PING` comment, local a `comment` event with that prefix.
+   gets exactly one `ping` record, emitted only when `pinged_at` is null (§4.1).
    Human claims are never released (GC44).
 7. **Epics done.** An open epic with ≥ 1 child is set to `done` when every child is
    `done` or `cancelled` (GC45). Parity with v0.1.4, which closed an epic when every
@@ -302,12 +305,17 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
    and `checks` is `success` **or `none`** (parity: v0.1.4's "every check SUCCESS"
    is vacuously true with no checks). Its node is a `task` with status `approved`.
    The PR has no `needs-human` label, and the node's `needs_human` is false.
-2. **patch.** The node is `changes-requested`, `patch_iteration < 3`, and
-   `needs_human` is false.
+2. **patch.** The node is `changes-requested` and `needs_human` is false. There is
+   **no iteration filter** (parity with v0.1.4). At `patch_iteration == 3` the
+   dispatched `patch-task` performs the escalation itself: it sets `needs-human`,
+   runs `NOTIFY_ESCALATE_CMD` and stops. So a task at the cap is escalated once
+   rather than silently stranded (GC62).
 3. **rebase.** The node is `approved`, `mergeable=="conflicting"`,
    `patch_iteration < 3`, and `needs_human` is false.
 4. **review.** The node is `in-review` and `reviewed_at_head` is false.
-5. **promote.** The node is a promote node with status `ready` (§9).
+5. **promote.** The node is a promote node with status `ready` and `needs_human`
+   false (§9). A promote node whose gate went red is not re-run every tick
+   (GC19).
 6. **start.** The ready set, in `ready.jq` order.
 
 **Promotion PRs never produce merge actions**, even under `auto_merge` (GC39).
@@ -366,7 +374,7 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
   used the default 30, which blinded the stale-claim reaper (GC33).
 - **PRs for reconcile.** Reconcile receives `forge.sh pr-list --state open` plus
   `forge.sh pr-list --state merged --since <oldest open node's created_at>`. Rule 3
-  needs the merged set.
+  needs the merged set; §7.3 maps the merged feed per forge (GC67).
 - **Native relations.** `blockedBy.nodes[].number` and `parent.number` (shape
   verified 2026-11-08: `{"blockedBy":{"nodes":[{"number":7,"state":"OPEN",…}],"totalCount":3},"parent":{"number":1,…}}`).
   Requires gh ≥ 2.94.0. On older gh (detected by `gh --version`), the backend reads
@@ -375,7 +383,7 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
   - Native relations on GitHub Enterprise Server need GHES ≥ 3.19 (UNVERIFIED).
   - The page size of nested `blockedBy` connections under `gh issue list` is
     UNVERIFIED. When `totalCount` exceeds the returned `nodes`, the backend re-reads
-    that issue with `gh issue view --json blockedBy`.
+    that issue with `gh issue view --json blockedBy` (GC64).
 - **Claims are unchanged.** The comment-ordered Lamport lock (`lib/claim-winner.jq`,
   `lib/orphan-claims.jq`) is reused as is; GitHub offers no compare-and-set on
   assignment.
@@ -388,8 +396,9 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
   blocked-by for each legacy `Depends-on:` ref and sets the native parent from
   `Part of epic #E`. Text lines are left in place (GC48).
   - It refuses to exceed 50 blockers per issue: it prints the offender and exits 1.
-    The 50-per-relationship-type cap comes from GitHub's changelog of 2025-08-21; it
-    is not in the REST reference, so it is UNVERIFIED and enforced defensively.
+    The cap is from GitHub's changelog of 2025-08-21: "You can link up to 50 issues
+    for each relationship type". It is not in the REST reference, so it is enforced
+    defensively.
   - The cap only affects `migrate` and `plan.sh apply` edge creation. §9's design
     does not depend on its exact value.
 - **Labels added to the taxonomy:** `promote` (node kind).
@@ -415,7 +424,7 @@ resolves the same directory, it is never tracked, and it survives branch switche
   - `apply` refuses an id that already exists with a different `plan_ref`, so ids
     stay unique across plans (GC35).
   - `graph.sh create` without an id assigns `<epic-id>-<n>`, with `n` = 1 + the
-    highest existing numeric suffix in that epic.
+    highest existing numeric suffix in that epic (GC66).
 - **Minimum git.** `--path-format` needs git ≥ 2.31; `init` checks it.
 - The epic node itself is in its file's `epic` field.
 - `schema` mismatch → refuse with the expected vs found version. No implicit
@@ -438,11 +447,17 @@ A lock is **stale** only when all of the following hold:
   and is treated as live.
 - The owner's host equals this host.
 - The owner's pid is not alive. `kill -0` must fail with ESRCH; EPERM means alive.
-- It is older than `LOCK_STALE_SECONDS` (default 120).
+- It is older than `LOCK_STALE_SECONDS` (default 120), judged by the epoch in the
+  owner line, never by file timestamps.
 
 Breaking a stale lock is itself serialized:
-1. The breaker takes `mkdir "$STATE_DIR/lock.break"`. A `lock.break` older than 60s
-   is removed unconditionally, since a breaker only needs milliseconds.
+1. The breaker takes `mkdir "$STATE_DIR/lock.break"`. It writes the same owner line
+   as the lock. A `lock.break` is itself stale only under the same rule as `lock`:
+   its owner on this host with a dead pid, judged by the epoch in its owner file.
+   No `stat` is needed. A stale `lock.break` is removed by re-checking the same
+   owner line under its own `mkdir lock.break.reap` step; that step's owner is
+   checked the same way, and a crash there needs operator cleanup (`graph.sh
+   unlock --force`).
 2. It re-reads `lock/owner` and re-checks staleness against the **same owner
    line** it judged stale.
 3. Only then does it remove `lock` and append a `lock-broken` event.
@@ -493,7 +508,7 @@ between (GC22).
 | `pr-review <n> approve\|request-changes\|comment --sha S --body-file F` | Posts a verdict and returns `{posted, form: "formal"\|"comment", url}`. The adapter appends `Reviewed-Head: S` to the body. If the forge rejects a self-review, it falls back to a comment-form review with the same body (GC29). If `*_REVIEW_TOKEN` is set, it posts under that identity instead (GC58). |
 | `pr-reviews <n>` | `[{author, verdict, body, at, commit}]`, used to verify a verdict landed. |
 | `pr-comment <n> --body-file F` / `pr-comments <n>` | Post / list plain comments. |
-| `pr-merge <n> --method squash\|merge --sha S` | Merges only if the head is still S (GC30), then re-reads the PR and exits 0 **only if `state=="merged"`**. On github, `gh pr merge` without `--auto` can still enable auto-merge when requirements are pending; the re-read catches that, and the adapter then disables it (`gh pr merge --disable-auto`) and exits 1. The source branch is deleted on squash. |
+| `pr-merge <n> --method squash\|merge --sha S` | Merges only if the head is still S (GC30), then re-reads the PR and exits 0 **only if `state=="merged"`**. On github, `gh pr merge` without `--auto` can still enable auto-merge when requirements are pending; the re-read catches that, and the adapter then disables it (`gh pr merge --disable-auto`) and exits 1 (GC63). The source branch is deleted on squash. |
 | `pr-set-base <n> <branch>` | Retarget the PR. |
 | `pr-files <n>` / `pr-diff <n>` | Changed paths / unified diff. |
 | `ci-failures <n>` | Best-effort failing-job log text. Exit 4 = unsupported: the patcher then reproduces the failure by running `GATE_CMD` locally. |
@@ -534,7 +549,8 @@ not in the docs.
 | `checks` | `statusCheckRollup` (every conclusion SUCCESS/NEUTRAL/SKIPPED→success; any FAILURE/ERROR/CANCELLED/TIMED_OUT/ACTION_REQUIRED/STARTUP_FAILURE→failure; else pending; empty→none) | `head_pipeline.status` (present only on the single-MR GET, so `pr-list` hydrates it): `success`→success; `failed`/`canceled`/`canceling`→failure; null→none; else pending | `GET /commits/{sha}/status`: `total_count==0`→none; `success`→success; `error`/`failure`→failure; `pending`→pending; `warning`/`skipped`→success (one statement in the adapter header; Gitea Actions posts one status per job (src)) |
 | `pr-create` | `gh pr create` | `POST /merge_requests` `source_branch,target_branch,title,description` → `iid,web_url` | `POST /pulls` `head,base,title,body` → `number,html_url` |
 | `pr-list` / `pr-find` | `gh pr list --limit $LIST_LIMIT` / `--head` | `GET /merge_requests?state=opened&per_page=100`, following `x-next-page` until empty (`x-total` is omitted above 10k) / `&source_branch=` | `GET /pulls?state=open&limit=<max_response_items>&page=n`, following `Link rel=next` / `GET /pulls/{base}/{head}` (Forgejo also has a `head` filter) |
-| `pr-review` approve | `gh pr review --approve` | `POST /merge_requests/:iid/approve` with `sha` (409 if not head) | `POST /pulls/{n}/reviews` `event=APPROVED, commit_id` |
+| `pr-list --state merged --since T` | `gh pr list --state merged --search "merged:>=T" --limit $LIST_LIMIT` (gh has no `--since`) | `GET /merge_requests?state=merged&updated_after=T&per_page=100`, then client-side `merged_at >= T` | `GET /pulls?state=closed` paged; keep `merged==true && merged_at >= T`. The swagger has no `since`, so paging stops once `updated_at < T` with `sort=recentupdate`. |
+| `pr-review` approve | `gh pr review --approve` | `POST /merge_requests/:iid/approve` with `sha` (409 if not head). The endpoint takes no body, so the verdict body (with `Reviewed-Head:`) is **also** posted as a note. | `POST /pulls/{n}/reviews` `event=APPROVED, commit_id` |
 | `pr-review` request-changes | `--request-changes` | **No REST endpoint.** Always comment form: a note whose body starts `## Adversarial review — verdict: REQUEST_CHANGES` | `event=REQUEST_CHANGES` |
 | self-review rejection | GitHub rejects on own PR | author approval is blocked by default (the setting is Premium+; behavior on Free is UNVERIFIED) | 422 "approve/reject your own pull is not allowed" (src); `COMMENT` is allowed |
 | `pr-reviews` | `reviews` | `GET .../approvals` (`approved_by[].user.username`) + `GET .../notes` (verdict-prefixed, non-`system`) | `GET /pulls/{n}/reviews` (`state, user.login, commit_id, stale, dismissed`) |
@@ -663,7 +679,7 @@ the graph itself.
 - **Merge methods.** Task PRs merge with `TASK_MERGE_METHOD` (default `squash`).
 - **Promote node** (`kind: "promote"`), created by `plan.sh apply`:
   - `deps` = the plan's **epics**, not its tasks. That keeps a large plan under
-    GitHub's (unverified, §6.2) 50-blocker cap. Epics become `done` through
+    GitHub's 50-blocker cap (§6.2). Epics become `done` through
     reconcile rule 7.
   - It carries `target_branch` (T) and `promote_to` (P).
   - `next-task` never claims it: `ready.jq` admits only `kind=="task"`.
@@ -702,7 +718,7 @@ the graph itself.
 | `decompose` | §8.5. |
 | `task-status` | `graph.sh list` + `forge.sh pr-list` → board. `--graph` prints Mermaid. `--reclaim` → `graph.sh reconcile --fix`. |
 | `init` | Asks for or detects `GRAPH_BACKEND` and `FORGE`. The local backend skips labels and creates `STATE_DIR`. Checks forge auth via `forge.sh whoami`. gh is required only when either seam is github. Its repo-settings advice keeps merge commits **enabled**, because promotion merges with `PROMOTE_MERGE_METHOD=merge`. v0.1.4 advised `--enable-merge-commit=false`. |
-| `author-spec` | Board reads via `graph.sh`. Docs-review verdict via `forge.sh pr-review --comment`. |
+| `author-spec` | Board reads via `graph.sh`. Docs-review verdict via `forge.sh pr-review <pr> comment --sha <head> --body-file F`. |
 | `author-styleguides` | No change. |
 
 ## 11. Configuration
@@ -772,9 +788,10 @@ the case assertions it owns.
 | GC11 | body `Depends-on: #3`, native blockedBy #3 and #4 | `deps` ids `["3","4"]` |
 | GC42 | approved node X, target `release/x` (not the default branch); merged agent PR with `Delivery-Task: X`, base `release/x` | reconcile record X → `done`; the github backend closes the issue `completed` with a comment naming the PR |
 | GC43 | node `claimed`; open agent PR with its `task_id` | reconcile record `claimed → in-review` |
-| GC44 | human claim idle 73h, no prior ping / with a `STALE-CLAIM-PING` | exactly one `ping` record / none; never released |
-| GC45 | epic with children `done` + `cancelled`, one of them linked only through the epic's `- [ ] #N` checklist (github fixture) | epic → `done`; the checklist child's `epic` is set |
+| GC44 | human claim idle 73h, `pinged_at` null / set | exactly one `ping` record / none; never released |
+| GC45 | epic with children `done` + `cancelled`, one of them linked only through the epic's `- [ ] #N` checklist (github fixture) | epic → `done`; the checklist-only child counts toward completion, and its own `epic` stays null (parity) |
 | GC47 | `transition <id> cancelled` with `--actor agent` / `--human ann` | exit 2, unchanged / `cancelled` |
+| GC65 | reconcile produces a fix record that the transition table rejects (fixture: a `done` node and a stale-claim rule match) | warning on stderr, record not applied, other records applied |
 | GC61 | `task-queue.sh` against the GC5 github fixture | stdout byte-identical to the captured v0.1.4 output |
 
 **Tick plan:**
@@ -788,9 +805,10 @@ the case assertions it owns.
 | GC16 | approved+conflicting PR with `patch_iteration` 3 | no rebase; listed in `waiting` |
 | GC17 | `--parallel` / `--parallel x` / `--parallel 20` / `--parallel 1` | mode parallel N=3 / 3 / 16 / serial |
 | GC18 | two ready tasks, same module, different `target_branch` | both started (parallel 2) |
-| GC19 | promote node whose epics are all done, no open promotion PR | `[promote <id>]` |
+| GC19 | promote node whose epics are all done, no open promotion PR / same with `needs_human` set | `[promote <id>]` / no promote action, listed in `waiting` |
 | GC20 | nothing actionable | `actions: []`, `waiting` names the reason |
 | GC39 | `--auto-merge`; open promotion PR, clean+success | no `merge` action for it; `tick-merge.sh` on it exits 1 |
+| GC62 | changes-requested agent PR at `patch_iteration` 3 | `patch` action is emitted (the patcher escalates) |
 
 **Local backend:**
 
@@ -817,17 +835,21 @@ the case assertions it owns.
 | GC46 | 5 PRs, each carrying exactly one linkage form (trailer; `Closes #7`; `task/x--s` head; `task/7-s` head; none) plus one carrying both a trailer and `Closes` | `task_id` per §4.3 precedence; the trailer wins |
 | GC57 | forge reports mergeability as computing on 3 polls | `mergeable:"unknown"`; tick-plan emits no merge |
 | GC58 | `*_REVIEW_TOKEN` set | dry-run request carries the review token; `form:"formal"` |
+| GC63 | github `pr-merge` where the post-merge re-read shows `state:open` with auto-merge enabled (gh shim) | `gh pr merge --disable-auto` invoked; exit 1 |
+| GC67 | merged-PR feed with `--since T`: fixtures with PRs merged before and after T, plus a closed-unmerged PR (gitea) | only PRs merged at or after T; github shim called with `--search "merged:>=T"`; gitea stops paging once `updated_at < T` |
 
 **Plans, branches, init, config:**
 
 | # | Given | Expect |
 |---|---|---|
-| GC34 | valid plan / one fixture per §8.2 error bullet | pass / exit 1 naming that error |
+| GC34 | valid plan / one fixture per §8.2 error bullet / a `size: "L"` task | pass / exit 1 naming that error / exit 0 with an `L` warning |
 | GC35 | `apply` twice (local); then a second plan reusing an id | second run creates 0 nodes; id reuse → exit 1 |
 | GC36 | `apply` (github, gh shim) | epic issue, tasks created with `--parent` and `--blocked-by` |
 | GC37 | `render` on the GC34 valid plan | Mermaid with one labeled edge per dep |
 | GC38 | `task-worktree.sh` on a node whose target branch is missing | exit 1, message names `plan.sh apply` |
-| GC48 | `graph.sh migrate` twice (gh shim); an issue needing 51 blockers | second run issues 0 edits; exit 1 naming the issue |
+| GC48 | `graph.sh migrate` twice (gh shim); an issue needing 51 blockers | first run adds native edges and leaves `Depends-on:` text in the body; second run issues 0 edits; exit 1 naming the issue |
+| GC64 | github issue whose `blockedBy.totalCount` (3) exceeds the returned `nodes` (2) | backend re-reads it via `gh issue view --json blockedBy`; `deps` has 3 ids |
+| GC66 | local `graph.sh create` without an id in epic `auth` holding `auth-1`, `auth-7` | new id `auth-8` |
 | GC49 | promote node, identical trees | `done`, note `nothing to promote`, no PR |
 | GC50 | promote node, red `PROMOTE_GATE_CMD` | `needs_human`, claim released, no PR, exit 1 |
 | GC51 | promote node, green gate | PR head T base P, body contains `Delivery-Task: <id>`; node `in-review` |
@@ -836,7 +858,7 @@ the case assertions it owns.
 | GC54 | `apply` where an existing node's title differs | `drift: <id> title`, node unchanged, exit 0 |
 | GC55 | worktree for id `ready-policy`; an existing dir `task-ready-policy-extra--x`; numeric id 12 with a legacy dir `task-12-old` | creates `task-ready-policy--<slug>` (no false match); reuses `task-12-old` |
 | GC56 | gh shim reporting 2.93.0 | text edges only, one warning line |
-| GC59 | `FORGE=gitlab`, `GITLAB_TOKEN` unset; `graph.sh ready` under an invalid config | `--check` exit 1; `graph.sh` exits 1 with no backend call (shim log empty) |
+| GC59 | `FORGE=gitlab`, `GITLAB_TOKEN` unset; each of `graph.sh`, `forge.sh`, `tick-plan.sh`, `plan.sh`, `promote.sh` under an invalid config | `--check` exit 1; every entry point exits 1 with no backend/forge call (shim log empty) |
 | GC40 | `GRAPH_BACKEND=github FORGE=gitlab GITLAB_TOKEN=x` | `--check` exit 1 |
 | GC41 | `GRAPH_BACKEND=sqlite` | `--check` exit 1, lists `github local` |
 | GC60 | `delivery-init.sh` with `GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=x` in a temp repo (gh shim fails if called; forge dry-run) | `STATE_DIR` created; zero gh calls; conf scaffold contains every §11 key; printed advice has no `--enable-merge-commit=false` |
@@ -980,29 +1002,29 @@ exception).
 
 | ID | Module | Size | Depends on (via) | Owns (golden-case assertions) and acceptance criteria beyond the gate |
 |---|---|---|---|---|
-| A1 test-discovery | infra | S | — | `scripts/check.sh` runs every `plugins/delivery-loop/scripts/tests/*-test.sh` via a glob loop; `grep -c 'claim-winner-test.sh\|orphan-claims-test.sh' scripts/check.sh` prints `0`; the §13 bash-3.2 lint is in `scripts/check.sh`, and `grep -q 'declare -A' scripts/check.sh` succeeds |
+| A1 test-discovery | infra | S | — | `scripts/check.sh` runs every `plugins/delivery-loop/scripts/tests/*-test.sh` via a glob loop; `grep -c -e 'claim-winner-test.sh' -e 'orphan-claims-test.sh' scripts/check.sh` prints `0`; the §13 bash-3.2 lint is in `scripts/check.sh`, and `grep -q 'declare -A' scripts/check.sh` succeeds |
 | A2 config-keys | engine | S | A1 (test glob runs `tests/config-check-test.sh`) | every §11 key in `lib/config.sh` (`_DL_VARS`, default, export), `delivery-config.sh`, the `delivery-init.sh` scaffold, the README table and design spec §2.2; `delivery-config.sh --check`; `tests/config-check-test.sh` passes GC40, GC41, GC59 (`--check` part) |
 | A3 shapes | policy | S | A1 (test glob) | `lib/node.jq`, `lib/pr.jq` (`validate_node`, `validate_pr`); `tests/shapes-test.sh` accepts the valid node and PR fixtures and rejects 5 malformed ones |
 | A4 ready-transitions | policy | M | A3 (`validate_node`) | `lib/graph.jq` (§5 helpers, including `cycles`), `lib/ready.jq`, `lib/transitions.jq`; `tests/ready-test.sh` passes GC1, GC3, GC5, GC8, GC47 and the "not ready" assertions of GC2, GC4, GC6, GC7 |
-| A5 reconcile | policy | M | A4 (`lib/graph.jq`, ready predicate) | `lib/reconcile.jq`; `tests/reconcile-test.sh` passes the reconcile assertions of GC2, GC4, GC6, GC7, GC24 (record), GC25 (record), GC42 (record), GC43, GC44, GC45 (record) |
-| A6 tick-plan | policy | M | A4 (ready order), A3 (PR shape) | `lib/tick-plan.jq`, `tick-plan.sh`; `tests/tick-plan-test.sh` passes GC12–GC20 and GC39 (plan assertion) |
-| D1 forge-github | forge | M | A3 (PR shape), A2 (`FORGE`, `LIST_LIMIT`) | `forge.sh` + `backends/forge-github.sh` (every §7.1 op); `tests/forge-github-test.sh` (gh shim) passes GC28 (github), GC29, GC30, GC32, GC33 (`task_id`), GC46, GC57, GC58 |
-| B1 graph-github-read | graph | M | A4 (`ready.jq`), A2 (`GRAPH_BACKEND`, `LIST_LIMIT`, `--check`) | `graph.sh` (ready/list/show/export, config check at start) + `backends/graph-github.sh list/show`; `tests/graph-github-read-test.sh` (gh shim) passes GC5 (github fixture), GC9, GC10, GC11, GC45 (checklist normalization), GC56, GC59 (`graph.sh` part) |
+| A5 reconcile | policy | M | A4 (`lib/graph.jq`, ready predicate) | `lib/reconcile.jq`; `tests/reconcile-test.sh` passes the reconcile assertions of GC2, GC4, GC6, GC7, GC24 (record), GC25 (record), GC42 (record), GC43, GC44, GC45 (record), GC65 |
+| A6 tick-plan | policy | M | A4 (ready order), A3 (PR shape) | `lib/tick-plan.jq`, `tick-plan.sh`; `tests/tick-plan-test.sh` passes GC12–GC20, GC39 (plan assertion), GC62, GC59 (`tick-plan.sh` part) |
+| D1 forge-github | forge | M | A3 (PR shape), A2 (`FORGE`, `LIST_LIMIT`) | `forge.sh` + `backends/forge-github.sh` (every §7.1 op); `tests/forge-github-test.sh` (gh shim) passes GC28 (github), GC29, GC30, GC32, GC33 (`task_id`), GC46, GC57, GC58, GC63, GC67 (github) |
+| B1 graph-github-read | graph | M | A4 (`ready.jq`), A2 (`GRAPH_BACKEND`, `LIST_LIMIT`, `--check`) | `graph.sh` (ready/list/show/export, config check at start) + `backends/graph-github.sh list/show`; `tests/graph-github-read-test.sh` (gh shim) passes GC5 (github fixture), GC9, GC10, GC11, GC44 (`pinged_at` derivation), GC45 (checklist normalization), GC56, GC64, GC59 (`graph.sh` part) |
 | B2 graph-github-write | graph | M | B1 (read path), A5 (`reconcile.jq`), D1 (`forge.sh pr-list` + linkage) | github create/update/link/flag/claim/release/comment, `graph.sh transition`/`claim`/`reconcile --fix`; `task-queue.sh` and `claim-task.sh` become wrappers; the existing claim tests pass unchanged; `tests/graph-github-write-test.sh` passes GC33 (reaper), GC42 (issue closed), GC61 |
 | B3 graph-migrate | graph | S | B2 (`link`) | `graph.sh migrate`; `tests/graph-migrate-test.sh` passes GC48 |
-| D2 forge-gitlab | forge | M | D1 (contract, `forge.sh`) | `backends/forge-gitlab.sh`; `tests/forge-gitlab-test.sh` passes GC28 (gitlab), GC29, GC30, GC31, GC32 |
-| D3 forge-gitea | forge | M | D1 (contract, `forge.sh`) | `backends/forge-gitea.sh`; `tests/forge-gitea-test.sh` passes GC28 (gitea), GC29, GC30, GC32 |
-| C1 local-store | graph | M | B1 (`graph.sh` dispatch) | `backends/graph-local.sh`: store, lock, journal, list/show/create/update/link/flag; `tests/graph-local-test.sh` passes GC22, GC23, GC27 |
-| C2 local-claim-reconcile | graph | M | C1 (store), A5 (`reconcile.jq`), D1 (`forge.sh pr-list`) | local claim/release/comment/reconcile; `tests/graph-local-claim-test.sh` passes GC21, GC24 (event), GC25 (end to end); `tests/parity-test.sh` passes GC26 |
-| E1 plan-lint-render | plan | M | A4 (`lib/graph.jq` `cycles`) | `plan.sh lint`/`render` + `lib/plan-lint.jq`; `tests/plan-test.sh` passes GC34, GC37 and the lint assertions of GC6, GC7 |
+| D2 forge-gitlab | forge | M | D1 (contract, `forge.sh`) | `backends/forge-gitlab.sh`; `tests/forge-gitlab-test.sh` passes GC28 (gitlab), GC29, GC30, GC31, GC32, GC67 (gitlab), GC59 (`forge.sh` part) |
+| D3 forge-gitea | forge | M | D1 (contract, `forge.sh`) | `backends/forge-gitea.sh`; `tests/forge-gitea-test.sh` passes GC28 (gitea), GC29, GC30, GC32, GC67 (gitea) |
+| C1 local-store | graph | M | B1 (`graph.sh` dispatch) | `backends/graph-local.sh`: store, lock, journal, list/show/create/update/link/flag; `tests/graph-local-test.sh` passes GC22, GC23, GC27, GC66, GC44 (`pinged_at` derivation) |
+| C2 local-claim-reconcile | graph | M | C1 (store), A5 (`reconcile.jq`), A6 (`tick-plan.sh` for GC26), D1 (`forge.sh pr-list`) | local claim/release/comment/reconcile; `tests/graph-local-claim-test.sh` passes GC21, GC24 (event), GC25 (end to end); `tests/parity-test.sh` passes GC26 |
+| E1 plan-lint-render | plan | M | A4 (`lib/graph.jq` `cycles`) | `plan.sh lint`/`render` + `lib/plan-lint.jq`; `tests/plan-test.sh` passes GC34, GC37, the lint assertions of GC6, GC7, and GC59 (`plan.sh` part) |
 | E2 plan-apply | plan | M | E1 (lint), B2 (github create/link), C1 (local create/link) | `plan.sh apply`, including the promote node; `tests/plan-apply-test.sh` passes GC35, GC36, GC53, GC54 |
 | E3 branch-targets | engine | S | B1 (`graph.sh show`), A2 (config) | `task-worktree.sh <id>` forks from `origin/<target_branch>`, with `task-<id>--<slug>` naming and legacy reuse; `tests/task-worktree-test.sh` passes GC38, GC55 |
-| E4 promote | engine | M | E2 (promote nodes), D1 (`pr-create`), A6 (merge rule, promote action), E3 (worktrees) | `promote.sh`, `tick-merge.sh`; `tests/promote-test.sh` passes GC49, GC50, GC51, GC52, GC39 (`tick-merge` refusal) |
-| I1 init-script | engine | S | A2 (keys), D1 (`forge.sh whoami`), C1 (`STATE_DIR` layout) | `delivery-init.sh` per §10 `init` row (no `--enable-merge-commit=false`; adds the `promote` label on github; checks git ≥ 2.31 and gh ≥ 2.94 where needed); `tests/init-test.sh` passes GC60 |
-| F1 skill-tick | skills | M | A6 (`tick-plan.sh`), E4 (`promote.sh`, `tick-merge.sh`), B2 (`graph.sh reconcile`) | `delivery-tick/SKILL.md` per §10; `! grep -nE '\bgh (pr\|issue) ' plugins/delivery-loop/skills/delivery-tick/SKILL.md`; `grep -q 'tick-plan.sh' plugins/delivery-loop/skills/delivery-tick/SKILL.md` |
-| F2 skill-task-roles | skills | M | F1 (skills serialization), B2, D1, E3 (`task-worktree.sh <id>`) | next/review/patch/deliver-task per §10; `! grep -nE '\bgh (pr\|issue) ' plugins/delivery-loop/skills/{next,review,patch,deliver}-task/SKILL.md`; `grep -q 'Delivery-Task:' plugins/delivery-loop/skills/next-task/SKILL.md`; `grep -q -- '--sha' plugins/delivery-loop/skills/review-task/SKILL.md` |
-| F3 skill-plan-init-status | skills | M | F2 (skills serialization), E2 (`plan.sh`), C2 (local backend), I1 (init script) | decompose per §8.5, task-status `--graph`, init per §10, author-spec via the seams; `! grep -nE '\bgh (pr\|issue) ' plugins/delivery-loop/skills/{decompose,task-status,author-spec}/SKILL.md`; `! grep -n 'enable-merge-commit=false' plugins/delivery-loop/skills/init/SKILL.md` |
-| G1 docs | docs | M | F3 (final skill behavior), I1, B3, D2, D3 | every §16 item owned by G1; `for i in $(seq 1 18); do grep -q "^## $i\. " plugins/delivery-loop/docs/agentic_delivery_spec.md \|\| exit 1; done`; every §11 key appears in `README.md`; `! grep -n 'enable-merge-commit=false' README.md plugins/delivery-loop/docs/delivery_runbook.md` |
+| E4 promote | engine | M | E2 (promote nodes), D1 (`pr-create`), A6 (merge rule, promote action), E3 (worktrees) | `promote.sh`, `tick-merge.sh`; `tests/promote-test.sh` passes GC49, GC50, GC51, GC52, GC39 (`tick-merge` refusal), GC59 (`promote.sh` part) |
+| I1 init-script | engine | S | A2 (keys), D1 (`forge.sh whoami`), D3 (gitea adapter used by GC60), C1 (`STATE_DIR` layout) | `delivery-init.sh` per §10 `init` row (no `--enable-merge-commit=false`; adds the `promote` label on github; checks git ≥ 2.31 and gh ≥ 2.94 where needed); `tests/init-test.sh` passes GC60 |
+| F1 skill-tick | skills | M | A6 (`tick-plan.sh`), E4 (`promote.sh`, `tick-merge.sh`), B2 (`graph.sh reconcile`) | `delivery-tick/SKILL.md` per §10; `! grep -nE -e '\bgh pr ' -e '\bgh issue ' plugins/delivery-loop/skills/delivery-tick/SKILL.md`; `grep -q 'tick-plan.sh' plugins/delivery-loop/skills/delivery-tick/SKILL.md` |
+| F2 skill-task-roles | skills | M | F1 (skills serialization), B2, D1, E3 (`task-worktree.sh <id>`) | next/review/patch/deliver-task per §10; `! grep -nE -e '\bgh pr ' -e '\bgh issue ' plugins/delivery-loop/skills/{next,review,patch,deliver}-task/SKILL.md`; `grep -q 'Delivery-Task:' plugins/delivery-loop/skills/next-task/SKILL.md`; `grep -q -- '--sha' plugins/delivery-loop/skills/review-task/SKILL.md` |
+| F3 skill-plan-init-status | skills | M | F2 (skills serialization), E2 (`plan.sh`), C2 (local backend), I1 (init script) | decompose per §8.5, task-status `--graph`, init per §10, author-spec via the seams; `! grep -nE -e '\bgh pr ' -e '\bgh issue ' plugins/delivery-loop/skills/{decompose,task-status,author-spec}/SKILL.md`; `! grep -n 'enable-merge-commit=false' plugins/delivery-loop/skills/init/SKILL.md` |
+| G1 docs | docs | M | F3 (final skill behavior), I1, B3, D2, D3 | every §16 item owned by G1; a loop over `seq 1 18` asserting each `^## <i>\. ` heading exists in `plugins/delivery-loop/docs/agentic_delivery_spec.md` (exit 1 on the first missing); every §11 key appears in `README.md`; `! grep -n 'enable-merge-commit=false' README.md plugins/delivery-loop/docs/delivery_runbook.md` |
 | G3 release | infra | S | G1 (docs final) | both manifests `0.2.0`; `.claude/delivery.conf` has `BASE_BRANCH=main`; `grep -ri lineage plugins/` empty |
 
 ---
