@@ -104,7 +104,7 @@ local mode, and new node kinds beyond `task | epic | promote | external`.
 6. An issue labelled both `task` and `epic` is a `task` node only (§4.1 `kind`
    precedence). v0.1.4 listed it as a task **and** counted it as an epic, so a
    closed child could mark it started and reorder the ready set. v0.2 never treats
-   it as an epic: not for the started-epic flag, not for epic completion.
+   it as an epic: not for the started-epic flag, not for epic completion (GC71).
 
 ## 3. Architecture
 
@@ -397,7 +397,8 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
   references it:
   - as a dep target of some node (native `blockedBy` or a `Depends-on:` line);
   - as an epic child: an entry of an epic's `- [ ] #N` checklist, or an issue whose
-    `epic` derivation (native parent, else `Part of epic #E`) names an `epic` node.
+    `epic` derivation (native parent, else the `[Ee]pic #E` body match, §4.1) names
+    an `epic` node.
 
   Every other unlabelled issue is dropped. A referenced number with no issue in the
   read stays an unknown dep (GC7). This only selects what to store; readiness and
@@ -824,7 +825,8 @@ the case assertions it owns.
 | GC47 | `transition <id> cancelled` with `--actor agent` / `--human ann` | exit 2, unchanged / `cancelled` |
 | GC65 | reconcile produces a fix record that the transition table rejects (fixture: a `done` node and a stale-claim rule match) | warning on stderr, record not applied, other records applied |
 | GC61 | `task-queue.sh` against the GC5 github fixture | stdout byte-identical to the captured v0.1.4 output |
-| GC68 | github fixture: task T with `Depends-on: #A`, A an unlabelled CLOSED (`COMPLETED`) issue; task U with `Depends-on: #B`, B an unlabelled OPEN issue; an unlabelled issue C that nothing references | A and B normalize to `kind:"external"` (`done` / `blocked`) and C is not emitted; T is in `ready`; U is not ready; reconcile emits no `unknown dep` warning and no fix record for A or B |
+| GC68 | github fixture: task T with `Depends-on: #A`, A an unlabelled CLOSED (`COMPLETED`) issue; task U with `Depends-on: #B`, B an unlabelled OPEN issue; task V with `Depends-on: #D`, D an unlabelled CLOSED (`NOT_PLANNED`) issue; an unlabelled issue C that nothing references | A, B and D normalize to `kind:"external"` (`done` / `blocked` / `cancelled`) and C is not emitted; T is in `ready`; U and V are not ready (§2 exception 1); reconcile stderr `V: blocked on cancelled dep D` (GC2), and no `unknown dep` warning and no fix record for A, B or D |
+| GC71 | github fixture (§2 exception 6): issue X labelled both `task` and `epic`, open, size S, no deps, unclaimed; ready task T (size S, `unblocks` 0) with body `Part of epic #X`, and a CLOSED (`COMPLETED`) task C with body `Part of epic #X`; ready task U (size S, `unblocks` 0, no epic) created before T; issue Y labelled both `task` and `epic` whose only child, a task with body `Part of epic #Y`, is CLOSED | X and Y normalize to `kind:"task"` with `checklist: []`; X is in `ready`; T has `started:false` and U precedes T (v0.1.4 put T first); reconcile emits no `→ done` record for X or Y (v0.1.4 auto-closed Y) |
 
 **Tick plan:**
 
@@ -1042,7 +1044,7 @@ exception).
 | A6 tick-plan | policy | M | A4 (ready order), A3 (PR shape) | `lib/tick-plan.jq`, `tick-plan.sh`; `tests/tick-plan-test.sh` passes GC12–GC20, GC39 (plan assertion), GC62, GC59 (`tick-plan.sh` part) |
 | D1 forge-github | forge | M | A3 (PR shape), A2 (`FORGE`, `LIST_LIMIT`) | `forge.sh` + `backends/forge-github.sh` (every §7.1 op); `tests/forge-github-test.sh` (gh shim) passes GC28 (github), GC29, GC30, GC32, GC33 (`task_id`), GC46, GC57, GC58, GC63, GC67 (github) |
 | B1 graph-github-read | graph | M | A4 (`ready.jq`), A2 (`GRAPH_BACKEND`, `LIST_LIMIT`, `--check`) | `graph.sh` (ready/list/show/export, config check at start) + `backends/graph-github.sh list/show`; `tests/graph-github-read-test.sh` (gh shim) passes GC5 (github fixture), GC9, GC10, GC11, GC44 (`pinged_at` derivation), GC45 (checklist normalization), GC56, GC64, GC59 (`graph.sh` part) |
-| B2 graph-github-write | graph | M | B1 (read path), A5 (`reconcile.jq`), D1 (`forge.sh pr-list` + linkage) | github create/update/link/flag/claim/release/comment, `graph.sh transition`/`claim`/`reconcile --fix`; `task-queue.sh` and `claim-task.sh` become wrappers; the existing claim tests pass unchanged; `tests/graph-github-write-test.sh` passes GC33 (reaper), GC42 (issue closed), GC61, GC68 |
+| B2 graph-github-write | graph | M | B1 (read path), A5 (`reconcile.jq`), D1 (`forge.sh pr-list` + linkage), A4d #51 (`validate_node` and policy accept `external`) | github create/update/link/flag/claim/release/comment, `graph.sh transition`/`claim`/`reconcile --fix`; `task-queue.sh` and `claim-task.sh` become wrappers; the existing claim tests pass unchanged; `tests/graph-github-write-test.sh` passes GC33 (reaper), GC42 (issue closed), GC61, GC68, GC71 |
 | B3 graph-migrate | graph | S | B2 (`link`) | `graph.sh migrate`; `tests/graph-migrate-test.sh` passes GC48 |
 | D2 forge-gitlab | forge | M | D1 (contract, `forge.sh`) | `backends/forge-gitlab.sh`; `tests/forge-gitlab-test.sh` passes GC28 (gitlab), GC29, GC30, GC31, GC32, GC67 (gitlab), GC59 (`forge.sh` part) |
 | D3 forge-gitea | forge | M | D1 (contract, `forge.sh`) | `backends/forge-gitea.sh`; `tests/forge-gitea-test.sh` passes GC28 (gitea), GC29, GC30, GC32, GC67 (gitea) |
