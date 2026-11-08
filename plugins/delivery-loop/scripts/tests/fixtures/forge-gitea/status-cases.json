@@ -1,0 +1,12 @@
+[
+  {"case": "no statuses", "statuses": [], "want": "none"},
+  {"case": "every status success", "statuses": [{"status": "success"}, {"status": "success"}], "want": "success"},
+  {"case": "warning counts as success", "statuses": [{"status": "warning"}, {"status": "success"}], "want": "success"},
+  {"case": "skipped counts as success", "statuses": [{"status": "skipped"}], "want": "success"},
+  {"case": "any error", "statuses": [{"status": "success"}, {"status": "error"}, {"status": "pending"}], "want": "failure"},
+  {"case": "any failure", "statuses": [{"status": "pending"}, {"status": "failure"}], "want": "failure"},
+  {"case": "any pending, none failed", "statuses": [{"status": "success"}, {"status": "pending"}], "want": "pending"},
+  {"case": "unrecognized status (never success)", "statuses": [{"status": "success"}, {"status": "bogus"}], "want": "pending"},
+  {"case": "status field missing (never success)", "statuses": [{"context": "ci"}], "want": "pending"},
+  {"case": "a page's own state/total_count are ignored", "statuses": [{"status": "failure", "state": "success", "total_count": 0}], "want": "failure"}
+]
