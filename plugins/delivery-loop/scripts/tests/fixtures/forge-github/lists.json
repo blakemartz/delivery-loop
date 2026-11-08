@@ -1,0 +1,21 @@
+{
+  "open": [
+    [
+      {"number": 101, "headRefName": "task/ready-policy--ready-predicate", "mergedAt": null},
+      {"number": 104, "headRefName": "task/104-conflict", "mergedAt": null}
+    ],
+    [
+      {"number": 105, "headRefName": "task/105-failing", "mergedAt": null}
+    ]
+  ],
+  "merged": [
+    [
+      {"number": 102, "headRefName": "task/16-v0-2-a3-shapes", "mergedAt": "2026-11-08T12:00:00Z"},
+      {"number": 150, "headRefName": "task/150-early", "mergedAt": "2026-11-07T09:00:00Z"}
+    ],
+    [
+      {"number": 151, "headRefName": "task/151-late", "mergedAt": "2026-11-08T10:00:00Z"},
+      {"number": 152, "headRefName": "task/152-earlier", "mergedAt": "2026-11-08T09:59:59Z"}
+    ]
+  ]
+}

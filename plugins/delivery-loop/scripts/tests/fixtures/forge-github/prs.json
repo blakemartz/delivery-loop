@@ -1,0 +1,878 @@
+{
+  "101": {
+    "number": 101,
+    "url": "https://github.com/example/repo/pull/101",
+    "state": "OPEN",
+    "headRefName": "task/ready-policy--ready-predicate",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "dbc0f004854457f59fb16ab863a3a1722cef553f",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "job-success",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      },
+      {
+        "__typename": "CheckRun",
+        "name": "job-neutral",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "NEUTRAL",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "ext/ci",
+        "state": "SUCCESS",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "targetUrl": "https://ci.example.com/1"
+      },
+      {
+        "__typename": "CheckRun",
+        "name": "job-skipped",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SKIPPED",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "body": "Closes #42\n\nDelivery-Task: ready-policy\n\n## Summary\nReady predicate.",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:in-review",
+        "name": "status:in-review",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [
+      {
+        "id": "IC_x",
+        "author": {
+          "login": "astra"
+        },
+        "authorAssociation": "OWNER",
+        "body": "Patch iteration: 1/3\n\nFixed the review findings.",
+        "createdAt": "2026-11-08T11:00:00Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/example/repo/pull/0#issuecomment-1",
+        "viewerDidAuthor": true
+      },
+      {
+        "id": "IC_x",
+        "author": {
+          "login": "astra"
+        },
+        "authorAssociation": "OWNER",
+        "body": "Patch iteration: 2/3 (rebase)\n\nRebased.",
+        "createdAt": "2026-11-08T11:00:00Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/example/repo/pull/0#issuecomment-1",
+        "viewerDidAuthor": true
+      },
+      {
+        "id": "IC_x",
+        "author": {
+          "login": "astra"
+        },
+        "authorAssociation": "OWNER",
+        "body": "Unrelated note.",
+        "createdAt": "2026-11-08T11:00:00Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/example/repo/pull/0#issuecomment-1",
+        "viewerDidAuthor": true
+      }
+    ],
+    "reviews": [
+      {
+        "id": "PRR_x",
+        "author": {
+          "login": "reviewer"
+        },
+        "authorAssociation": "MEMBER",
+        "body": "## Review — verdict: REQUEST_CHANGES\n\nFix x.\n\nReviewed-Head: c00dbbc9dadfbe1e232e93a729dd4752fade0abf",
+        "submittedAt": "2026-11-08T12:00:00Z",
+        "includesCreatedEdit": false,
+        "reactionGroups": [],
+        "state": "CHANGES_REQUESTED",
+        "commit": {
+          "oid": "c00dbbc9dadfbe1e232e93a729dd4752fade0abf"
+        }
+      },
+      {
+        "id": "PRR_x",
+        "author": {
+          "login": "reviewer"
+        },
+        "authorAssociation": "MEMBER",
+        "body": "## Review — verdict: APPROVE\n\nLooks right.\n\nReviewed-Head: dbc0f004854457f59fb16ab863a3a1722cef553f",
+        "submittedAt": "2026-11-08T12:00:00Z",
+        "includesCreatedEdit": false,
+        "reactionGroups": [],
+        "state": "APPROVED",
+        "commit": {
+          "oid": "dbc0f004854457f59fb16ab863a3a1722cef553f"
+        }
+      }
+    ],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "102": {
+    "number": 102,
+    "url": "https://github.com/example/repo/pull/102",
+    "state": "MERGED",
+    "headRefName": "task/16-v0-2-a3-shapes",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "c8306ae139ac98f432932286151dc0ec55580eca",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "UNKNOWN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "job-success",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "body": "Closes #16\n\n## Summary\nShapes.",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [
+      {
+        "id": "IC_x",
+        "author": {
+          "login": "astra"
+        },
+        "authorAssociation": "OWNER",
+        "body": "## Review — verdict: APPROVE\n\nComment-form verdict.\n\nReviewed-Head: c8306ae139ac98f432932286151dc0ec55580eca",
+        "createdAt": "2026-11-08T11:00:00Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/example/repo/pull/0#issuecomment-1",
+        "viewerDidAuthor": true
+      }
+    ],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": "2026-11-08T12:00:00Z"
+  },
+  "103": {
+    "number": 103,
+    "url": "https://github.com/example/repo/pull/103",
+    "state": "CLOSED",
+    "headRefName": "spike-x",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "934385f53d1bd0c1b8493e44d0dfd4c8e88a04bb",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "UNKNOWN",
+    "statusCheckRollup": [],
+    "body": "",
+    "labels": [],
+    "comments": [],
+    "reviews": [
+      {
+        "id": "PRR_x",
+        "author": {
+          "login": "reviewer"
+        },
+        "authorAssociation": "MEMBER",
+        "body": "Stale verdict.\n\nReviewed-Head: c00dbbc9dadfbe1e232e93a729dd4752fade0abf",
+        "submittedAt": "2026-11-08T12:00:00Z",
+        "includesCreatedEdit": false,
+        "reactionGroups": [],
+        "state": "COMMENTED",
+        "commit": {
+          "oid": "c00dbbc9dadfbe1e232e93a729dd4752fade0abf"
+        }
+      }
+    ],
+    "author": null,
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "104": {
+    "number": 104,
+    "url": "https://github.com/example/repo/pull/104",
+    "state": "OPEN",
+    "headRefName": "task/104-conflict",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "78a8efcbaaa1a9a30f9f327aa89d0b6acaaffb03",
+    "mergeable": "CONFLICTING",
+    "mergeStateStatus": "DIRTY",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "job-",
+        "workflowName": "ci",
+        "status": "IN_PROGRESS",
+        "conclusion": "",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "ext/ci",
+        "state": "PENDING",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "targetUrl": "https://ci.example.com/1"
+      },
+      {
+        "__typename": "CheckRun",
+        "name": "job-success",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "body": "Delivery-Task: 104",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "105": {
+    "number": 105,
+    "url": "https://github.com/example/repo/pull/105",
+    "state": "OPEN",
+    "headRefName": "task/105-failing",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "e114c448f4ab8554ad14eff3d66dfeb3965ce8fc",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "BLOCKED",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "job-success",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      },
+      {
+        "__typename": "CheckRun",
+        "name": "job-failure",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "FAILURE",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "2026-11-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      },
+      {
+        "__typename": "CheckRun",
+        "name": "job-",
+        "workflowName": "ci",
+        "status": "IN_PROGRESS",
+        "conclusion": "",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "body": "Delivery-Task: 105",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "106": {
+    "number": 106,
+    "url": "https://github.com/example/repo/pull/106",
+    "state": "OPEN",
+    "headRefName": "task/106-behind",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "7224f997fc148baa0b7f81c1eda6fcc3fd003db0",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "BEHIND",
+    "statusCheckRollup": [
+      {
+        "__typename": "StatusContext",
+        "context": "ext/ci",
+        "state": "ERROR",
+        "startedAt": "2026-11-08T10:00:00Z",
+        "targetUrl": "https://ci.example.com/1"
+      }
+    ],
+    "body": "Delivery-Task: 106",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "110": {
+    "number": 110,
+    "url": "https://github.com/example/repo/pull/110",
+    "state": "OPEN",
+    "headRefName": "docs-cleanup",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "5e796e48332af4142b10ca0f86e65d9bfdb05884",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "body": "Follow-up to #12; see the #12 thread.\nRefs #12",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "111": {
+    "number": 111,
+    "url": "https://github.com/example/repo/pull/111",
+    "state": "OPEN",
+    "headRefName": "docs-cleanup-2",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "6216f8a75fd5bb3d5f22b6f9958cdede3fc086c2",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "body": "Tidy docs.\n\nDelivery-Task: 12",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "120": {
+    "number": 120,
+    "url": "https://github.com/example/repo/pull/120",
+    "state": "OPEN",
+    "headRefName": "feature-a",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "775bc5c30e27f0e562115d136e7f7edbd3cead89",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "body": "Summary.\n\nDelivery-Task: auth-3",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "121": {
+    "number": 121,
+    "url": "https://github.com/example/repo/pull/121",
+    "state": "OPEN",
+    "headRefName": "feature-b",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "8bd7954c40c1e59a900f71ea3a266732609915b1",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "body": "Summary.\n\nCloses #7",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "122": {
+    "number": 122,
+    "url": "https://github.com/example/repo/pull/122",
+    "state": "OPEN",
+    "headRefName": "task/x--s",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "05a8ea5382b9fd885261bb3eed0527d1d3b07262",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "body": "Summary.",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "123": {
+    "number": 123,
+    "url": "https://github.com/example/repo/pull/123",
+    "state": "OPEN",
+    "headRefName": "task/7-s",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "40bd001563085fc35165329ea1ff5c5ecbdbbeef",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "body": "Summary.",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "124": {
+    "number": 124,
+    "url": "https://github.com/example/repo/pull/124",
+    "state": "OPEN",
+    "headRefName": "feature-c",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "f38cfe2e2facbcc742bad63f91ad55637300cb45",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "body": "Mentions #7 in passing.",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "125": {
+    "number": 125,
+    "url": "https://github.com/example/repo/pull/125",
+    "state": "OPEN",
+    "headRefName": "task/7-s2",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "0ca9277f91e40054767f69afeb0426711ca0fddd",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "body": "Closes #7\n\nDelivery-Task: auth-9",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "130": {
+    "number": 130,
+    "url": "https://github.com/example/repo/pull/130",
+    "state": "OPEN",
+    "headRefName": "task/130-computing",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "2a7541babb57434e5631ffa2b5639e24f8ce84fc",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "UNKNOWN",
+    "statusCheckRollup": [],
+    "body": "Delivery-Task: 130",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "131.1": {
+    "number": 131,
+    "url": "https://github.com/example/repo/pull/131",
+    "state": "OPEN",
+    "headRefName": "task/131-settles",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "e794a80eb109162d579df51db6d52e223bb0e9be",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "UNKNOWN",
+    "statusCheckRollup": [],
+    "body": "Delivery-Task: 131",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "131": {
+    "number": 131,
+    "url": "https://github.com/example/repo/pull/131",
+    "state": "OPEN",
+    "headRefName": "task/131-settles",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "e794a80eb109162d579df51db6d52e223bb0e9be",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "body": "Delivery-Task: 131",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "140": {
+    "number": 140,
+    "url": "https://github.com/example/repo/pull/140",
+    "state": "OPEN",
+    "headRefName": "task/140-auto",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "c28aca23f1ef3718a464383d925c66842078edaa",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "BLOCKED",
+    "statusCheckRollup": [],
+    "body": "Delivery-Task: 140",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": {
+      "enabledAt": "2026-11-08T12:00:00Z",
+      "enabledBy": {
+        "login": "astra"
+      },
+      "mergeMethod": "SQUASH"
+    },
+    "mergedAt": null
+  },
+  "141.1": {
+    "number": 141,
+    "url": "https://github.com/example/repo/pull/141",
+    "state": "OPEN",
+    "headRefName": "task/141-merges",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "c9ca442765657fc90e9e779c34d0d2259d2c3c5b",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "body": "Delivery-Task: 141",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "141": {
+    "number": 141,
+    "url": "https://github.com/example/repo/pull/141",
+    "state": "MERGED",
+    "headRefName": "task/141-merges",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "c9ca442765657fc90e9e779c34d0d2259d2c3c5b",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "UNKNOWN",
+    "statusCheckRollup": [],
+    "body": "Delivery-Task: 141",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": "2026-11-08T12:00:00Z"
+  },
+  "151": {
+    "number": 151,
+    "url": "https://github.com/example/repo/pull/151",
+    "state": "MERGED",
+    "headRefName": "task/151-late",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "b16a457a3302d7c1f4563df2ffc96dccf3779af7",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "UNKNOWN",
+    "statusCheckRollup": [],
+    "body": "Delivery-Task: 151",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": "2026-11-08T10:00:00Z"
+  }
+}
