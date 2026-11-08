@@ -160,6 +160,24 @@ One per-repo file is the entire seam between the generic engine and your project
 | `STYLEGUIDES_DIR` | `styleguides/` | Where coding conventions live. |
 | `MODULES` | (empty) | Allowed `module:` labels — the concurrency unit (≤ 1 in-flight task per module). |
 | `NOTIFY_APPROVE_CMD` / `NOTIFY_ESCALATE_CMD` | (empty) | Optional hooks run on approval / escalation (e.g. a sound). |
+| `GRAPH_BACKEND` | `github` | Where the task graph lives: `github` \| `local`. `github` requires `FORGE=github`. |
+| `STATE_DIR` | (empty → `<git-common-dir>/delivery`) | Local backend store, shared by every worktree of the clone. |
+| `LOCK_STALE_SECONDS` | `120` | Local backend: age after which a lock may be broken. |
+| `LIST_LIMIT` | `5000` | github backend fetch ceiling; reaching it is an error, never a silent truncation. |
+| `FORGE` | `github` | Where PRs live: `github` \| `gitlab` \| `gitea`. |
+| `FORGE_URL` | (derived from origin) | Forge API base host, e.g. `https://gitlab.example.com`. |
+| `FORGE_REPO` | (derived from origin) | `owner/repo`, or GitLab `group/subgroup/project`. |
+| `PLANS_DIR` | `docs/plans/` | Where plan files live. |
+| `TASK_MERGE_METHOD` | `squash` | Merge method for task PRs. |
+| `PROMOTE_MERGE_METHOD` | `merge` | Merge method for promotion PRs. |
+| `PROMOTE_GATE_CMD` | (empty → `GATE_CMD`) | Gate run on the target branch before a promotion PR. |
+
+Environment only — never in `.claude/delivery.conf` (a checked-in file; values
+set there are ignored): `GITLAB_TOKEN` / `GITEA_TOKEN` (forge auth),
+`GH_REVIEW_TOKEN` / `GITLAB_REVIEW_TOKEN` / `GITEA_REVIEW_TOKEN` (optional
+reviewer identity), `LOCK_WAIT_SECONDS` (local lock wait, default 30).
+`delivery-config.sh --check` validates the combination (backend/forge values,
+`GRAPH_BACKEND=github` needs `FORGE=github`, a gitlab/gitea forge needs its token).
 
 Recommended repo settings (run once, yourself — it changes GitHub state):
 

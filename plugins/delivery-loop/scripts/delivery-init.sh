@@ -164,6 +164,37 @@ MODULES=""
 #   NOTIFY_ESCALATE_CMD="afplay /System/Library/Sounds/Basso.aiff"
 NOTIFY_APPROVE_CMD=""
 NOTIFY_ESCALATE_CMD=""
+
+# Graph backend: where tasks and their dependency graph live. github | local.
+# GRAPH_BACKEND=github requires FORGE=github.
+GRAPH_BACKEND=github
+
+# Local backend store. Empty = <git-common-dir>/delivery (shared by all worktrees).
+STATE_DIR=""
+
+# Seconds after which a local-backend lock is considered stale and may be broken.
+LOCK_STALE_SECONDS=120
+
+# github backend fetch ceiling; reaching it is an error, never a silent truncation.
+LIST_LIMIT=5000
+
+# Forge: where PRs live. github | gitlab | gitea. FORGE_URL (API base host) and
+# FORGE_REPO (owner/repo, or group/subgroup/project) are derived from the origin
+# remote when empty. Tokens (GITLAB_TOKEN, GITEA_TOKEN, *_REVIEW_TOKEN) come from
+# the environment only — never put them in this checked-in file.
+FORGE=github
+FORGE_URL=""
+FORGE_REPO=""
+
+# Where plan files live.
+PLANS_DIR="docs/plans/"
+
+# Merge methods for task PRs and for promotion PRs.
+TASK_MERGE_METHOD=squash
+PROMOTE_MERGE_METHOD=merge
+
+# Gate run on the target branch before a promotion PR. Empty = GATE_CMD.
+PROMOTE_GATE_CMD=""
 EOF
   echo "==> wrote .claude/delivery.conf (edit GATE_CMD to your repo's gate)"
 fi
