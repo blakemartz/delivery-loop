@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for lib/tick-plan.jq and tick-plan.sh (docs/delivery_graph_spec.md §5
 # `tick-plan.jq`, §9): golden cases GC12–GC20, GC39 (plan assertion), GC62, GC70
-# and the `tick-plan.sh` part of GC59 (§12, §17 rows A6, A7).
+# and the `tick-plan.sh` part of GC59 (§12; §17 row A6, hardened by issue #47).
 #
 # Offline. The plan cases run tick_plan over the sparse fixtures in
 # fixtures/tick-plan/ (expand.jq fills in the §4.1/§4.2 defaults). The script
@@ -141,6 +141,17 @@ waits_for "GC70 the off-base PR waits for a human" gc70-merge \
   "PR #73 (t-base) is approved but targets main, not the node's target release/x"
 eq "GC70 control: with the base fixed, the off-base PR merges" \
   '["merge 71","merge 73","merge 74"]' "$(acts gc70-merge '.prs[2].base = "release/x"')"
+
+# §5 output contract: `waiting` is [string] on every board (GC70's duplicate-merge
+# line once leaked an object). Checked across every tick-plan fixture, with and
+# without --auto-merge, so a new waiting source can't break the contract.
+for f in "$fx"/*.json; do
+  name="$(basename "$f" .json)"
+  for flt in '.' '.flags.auto_merge = true' '.flags.auto_merge = false'; do
+    eq "waiting is [string]: $name ($flt)" true \
+      "$(plan "$name" '.waiting | type == "array" and all(type == "string")' "$flt")"
+  done
+done
 
 # --- batch and mode rules -------------------------------------------------------------
 eq "misc: merges, then promotes, then agent actions in priority order" \

@@ -247,7 +247,7 @@ spec's §5 table, which is amended to match (§16):
 | ready | claimed | agent \| human \| promote | `claim` (promote only on `kind=="promote"` nodes) |
 | claimed | ready | reconcile \| agent \| promote | stale reclaim; claimant releases (promote: red gate, GC50) |
 | claimed | in-review | agent \| reconcile \| promote | PR opened (reconcile: open PR exists, GC43; promote: promotion PR opened, GC51) |
-| ready \| blocked | in-review | reconcile | status drift: an open agent PR with this `task_id` while the claim was cleared or the status relabelled (reconcile rule 4, GC69) |
+| ready \| blocked | in-review | reconcile | `kind` task \| promote only. Status drift: an open agent PR with this `task_id` while the claim was cleared or the status relabelled (reconcile rule 4, GC69) |
 | in-review | changes-requested | agent (reviewer) | verdict REQUEST_CHANGES |
 | changes-requested | in-review | agent (patcher) | fixes pushed |
 | in-review | approved | agent (reviewer) | verdict APPROVE |
@@ -279,10 +279,13 @@ backend applies them, and `--fix` prints them as `fix: …` lines.
    and a comment naming the PR. That is needed because GitHub's closing keywords
    only act on PRs into the default branch.
 4. **Open PR → in-review.** An open agent PR with `task_id` X while X is `claimed`,
-   `ready` or `blocked` sets X to `in-review` (GC43). `ready`/`blocked` are status
-   drift: the claim was cleared or the status relabelled while the PR stayed open
-   (GC69). Rule 4 is applied before rules 1 and 2, so an open PR outranks the deps
-   and a drifted node is not first moved between `ready` and `blocked`.
+   or while a `task`/`promote` node X is `ready` or `blocked`, sets X to
+   `in-review` (GC43). `ready`/`blocked` are status drift: the claim was cleared or
+   the status relabelled while the PR stayed open (GC69). Epics are excluded from
+   the drift repair: an epic in `in-review` could never be closed by rule 7, so an
+   epic is left to rules 1, 2 and 7. Rule 4 is applied before rules 1 and 2, so an
+   open PR outranks the deps and a drifted node is not first moved between `ready`
+   and `blocked`.
 5. **Stale agent claims.** A claim with `by=="agent"`, no open PR for the node,
    `now - updated_at > 4h` and `needs_human` false is released to `ready`, with the
    reason `RECLAIMED` (GC24). The github backend keeps the
@@ -310,6 +313,11 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
    and `checks` is `success` **or `none`** (parity: v0.1.4's "every check SUCCESS"
    is vacuously true with no checks). Its node is a `task` with status `approved`.
    The PR has no `needs-human` label, and the node's `needs_human` is false.
+   The PR's `base` equals the node's `target_branch`; an off-base PR is listed in
+   `waiting` for a human. **At most one merge per `task_id`** per plan: among a
+   task's PRs that pass every check above, the lowest PR number merges and the
+   others are listed in `waiting` (GC70). `tick-merge.sh` re-applies all of these
+   conditions (§10).
 2. **patch.** The node is `changes-requested` and `needs_human` is false. There is
    **no iteration filter** (parity with v0.1.4). At `patch_iteration == 3` the
    dispatched `patch-task` performs the escalation itself: it sets `needs-human`,

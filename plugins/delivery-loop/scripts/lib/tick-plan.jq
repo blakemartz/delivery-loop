@@ -143,7 +143,8 @@ def tick_plan:
   | ([$pr_out[] | select(.action == "merge")] | group_by(.id)) as $merge_groups
   | ($merge_groups | map(.[0]) | sort_by(.pr)) as $merges
   | [$merge_groups[] | .[0].pr as $first | .[1:][]
-     | {wait: "PR #\(.pr) (\(.id)) is approved too, but PR #\($first) merges for the task: awaiting a human"}] as $dup_waits
+     | "PR #\(.pr) (\(.id)) is approved too, but PR #\($first) merges for the task: awaiting a human"]
+    as $dup_waits
   | [$promote_out[] | select(.action == "promote")] as $promotes
   | [("patch", "rebase", "review") as $a | $pr_out[] | select(.action == $a)] as $pr_agent
   # In-flight (§5 batch rules): open agent PRs, approved-unmerged included,

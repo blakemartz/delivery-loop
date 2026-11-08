@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Tests for lib/reconcile.jq (docs/delivery_graph_spec.md §5 `reconcile.jq`):
 # the reconcile assertions of golden cases GC2, GC4, GC6, GC7, GC24 (record),
-# GC25 (record), GC42 (record), GC43, GC44, GC45 (record), GC65 and GC69 (§12,
-# §17 rows A5, A7), plus the amended §5 rows of lib/transitions.jq that reconcile's
-# records depend on (merged PR -> done from every open status; epic ready -> done).
+# GC25 (record), GC42 (record), GC43, GC44, GC45 (record), GC65 and GC69 (§12;
+# §17 row A5, hardened by issue #47), plus the amended §5 rows of
+# lib/transitions.jq that reconcile's records depend on (merged PR -> done from
+# every open status; epic ready -> done; ready/blocked drift -> in-review).
 #
 # Offline. GC2/GC4/GC6/GC7 reuse the ready fixtures (fixtures/ready/); the other
 # cases are sparse fixtures in fixtures/reconcile/, filled out by expand.jq.
@@ -169,6 +170,19 @@ run_sparse gc45 '.nodes += [{id: "10", kind: "epic", size: null, checklist: ["1"
 eq "GC45 epic of epics closes in the same pass" \
   '["transition 1 ready->done","transition 4 blocked->done","transition 10 ready->done"]' "$(moves)"
 
+# GC69 epic guard: rule 4's ready/blocked drift repair is for task/promote nodes.
+# An open agent PR carrying an epic's id must not send the epic to in-review,
+# where rule 7 could never close it.
+epic_pr='.prs += [.prs[0] | .number = 95 | .task_id = "5" | .url = "https://forge.example/pr/95"]'
+run_sparse gc45 "$epic_pr"
+eq "GC69 open agent PR on a ready epic -> no in-review record (epic 5 stays open)" \
+  '["transition 1 ready->done","transition 4 blocked->done"]' "$(moves)"
+eq "GC69 the epic guard is a filter, not a skipped record" '' "$(cat "$tmp/err")"
+run_sparse gc45 "$epic_pr | .prs[0].state = \"merged\""
+eq "GC69 the epic with an open PR still closes when its last child merges (rule 7)" \
+  '["transition 9 in-review->done","transition 1 ready->done","transition 4 blocked->done","transition 5 ready->done"]' \
+  "$(moves)"
+
 # --- GC65: a record the table rejects is skipped; the rest stand ------------------------------
 run_sparse gc65
 eq "GC65 the done node's reclaim is skipped, the claimed node's is applied" \
@@ -205,6 +219,9 @@ promote ready in-review reconcile 1
 task ready in-review agent 0
 task ready in-review human 0
 task approved in-review reconcile 0
+promote blocked in-review reconcile 1
+epic ready in-review reconcile 0
+epic blocked in-review reconcile 0
 task blocked done reconcile 1
 task ready done reconcile 1
 promote ready done reconcile 1
@@ -217,8 +234,9 @@ task ready done agent 0
 task done done reconcile 0
 task cancelled done reconcile 0
 EOF
-eq "the epic-completion row is guarded to kind epic" '[{"from":["ready"],"kinds":["epic"]}]' \
-  "$(jq -c -n -L "$lib" 'include "transitions"; [transitions[] | select(.kinds) | {from, kinds}]')"
+eq "the kind-guarded rows: drift repair (task/promote), epic completion (epic)" \
+  '[{"from":["ready","blocked"],"to":"in-review","kinds":["task","promote"]},{"from":["ready"],"to":"done","kinds":["epic"]}]' \
+  "$(jq -c -n -L "$lib" 'include "transitions"; [transitions[] | select(.kinds) | {from, to, kinds}]')"
 eq "the merged-PR row covers every open status" \
   '["approved","blocked","changes-requested","claimed","in-review","ready"]' \
   "$(jq -c -n -L "$lib" 'include "transitions";
