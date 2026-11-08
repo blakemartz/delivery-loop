@@ -1,0 +1,6 @@
+{"flags": {"parallel": 3},
+ "nodes": [{"id": "t-c", "module": "c", "status": "changes-requested"},
+           {"id": "t-a1", "module": "a", "created_at": "2026-01-01T00:00:01Z"},
+           {"id": "t-a2", "module": "a", "created_at": "2026-01-01T00:00:02Z"},
+           {"id": "t-b1", "module": "b", "created_at": "2026-01-01T00:00:03Z"}],
+ "prs": [{"number": 7, "task_id": "t-c", "patch_iteration": 1}]}

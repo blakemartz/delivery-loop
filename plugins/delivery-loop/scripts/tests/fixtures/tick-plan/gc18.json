@@ -1,0 +1,4 @@
+{"flags": {"parallel": 2},
+ "nodes": [{"id": "t-main", "module": "m", "target_branch": "main", "created_at": "2026-01-01T00:00:01Z"},
+           {"id": "t-rel", "module": "m", "target_branch": "release/x", "created_at": "2026-01-01T00:00:02Z"}],
+ "prs": []}
