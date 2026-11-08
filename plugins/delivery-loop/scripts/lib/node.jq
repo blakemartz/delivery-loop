@@ -36,15 +36,19 @@ def _dep_errors:
       (check("via"; is_string_or_null; "must be a string or null") | "\($at): \(.)")
     end;
 
-# `claim`: null, or {actor, run, at, by: "agent"|"human"}.
+# `claim`: null, or {actor, run, at, by: "agent"|"human"}. §4.1 types only `by`.
+# `run` and `at` are null when the backend has no record of them: a github human
+# claim is just an assignee (no `CLAIM` comment, so no run; no assignment time in
+# the read fields), and a local `--human` claim has no run. They are never
+# replaced by a sentinel.
 def _claim_errors:
   if . == null then empty
   elif type != "object" then "`claim` must be null or an object (got \(tojson))"
   else
     (key_errors(["actor", "run", "at", "by"]) | "`claim`: \(.)"),
     (check("actor"; is_nonempty_string; "must be a non-empty string") | "`claim`: \(.)"),
-    (check("run"; is_nonempty_string; "must be a non-empty string") | "`claim`: \(.)"),
-    (check("at"; is_iso8601; "must be an ISO-8601 timestamp") | "`claim`: \(.)"),
+    (check("run"; . == null or is_nonempty_string; "must be a non-empty string or null") | "`claim`: \(.)"),
+    (check("at"; is_iso8601_or_null; "must be an ISO-8601 timestamp or null") | "`claim`: \(.)"),
     (check("by"; is_enum(["agent", "human"]); "must be \"agent\" or \"human\"") | "`claim`: \(.)")
   end;
 
@@ -58,6 +62,8 @@ def node_errors:
     check("epic"; . == null or is_node_id; "must be a node id or null"),
     check("checklist"; type == "array" and all(.[]; is_node_id); "must be an array of node ids"),
     check("pinged_at"; is_iso8601_or_null; "must be an ISO-8601 timestamp or null"),
+    # Bare name: adapters strip the `module:` label prefix (a bare `module:`
+    # label maps to null).
     check("module"; . == null or (is_nonempty_string and (startswith("module:") | not));
           "must be a bare module name (no `module:` prefix) or null"),
     check("size"; is_enum(node_sizes); "must be S|M|L or null"),

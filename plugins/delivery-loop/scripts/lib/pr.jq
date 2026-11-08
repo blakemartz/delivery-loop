@@ -35,11 +35,15 @@ def pr_errors:
     check("head_sha"; is_nonempty_string; "must be a non-empty string"),
     check("mergeable"; is_enum(pr_mergeables); "must be one of \(pr_mergeables | join("|"))"),
     check("checks"; is_enum(pr_checks); "must be one of \(pr_checks | join("|"))"),
-    check("task_id"; . == null or is_nonempty_string; "must be a non-empty string or null"),
+    # The join key to node `id` (§4.3), so it obeys the same id rule: a
+    # `#`-prefixed linkage would otherwise never match its node.
+    check("task_id"; . == null or is_node_id; "must be a node id or null"),
     check("labels"; is_string_array; "must be an array of strings"),
     check("patch_iteration"; is_int and . >= 0; "must be a non-negative integer"),
     check("reviewed_at_head"; is_bool; "must be a boolean"),
     check("agent"; is_bool; "must be a boolean"),
+    # §4.2 types `author` as a string, not nullable: a deleted account is the
+    # forge's placeholder login (github/gitea "ghost"), never null.
     check("author"; type == "string"; "must be a string"),
     (if (.agent | type) == "boolean" and (.labels | is_string_array)
         and .agent != (.labels | any(.[]; . == agent_label))

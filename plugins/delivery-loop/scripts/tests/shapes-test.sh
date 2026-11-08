@@ -51,6 +51,8 @@ reject node validate_node node-bad-id.json                '`id` must match'
 reject node validate_node node-bad-status.json            '`status` must be one of'
 reject node validate_node node-bad-dep.json               '`deps[1]` must be an object'
 reject node validate_node node-bad-claim.json             '`claim`: `by` must be "agent" or "human"'
+reject node validate_node node-bad-claim-run.json         '`claim`: `run` must be a non-empty string or null'
+reject node validate_node node-bad-timestamp.json         '`updated_at` must be an ISO-8601 timestamp'
 reject node validate_node node-bad-checklist-on-task.json '`checklist` is for epic nodes only'
 reject node validate_node node-bad-extra-field.json       'unexpected field `labels`'
 
@@ -58,6 +60,7 @@ reject node validate_node node-bad-extra-field.json       'unexpected field `lab
 accept pr validate_pr pr-valid.json
 reject pr validate_pr pr-bad-number.json          '`number` must be a positive integer'
 reject pr validate_pr pr-bad-state.json           '`state` must be one of'
+reject pr validate_pr pr-bad-task-id.json         '`task_id` must be a node id or null'
 reject pr validate_pr pr-bad-mergeable.json       '`mergeable` must be one of'
 reject pr validate_pr pr-bad-patch-iteration.json '`patch_iteration` must be a non-negative integer'
 reject pr validate_pr pr-bad-agent-label.json     '`agent` must equal whether `labels` contains'
