@@ -1,0 +1,47 @@
+[
+  {
+    "id": "gc7-orphan",
+    "kind": "task",
+    "title": "Task gc7-orphan",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "module": null,
+    "size": "S",
+    "deps": [
+      {
+        "id": "gc7-missing",
+        "via": null
+      }
+    ],
+    "status": "ready",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "gc7-control",
+    "kind": "task",
+    "title": "Task gc7-control",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "module": null,
+    "size": "S",
+    "deps": [],
+    "status": "ready",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  }
+]

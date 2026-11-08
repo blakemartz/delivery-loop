@@ -1,0 +1,168 @@
+[
+  {
+    "id": "gc1-ready",
+    "kind": "task",
+    "title": "Task gc1-ready",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "module": null,
+    "size": "S",
+    "deps": [
+      {
+        "id": "gc1-dep-a",
+        "via": null
+      },
+      {
+        "id": "gc1-dep-b",
+        "via": null
+      }
+    ],
+    "status": "ready",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "gc1-dep-a",
+    "kind": "task",
+    "title": "Task gc1-dep-a",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "module": null,
+    "size": "S",
+    "deps": [],
+    "status": "done",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "gc1-dep-b",
+    "kind": "task",
+    "title": "Task gc1-dep-b",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "module": null,
+    "size": "S",
+    "deps": [],
+    "status": "done",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "gc1-epic",
+    "kind": "epic",
+    "title": "Task gc1-epic",
+    "epic": null,
+    "checklist": [
+      "gc1-ready"
+    ],
+    "pinged_at": null,
+    "module": null,
+    "size": null,
+    "deps": [],
+    "status": "ready",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "gc1-claimed",
+    "kind": "task",
+    "title": "Task gc1-claimed",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "module": null,
+    "size": "S",
+    "deps": [],
+    "status": "claimed",
+    "needs_human": false,
+    "claim": {
+      "actor": "agent-1",
+      "run": "host-1-1",
+      "at": "2026-01-01T00:00:00Z",
+      "by": "agent"
+    },
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "gc1-assigned",
+    "kind": "task",
+    "title": "Task gc1-assigned",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "module": null,
+    "size": "S",
+    "deps": [],
+    "status": "claimed",
+    "needs_human": false,
+    "claim": {
+      "actor": "ann",
+      "run": null,
+      "at": null,
+      "by": "human"
+    },
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "gc1-dep-open",
+    "kind": "task",
+    "title": "Task gc1-dep-open",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "module": null,
+    "size": "S",
+    "deps": [
+      {
+        "id": "gc1-claimed",
+        "via": null
+      }
+    ],
+    "status": "ready",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  }
+]
