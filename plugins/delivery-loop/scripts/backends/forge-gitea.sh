@@ -33,9 +33,12 @@
 #     `conflicting` per §7.3, so a still-checking PR may be offered a rebase,
 #     never a merge. absent/null (older servers) is re-polled 3 times with
 #     backoff, then stays `unknown`. Only `true` is `clean`.
-#   - `checks` comes from the combined status of the head commit; `warning` and
-#     `skipped` count as success. Gitea Actions posts one status per job (src),
-#     so the combined state already rolls up every job.
+#   - `checks` is rolled up in the adapter over every `statuses[].status` of
+#     GET /commits/{sha}/status, paged in full like any list (LIST_LIMIT exit 3
+#     included); `warning` and `skipped` count as success. That endpoint is
+#     paginated (src) and its `state`/`total_count` cover only the returned page,
+#     so neither is trusted: Gitea Actions posts one status per job, and a failing
+#     job past page 1 must still read as failure.
 #   - `pr-list` hydrates each listed PR (combined status, issue comments,
 #     reviews); it re-reads a PR only while its mergeability is unknown.
 #   - `pr-list --state merged` pages `state=closed&sort=recentupdate` and keeps
@@ -44,6 +47,8 @@
 #     the PR, so nothing older can have merged at or after T).
 #   - `pr-find --head H` pages the open list and matches `head.ref`, because
 #     `GET /pulls/{base}/{head}` needs the base, which pr-find does not take.
+#     The open list is paged `sort=oldest` (creation order), so PRs updated
+#     while paging cannot shift between pages and be missed.
 #   - `pr-create --draft` prefixes the title `WIP: ` (Gitea's default WIP
 #     prefix; the API has no draft field).
 #   - verdicts and merges pin the head SHA: a pre-read refuses a stale --sha
@@ -59,6 +64,8 @@
 #     case-insensitively). A squash also sets `delete_branch_after_merge`. A
 #     405 "try again later" is retried 3 times with backoff, then exits 1; any
 #     other 405 (method disallowed, not mergeable) or 409 exits 1 at once.
+#     Gitea also answers a conflicted PR with that 405 (src: ErrNotMergeableState),
+#     so a conflicted merge exits 1 only after the 3 backoffs.
 #     `pr-merge` then re-reads the PR and exits 0 only if `merged == true`.
 #   - a 429 is retried 3 times with backoff (rate limits are unverified).
 #   - issue comments have no documented pagination; one GET returns them all.
@@ -177,24 +184,31 @@ limit_exit() {
   exit 3
 }
 
-# paged <path[?query]> <out-file> [since]: GET every page into one JSON array.
-# With `since`, stop after the first page holding a PR updated before it.
+# paged <path[?query]> <out-file> [since] [items] [missing-ok]: GET every page
+# into one JSON array. `items` (a jq path, default `.`) selects each page's
+# array, for an endpoint that wraps it in an object. With `since`, stop after
+# the first page holding a PR updated before it. Whichever way paging ends, a
+# result reaching LIST_LIMIT exits 3. With `missing-ok`, a 404 on page 1 is an
+# empty list instead of an error.
 paged() {
-  local path="$1" out="$2" since="${3:-}" page=1 next n sep='?'
+  local path="$1" out="$2" since="${3:-}" items="${4:-.}" missing_ok="${5:-}" page=1 next n sep='?'
   case "$path" in *\?*) sep='&' ;; esac
   page_size
   echo '[]' > "$out"
   while :; do
     api GET "$path${sep}limit=$PAGE&page=$page"
+    if [ "$code" = 404 ] && [ "$page" = 1 ] && [ -n "$missing_ok" ]; then return 0; fi
     ok2xx || die_http "GET $API_PATH$path"
-    jq -e 'type == "array"' "$tmp/resp" >/dev/null || die "GET $API_PATH$path: expected a JSON array"
-    jq -s '.[0] + .[1]' "$out" "$tmp/resp" > "$out.n" && mv "$out.n" "$out"
+    jq -e "$items | type == \"array\"" "$tmp/resp" >/dev/null 2>&1 \
+      || die "GET $API_PATH$path: expected a JSON array at '$items'"
+    jq "$items" "$tmp/resp" > "$tmp/page.json"
+    jq -s '.[0] + .[1]' "$out" "$tmp/page.json" > "$out.n" && mv "$out.n" "$out"
     if [ -n "$since" ] \
-       && [ "$(fjq -r --arg t "$since" 'include "forge-gitea"; gt_older_than($t)' "$tmp/resp")" = true ]; then
-      return 0
+       && [ "$(fjq -r --arg t "$since" 'include "forge-gitea"; gt_older_than($t)' "$tmp/page.json")" = true ]; then
+      break
     fi
     next=$(next_page)
-    [ -n "$next" ] && [ "$next" -gt "$page" ] && [ "$(jq 'length' "$tmp/resp")" -gt 0 ] || break
+    [ -n "$next" ] && [ "$next" -gt "$page" ] && [ "$(jq 'length' "$tmp/page.json")" -gt 0 ] || break
     n=$(jq 'length' "$out")
     [ "$n" -lt "$LIST_LIMIT" ] || limit_exit "GET $API_PATH$path" "$n"
     page="$next"
@@ -229,22 +243,21 @@ hydrate() {
   local f="$1" n sha
   n=$(jq -r .number "$f"); sha=$(jq -r '.head.sha // empty' "$f")
   [ -n "$sha" ] || die "pull #$n has no head.sha"
-  api GET "$RP/commits/$sha/status"
-  if ok2xx; then
-    cp "$tmp/resp" "$tmp/h-status.json"
-  elif [ "$code" = 404 ] && [ "$(jq -r .state "$f")" != open ]; then
-    # A closed PR's head commit may be gone; an open PR's never is.
-    echo '{"state": "", "total_count": 0, "statuses": []}' > "$tmp/h-status.json"
+  # Every status of the head, all pages: checks are rolled up over all of them.
+  # A closed PR's head commit may be gone (404 -> no statuses); an open PR's
+  # never is, so there a 404 fails like any other error.
+  if [ "$(jq -r .state "$f")" = open ]; then
+    paged "$RP/commits/$sha/status" "$tmp/h-statuses.json" "" '.statuses // []'
   else
-    die_http "GET commit status of pull #$n ($sha)"
+    paged "$RP/commits/$sha/status" "$tmp/h-statuses.json" "" '.statuses // []' missing-ok
   fi
   api GET "$RP/issues/$n/comments"
   ok2xx || die_http "GET comments of pull #$n"
   cp "$tmp/resp" "$tmp/h-comments.json"
   paged "$RP/pulls/$n/reviews" "$tmp/h-reviews.json"
-  jq -n --slurpfile pr "$f" --slurpfile st "$tmp/h-status.json" \
+  jq -n --slurpfile pr "$f" --slurpfile st "$tmp/h-statuses.json" \
         --slurpfile cm "$tmp/h-comments.json" --slurpfile rv "$tmp/h-reviews.json" \
-        '{pr: $pr[0], status: $st[0], comments: $cm[0], reviews: $rv[0]}' \
+        '{pr: $pr[0], statuses: $st[0], comments: $cm[0], reviews: $rv[0]}' \
     | fjq -c --arg gb "$GRAPH_BACKEND" 'include "forge-gitea"; gt_pr($gb)'
 }
 
@@ -322,7 +335,7 @@ op_pr_list() {
     paged "$RP/pulls?state=closed&sort=recentupdate" "$tmp/list.json"
     fjq 'include "forge-gitea"; gt_merged' "$tmp/list.json" > "$tmp/sel.json"
   else
-    paged "$RP/pulls?state=open" "$tmp/list.json"
+    paged "$RP/pulls?state=open&sort=oldest" "$tmp/list.json"
     cp "$tmp/list.json" "$tmp/sel.json"
   fi
   : > "$tmp/prs.jsonl"
@@ -339,7 +352,7 @@ op_pr_list() {
 
 op_pr_find() {
   [ "${1:-}" = --head ] && [ -n "${2:-}" ] || usage "pr-find --head H"
-  paged "$RP/pulls?state=open" "$tmp/find.json"
+  paged "$RP/pulls?state=open&sort=oldest" "$tmp/find.json"
   jq --arg h "$2" 'first(.[] | select(.head.ref == $h)) // empty' "$tmp/find.json" > "$tmp/found.json"
   [ -s "$tmp/found.json" ] || return 0
   repoll "$tmp/found.json"

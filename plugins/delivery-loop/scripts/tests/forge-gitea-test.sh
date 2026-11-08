@@ -81,7 +81,7 @@ else
   fail "GC28: validate_pr rejected adapter output"
 fi
 expect "GC28: reads GET /pulls/{n} with the token header" 'log_line "GET $R/pulls/101 token=$TOKEN"'
-expect "GC28: checks from the head commit's combined status" 'log_line "GET $R/commits/$(sha 101)/status token=$TOKEN"'
+expect "GC28: checks from the head commit's status list, paged with limit/page" 'log_line "GET $R/commits/$(sha 101)/status?limit=2&page=1 token=$TOKEN"'
 expect "GC28: hydrates issue comments and paged reviews" 'log_line "GET $R/issues/101/comments token=$TOKEN" && log_line "GET $R/pulls/101/reviews?limit=2&page=1 token=$TOKEN"'
 expect "GC28: reviews page 2 followed via Link rel=next" 'log_line "GET $R/pulls/101/reviews?limit=2&page=2 token=$TOKEN"'
 expect "GC28: the token is never on curl's command line" '! grep -qF "$TOKEN" "$tmp/state/argv"'
@@ -91,10 +91,23 @@ reset
 run -- pr-view 107
 expect "GC28: null then true on the re-poll -> clean" '[ "$rc" = 0 ] && jq_true ".mergeable == \"clean\"" && [ "$(log_count sleep)" = 1 ]'
 
+# GC28: the status list spans pages and the failing job is on page 2. Page 1's
+# own state is "success", so only a roll-up over every page reads it right.
+reset
+run -- pr-view 108
+expect "GC28: a failing status on page 2 -> checks failure" '[ "$rc" = 0 ] && jq_true ".checks == \"failure\""'
+expect "GC28: status pages 1 and 2 both read via Link rel=next" \
+  'log_line "GET $R/commits/$(sha 108)/status?limit=2&page=1 token=$TOKEN" && log_line "GET $R/commits/$(sha 108)/status?limit=2&page=2 token=$TOKEN" && [ "$(log_count "$(sha 108)/status?limit=2&page=3")" = 0 ]'
+expect "GC28: the shim's page 1 alone would roll up to success (the case is real)" \
+  '[ "$(jq -c --arg s "$(sha 108)" ".[\$s].statuses[0:2] | map(.status)" "$fx/statuses.json")" = "[\"success\",\"success\"]" ]'
+reset
+run LIST_LIMIT=3 -- pr-view 108
+expect "GC28: a status list reaching LIST_LIMIT exits 3, prints nothing" '[ "$rc" = 3 ] && grep -qF LIST_LIMIT <<<"$err" && [ -z "$out" ]'
+
 # GC28: the combined status -> checks mapping (§7.3) over every state.
 while IFS= read -r c; do
   name=$(jq -r .case <<<"$c"); want=$(jq -r .want <<<"$c")
-  got=$(jq -r -L "$here/../lib" -L "$here/../backends" 'include "forge-gitea"; .status | gt_checks' <<<"$c")
+  got=$(jq -r -L "$here/../lib" -L "$here/../backends" 'include "forge-gitea"; .statuses | gt_checks' <<<"$c")
   rc=0; out="$got"; err=""
   expect "GC28: checks for $name -> $want" '[ "$got" = "$want" ]'
 done < <(jq -c '.[]' "$fx/status-cases.json")
@@ -114,8 +127,8 @@ reset
 run -- pr-list
 expect "GC32: two-page open list -> every PR from both pages" '[ "$rc" = 0 ] && [ "$(jq -c "map(.number)" <<<"$out")" = "[101,104,105]" ]'
 expect "GC32: page size from GET /settings/api (max_response_items)" 'log_line "GET $B/settings/api token=$TOKEN"'
-expect "GC32: page 1 and page 2 requested with limit=max_response_items" 'log_line "GET $R/pulls?state=open&limit=2&page=1 token=$TOKEN" && log_line "GET $R/pulls?state=open&limit=2&page=2 token=$TOKEN"'
-expect "GC32: no page past the last Link rel=next" '[ "$(log_count "pulls?state=open&limit=2&page=3")" = 0 ]'
+expect "GC32: page 1 and page 2 requested with limit=max_response_items, stable sort=oldest" 'log_line "GET $R/pulls?state=open&sort=oldest&limit=2&page=1 token=$TOKEN" && log_line "GET $R/pulls?state=open&sort=oldest&limit=2&page=2 token=$TOKEN"'
+expect "GC32: no page past the last Link rel=next" '[ "$(log_count "pulls?state=open&sort=oldest&limit=2&page=3")" = 0 ]'
 expect "GC32: listed PRs hydrated without re-reading settled ones" '! grep -qE "^GET $R/pulls/[0-9]+ token=" "$tmp/state/log" && log_has "GET $R/commits/$(sha 105)/status"'
 expect "GC32: every listed PR passes validate_pr" 'jq -e -L "$here/../lib" "include \"pr\"; map(validate_pr) | length == 3" <<<"$out" >/dev/null'
 reset
@@ -124,6 +137,9 @@ expect "GC32: a list reaching LIST_LIMIT exits 3 naming LIST_LIMIT, prints nothi
 reset
 run LIST_LIMIT=2 -- pr-list
 expect "GC32: the ceiling is checked before following the next page" '[ "$rc" = 3 ] && [ "$(log_count "page=2")" = 0 ]'
+reset
+run LIST_LIMIT=5 -- pr-list --state merged --since 2026-11-08T10:00:00Z
+expect "GC32: the --since early stop still applies LIST_LIMIT (6 read >= 5 -> exit 3)" '[ "$rc" = 3 ] && grep -qF LIST_LIMIT <<<"$err" && [ -z "$out" ]'
 reset
 touch "$tmp/state/rate-limit-once"
 run -- pr-list
@@ -259,6 +275,7 @@ run -- pr-find --head task/105-none
 expect "pr-find --head with no PR -> empty, exit 0" '[ "$rc" = 0 ] && [ -z "$out" ]'
 run -- pr-find --head task/plan-lint--rules
 expect "pr-find --head -> that open PR (found on page 2)" '[ "$rc" = 0 ] && jq_true ".number == 105 and .task_id == \"plan-lint\""'
+expect "pr-find pages the open list with a stable sort=oldest" 'log_line "GET $R/pulls?state=open&sort=oldest&limit=2&page=2 token=$TOKEN"'
 run -- pr-reviews 101
 expect "pr-reviews -> [{author, verdict, body, at, commit}] across pages" \
   '[ "$rc" = 0 ] && jq_true "map(.verdict) == [\"request-changes\", \"dismissed\", \"approve\"] and .[2].commit == \"$(sha 101)\" and (.[0] | keys) == [\"at\",\"author\",\"body\",\"commit\",\"verdict\"]"'

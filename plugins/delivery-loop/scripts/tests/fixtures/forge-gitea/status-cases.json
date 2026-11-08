@@ -1,12 +1,12 @@
 [
-  {"case": "no statuses (total_count 0, state empty)", "status": {"state": "", "total_count": 0, "statuses": []}, "want": "none"},
-  {"case": "no statuses, state pending", "status": {"state": "pending", "total_count": 0, "statuses": []}, "want": "none"},
-  {"case": "success", "status": {"state": "success", "total_count": 2, "statuses": []}, "want": "success"},
-  {"case": "warning", "status": {"state": "warning", "total_count": 1, "statuses": []}, "want": "success"},
-  {"case": "skipped", "status": {"state": "skipped", "total_count": 1, "statuses": []}, "want": "success"},
-  {"case": "error", "status": {"state": "error", "total_count": 3, "statuses": []}, "want": "failure"},
-  {"case": "failure", "status": {"state": "failure", "total_count": 3, "statuses": []}, "want": "failure"},
-  {"case": "pending", "status": {"state": "pending", "total_count": 2, "statuses": []}, "want": "pending"},
-  {"case": "unrecognized state (never success)", "status": {"state": "", "total_count": 1, "statuses": []}, "want": "pending"},
-  {"case": "total_count absent, statuses present", "status": {"state": "success", "statuses": [{"status": "success"}]}, "want": "success"}
+  {"case": "no statuses", "statuses": [], "want": "none"},
+  {"case": "every status success", "statuses": [{"status": "success"}, {"status": "success"}], "want": "success"},
+  {"case": "warning counts as success", "statuses": [{"status": "warning"}, {"status": "success"}], "want": "success"},
+  {"case": "skipped counts as success", "statuses": [{"status": "skipped"}], "want": "success"},
+  {"case": "any error", "statuses": [{"status": "success"}, {"status": "error"}, {"status": "pending"}], "want": "failure"},
+  {"case": "any failure", "statuses": [{"status": "pending"}, {"status": "failure"}], "want": "failure"},
+  {"case": "any pending, none failed", "statuses": [{"status": "success"}, {"status": "pending"}], "want": "pending"},
+  {"case": "unrecognized status (never success)", "statuses": [{"status": "success"}, {"status": "bogus"}], "want": "pending"},
+  {"case": "status field missing (never success)", "statuses": [{"context": "ci"}], "want": "pending"},
+  {"case": "a page's own state/total_count are ignored", "statuses": [{"status": "failure", "state": "success", "total_count": 0}], "want": "failure"}
 ]

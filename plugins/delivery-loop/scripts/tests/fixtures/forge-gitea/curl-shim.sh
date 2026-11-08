@@ -7,6 +7,9 @@
 #   prs.json       {"<n>": <PullRequest>, "<n>.<k>": <PullRequest for the k-th GET>}
 #   lists.json     {"open"|"closed": [<n>, …]}  (closed in sort=recentupdate order)
 #   statuses.json  {"<sha>": <CombinedStatus>}  (missing sha → no statuses)
+#                  `statuses` holds every status; the route pages it as Gitea
+#                  does (src: GetCombinedCommitStatusByRef), recomputing `state`
+#                  and `total_count` over the returned page only.
 #   reviews.json   {"<n>": [<PullReview>]}      comments.json {"<n>": [<Comment>]}
 #   files.json     {"<n>": [<ChangedFile>]}
 # Lists are sliced by `limit`/`page` like the server (limit clamped to
@@ -135,7 +138,14 @@ else
       fi ;;
     GET\ commits/*/status)
       sha="${route#commits/}"; sha="${sha%/status}"
-      respond 200 "$(jq -c --arg s "$sha" '.[$s] // {state: "", sha: $s, total_count: 0, statuses: []}' "$SHIM_FX/statuses.json")" ;;
+      cs=$(jq -c --arg s "$sha" '.[$s] // {state: "", sha: $s, total_count: 0, statuses: []}' "$SHIM_FX/statuses.json")
+      page "$(jq -c '.statuses' <<<"$cs")"
+      # Gitea's CalcCommitStatus over this page: the worst state wins.
+      body=$(jq -c --argjson pg "$body" '.statuses = $pg | .total_count = ($pg | length)
+        | .state = ([$pg[].status] as $s
+                    | if ($s | length) == 0 then ""
+                      else first(("error", "failure", "pending", "warning", "success", "skipped") as $w
+                                 | select(any($s[]; . == $w)) | $w) end)' <<<"$cs") ;;
     *) echo "curl-shim: unhandled request: $method $url" >&2; exit 64 ;;
   esac
 fi

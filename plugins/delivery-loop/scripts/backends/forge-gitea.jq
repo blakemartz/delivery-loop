@@ -5,12 +5,12 @@
 #
 #   gt_pr($graph_backend)  — {pr, status, comments, reviews} → a §4.2 PR, built
 #                            field by field and passed through validate_pr. `pr` is
-#                            one PullRequest, `status` the CombinedStatus of its
-#                            head, `comments`/`reviews` the issue comments and
-#                            PullReviews.
+#                            one PullRequest, `statuses` every CommitStatus of its
+#                            head (all pages), `comments`/`reviews` the issue
+#                            comments and PullReviews.
 #   gt_mergeable_computing — a PullRequest whose mergeability is still unknown
 #                            (open, `mergeable` absent/null), so a re-poll can help.
-#   gt_checks              — CombinedStatus → success|pending|failure|none.
+#   gt_checks              — [CommitStatus] (every page) → success|pending|failure|none.
 #   gt_reviews             — [PullReview] → [{author, verdict, body, at, commit}]
 #   gt_comments            — [Comment] → [{author, body, at, url}]
 #   gt_older_than($t)      — a list page holds a PR updated before ISO-8601 $t
@@ -45,14 +45,17 @@ def gt_mergeable:
 def gt_mergeable_computing:
   .state == "open" and .merged != true and .mergeable == null;
 
-# §7.3 checks from GET /commits/{sha}/status: no statuses → none; success →
-# success; error/failure → failure; pending → pending; warning/skipped → success.
-# Any other (or empty) combined state is pending: it is never read as success.
+# §7.3 checks, rolled up here over every `statuses[].status` of the head commit
+# (all pages of GET /commits/{sha}/status). The server's `state`/`total_count`
+# cover only the returned page, so they are never read. No statuses → none; any
+# error/failure → failure; else any pending or unrecognized status → pending
+# (never success); else (every one success/warning/skipped) → success.
 def gt_checks:
-  if ((.total_count // ((.statuses // []) | length)) == 0) then "none"
-  else {"success": "success", "warning": "success", "skipped": "success",
-        "error": "failure", "failure": "failure", "pending": "pending"}[.state // ""]
-       // "pending" end;
+  [ .[] | .status // "" ] as $s
+  | if ($s | length) == 0 then "none"
+    elif any($s[]; . == "error" or . == "failure") then "failure"
+    elif all($s[]; . == "success" or . == "warning" or . == "skipped") then "success"
+    else "pending" end;
 
 def gt_pr($graph_backend):
   .pr as $p
@@ -66,7 +69,7 @@ def gt_pr($graph_backend):
       base: $p.base.ref,
       head_sha: $p.head.sha,
       mergeable: ($p | gt_mergeable),
-      checks: (.status | gt_checks),
+      checks: ((.statuses // []) | gt_checks),
       task_id: ({body: ($p.body // ""), headRefName: ($p.head.ref // "")} | gh_task_id($graph_backend)),
       labels: $labels,
       patch_iteration: ({comments: $comments} | gh_patch_iteration),
