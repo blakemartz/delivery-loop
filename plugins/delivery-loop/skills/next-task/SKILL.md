@@ -17,7 +17,7 @@ You are the **implementer** role from the delivery spec (`${CLAUDE_PLUGIN_ROOT}/
 6. **Verify.** Run EVERY acceptance criterion literally, plus the gate (`GATE_CMD`). All must pass. Capture the passing output lines — they're your PR evidence.
 7. **Re-verify claim.** `gh issue view <n> --json assignees` — you must still be the sole assignee. If not, stop and report (someone reclaimed it).
 8. **Commit & push** from the worktree. If the repo installs git hooks, they fire — **never bypass the gate** (`--no-verify`). If a hook fails, fix the cause. Rebase onto `origin/$BASE_BRANCH` first if behind.
-9. **PR.** `gh pr create --title "<task title> (#<n>)" --body ...` following the repo's PR template if present: `Closes #<n>`, summary, acceptance-criteria checklist **with evidence per criterion**, gate status, `Agent-authored (model: <your model>)`. Add label `agent-authored`.
+9. **PR.** `gh pr create --base "$BASE_BRANCH" --title "<task title> (#<n>)" --body ...` (always pass `--base`: it may be a release/feature branch, not the repo default) following the repo's PR template if present: `Closes #<n>`, summary, acceptance-criteria checklist **with evidence per criterion**, gate status, `Agent-authored (model: <your model>)`. Add label `agent-authored`.
 10. **Labels.** `gh issue edit <n> --add-label status:in-review --remove-label status:claimed`.
 11. Report the PR URL.
 
