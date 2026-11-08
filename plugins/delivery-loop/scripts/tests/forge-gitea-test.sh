@@ -83,7 +83,7 @@ fi
 expect "GC28: reads GET /pulls/{n} with the token header" 'log_line "GET $R/pulls/101 token=$TOKEN"'
 expect "GC28: checks from the head commit's status list, paged with limit/page" 'log_line "GET $R/commits/$(sha 101)/status?limit=2&page=1 token=$TOKEN"'
 expect "GC28: hydrates issue comments and paged reviews" 'log_line "GET $R/issues/101/comments token=$TOKEN" && log_line "GET $R/pulls/101/reviews?limit=2&page=1 token=$TOKEN"'
-expect "GC28: reviews page 2 followed via Link rel=next" 'log_line "GET $R/pulls/101/reviews?limit=2&page=2 token=$TOKEN"'
+expect "GC28: reviews page 2 followed via X-Total-Count (the route sends no Link)" 'log_line "GET $R/pulls/101/reviews?limit=2&page=2 token=$TOKEN"'
 expect "GC28: the token is never on curl's command line" '! grep -qF "$TOKEN" "$tmp/state/argv"'
 expect "GC28: mergeable null re-polled 3 times with backoff, then unknown (106)" '[ "$(log_count "GET $R/pulls/106 ")" = 4 ] && [ "$(log_count sleep)" = 3 ]'
 expect "GC28: no re-poll for a settled PR (101: one GET)" '[ "$(log_count "GET $R/pulls/101 ")" = 1 ]'
@@ -96,13 +96,49 @@ expect "GC28: null then true on the re-poll -> clean" '[ "$rc" = 0 ] && jq_true 
 reset
 run -- pr-view 108
 expect "GC28: a failing status on page 2 -> checks failure" '[ "$rc" = 0 ] && jq_true ".checks == \"failure\""'
-expect "GC28: status pages 1 and 2 both read via Link rel=next" \
+expect "GC28: status pages 1 and 2 both read (Forgejo: X-Total-Count, no Link)" \
   'log_line "GET $R/commits/$(sha 108)/status?limit=2&page=1 token=$TOKEN" && log_line "GET $R/commits/$(sha 108)/status?limit=2&page=2 token=$TOKEN" && [ "$(log_count "$(sha 108)/status?limit=2&page=3")" = 0 ]'
 expect "GC28: the shim's page 1 alone would roll up to success (the case is real)" \
   '[ "$(jq -c --arg s "$(sha 108)" ".[\$s].statuses[0:2] | map(.status)" "$fx/statuses.json")" = "[\"success\",\"success\"]" ]'
 reset
 run LIST_LIMIT=3 -- pr-view 108
 expect "GC28: a status list reaching LIST_LIMIT exits 3, prints nothing" '[ "$rc" = 3 ] && grep -qF LIST_LIMIT <<<"$err" && [ -z "$out" ]'
+
+# GC28 under every header shape a paginated route can send (src): Link and
+# X-Total-Count (Gitea's status route, /pulls, /files), X-Total-Count only
+# (/reviews on both forges, Forgejo's status route), and neither. PR 108's
+# failing status is on page 2; PR 101's head-matching APPROVED review is its
+# 3rd (page 2). Each must be read in full, with no page past the last.
+for mode in "SHIM_FORGE=gitea" "SHIM_LINK=all" "SHIM_LINK=none" "SHIM_LINK=none SHIM_NO_TOTAL=1" "SHIM_FORGE=forgejo"; do
+  # shellcheck disable=SC2086
+  { reset; run $mode -- pr-view 108; }
+  expect "GC28 [$mode]: page-2 failure -> checks failure, pages 1-2 read, no page 3" \
+    '[ "$rc" = 0 ] && jq_true ".checks == \"failure\"" && log_has "$(sha 108)/status?limit=2&page=2 " && [ "$(log_count "$(sha 108)/status?limit=2&page=3")" = 0 ]'
+  # shellcheck disable=SC2086
+  { reset; run $mode -- pr-view 101; }
+  expect "GC28 [$mode]: every review read -> reviewed_at_head true (101)" \
+    '[ "$rc" = 0 ] && jq_true ".reviewed_at_head == true" && log_has "pulls/101/reviews?limit=2&page=2 " && [ "$(log_count "pulls/101/reviews?limit=2&page=3")" = 0 ]'
+  # shellcheck disable=SC2086
+  { reset; run $mode -- pr-reviews 101; }
+  expect "GC28 [$mode]: pr-reviews 101 -> all 3 reviews, newest verdict last" \
+    '[ "$rc" = 0 ] && jq_true "length == 3 and .[2].verdict == \"approve\""'
+  # shellcheck disable=SC2086
+  { reset; run LIST_LIMIT=3 $mode -- pr-view 108; }
+  expect "GC28 [$mode]: status list reaching LIST_LIMIT -> exit 3, prints nothing" \
+    '[ "$rc" = 3 ] && grep -qF LIST_LIMIT <<<"$err" && [ -z "$out" ]'
+  # shellcheck disable=SC2086
+  { reset; run LIST_LIMIT=3 $mode -- pr-reviews 101; }
+  expect "GC28 [$mode]: review list reaching LIST_LIMIT -> exit 3, prints nothing" \
+    '[ "$rc" = 3 ] && grep -qF LIST_LIMIT <<<"$err" && [ -z "$out" ]'
+  # shellcheck disable=SC2086
+  { reset; run $mode -- pr-list; }
+  expect "GC32 [$mode]: open list read in full over both pages" \
+    '[ "$rc" = 0 ] && [ "$(jq -c "map(.number)" <<<"$out")" = "[101,104,105]" ] && [ "$(log_count "sort=oldest&limit=2&page=3")" = 0 ]'
+done
+reset
+run SHIM_LINK=none SHIM_NO_TOTAL=1 -- pr-view 104
+expect "GC28 [no headers]: a full last page costs one empty read, then stops" \
+  '[ "$rc" = 0 ] && log_has "$(sha 104)/status?limit=2&page=2 " && [ "$(log_count "$(sha 104)/status?limit=2&page=3")" = 0 ]'
 
 # GC28: the combined status -> checks mapping (§7.3) over every state.
 while IFS= read -r c; do

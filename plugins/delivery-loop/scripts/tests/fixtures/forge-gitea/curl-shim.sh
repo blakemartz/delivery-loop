@@ -7,13 +7,21 @@
 #   prs.json       {"<n>": <PullRequest>, "<n>.<k>": <PullRequest for the k-th GET>}
 #   lists.json     {"open"|"closed": [<n>, …]}  (closed in sort=recentupdate order)
 #   statuses.json  {"<sha>": <CombinedStatus>}  (missing sha → no statuses)
-#                  `statuses` holds every status; the route pages it as Gitea
-#                  does (src: GetCombinedCommitStatusByRef), recomputing `state`
-#                  and `total_count` over the returned page only.
+#                  `statuses` holds every status; the route pages it as both
+#                  forges do (src: GetCombinedCommitStatusByRef), recomputing
+#                  `state` and `total_count` over the returned page only.
 #   reviews.json   {"<n>": [<PullReview>]}      comments.json {"<n>": [<Comment>]}
 #   files.json     {"<n>": [<ChangedFile>]}
 # Lists are sliced by `limit`/`page` like the server (limit clamped to
-# max_response_items = 2) and carry `Link: rel="next"` / X-Total-Count headers.
+# max_response_items = 2) and carry the headers the real servers send (src):
+#   X-Total-Count on every paged route; `Link: rel="next"` (while a next page
+#   exists) on /pulls and /pulls/{n}/files only. /pulls/{n}/reviews never sends
+#   Link (ListPullReviews: SetTotalCountHeader only, both forges), nor does
+#   /commits/{sha}/status on Forgejo (the default); SHIM_FORGE=gitea gives the
+#   status route Link too (Gitea calls SetLinkHeader there).
+# Header overrides, to drive each branch of the adapter's paging:
+#   SHIM_LINK=all   — Link on every paged route;  SHIM_LINK=none — on none.
+#   SHIM_NO_TOTAL=1 — no X-Total-Count on any route.
 #
 # Every call appends one line to $SHIM_STATE/log:
 #   `<METHOD> <url> token=<token>`
@@ -63,20 +71,23 @@ respond() { status="$1"; body="$2"; }
 err() { respond "$1" "$(jq -cn --arg m "$2" --arg u "$base" '{message: $m, url: ($u + "/api/swagger")}')"; }
 pr_obj() { jq -c --arg k "$1" '.[$k] // empty' "$SHIM_FX/prs.json"; }
 
-# page <json-array>: slice by limit/page, set Link/X-Total-Count headers.
+# page <json-array> [link]: slice by limit/page, set X-Total-Count and, when the
+# route sends it (second arg "link", subject to SHIM_LINK), Link headers.
 page() {
-  local all="$1" lim pg total last
+  local all="$1" link="${2:-}" lim pg total last
   lim=$(qp limit); pg=$(qp page)
   lim="${lim:-2}"; pg="${pg:-1}"
   [ "$lim" -le 2 ] || lim=2
   total=$(jq 'length' <<<"$all")
   last=$(( (total + lim - 1) / lim )); [ "$last" -ge 1 ] || last=1
   body=$(jq -c --argjson l "$lim" --argjson p "$pg" '.[($p - 1) * $l: $p * $l]' <<<"$all")
-  headers="X-Total-Count: $total"
-  if [ "$pg" -lt "$last" ]; then
+  case "${SHIM_LINK:-}" in all) link=link ;; none) link="" ;; esac
+  headers=""
+  [ "${SHIM_NO_TOTAL:-}" = 1 ] || headers="X-Total-Count: $total"
+  if [ -n "$link" ] && [ "$pg" -lt "$last" ]; then
     nq=$(printf '&%s' "$q" | sed "s/&page=[0-9]*//; s/^&//")
-    headers="$headers
-Link: <$path?$nq&page=$((pg + 1))>; rel=\"next\",<$path?$nq&page=$last>; rel=\"last\""
+    headers="${headers:+$headers
+}Link: <$path?$nq&page=$((pg + 1))>; rel=\"next\",<$path?$nq&page=$last>; rel=\"last\""
   fi
 }
 
@@ -91,14 +102,14 @@ else
     "GET pulls")
       st=$(qp state)
       page "$(jq -c --arg s "${st:-open}" --slurpfile prs "$SHIM_FX/prs.json" \
-                '(.[$s] // []) | map(. as $n | $prs[0][$n | tostring])' "$SHIM_FX/lists.json")" ;;
+                '(.[$s] // []) | map(. as $n | $prs[0][$n | tostring])' "$SHIM_FX/lists.json")" link ;;
     "POST pulls")
       respond 201 "$(jq -c --arg u "$base" '{id: 1150, number: 150, title: .title, body: .body, state: "open",
                        html_url: "\($u)/example/repo/pulls/150", head: {ref: .head}, base: {ref: .base}}' <<<"$data")" ;;
     GET\ pulls/*.diff) respond 200 'diff --git a/a.sh b/a.sh' ;;
     GET\ pulls/*/files)
       n="${route#pulls/}"; n="${n%/files}"
-      page "$(jq -c --arg n "$n" '.[$n] // []' "$SHIM_FX/files.json")" ;;
+      page "$(jq -c --arg n "$n" '.[$n] // []' "$SHIM_FX/files.json")" link ;;
     GET\ pulls/*/reviews)
       n="${route#pulls/}"; n="${n%/reviews}"
       page "$(jq -c --arg n "$n" '.[$n] // []' "$SHIM_FX/reviews.json")" ;;
@@ -139,7 +150,8 @@ else
     GET\ commits/*/status)
       sha="${route#commits/}"; sha="${sha%/status}"
       cs=$(jq -c --arg s "$sha" '.[$s] // {state: "", sha: $s, total_count: 0, statuses: []}' "$SHIM_FX/statuses.json")
-      page "$(jq -c '.statuses' <<<"$cs")"
+      if [ "${SHIM_FORGE:-forgejo}" = gitea ]; then page "$(jq -c '.statuses' <<<"$cs")" link
+      else page "$(jq -c '.statuses' <<<"$cs")"; fi
       # Gitea's CalcCommitStatus over this page: the worst state wins.
       body=$(jq -c --argjson pg "$body" '.statuses = $pg | .total_count = ($pg | length)
         | .state = ([$pg[].status] as $s

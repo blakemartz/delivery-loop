@@ -25,9 +25,14 @@
 #   - the token is passed to curl in a header file (`-H @file`, mode 600 under
 #     a private temp dir), never on the command line.
 #   - lists page with `limit=<max_response_items>` (GET /settings/api, else 50)
-#     and `page=n`, following `Link: rel="next"`. Only the page number is taken
-#     from the link: the request stays on FORGE_URL, so the token never follows
-#     a link to another host. Reaching LIST_LIMIT exits 3.
+#     and `page=n`. Not every paginated route sends `Link` (src): GET
+#     /pulls/{n}/reviews (both forges) and Forgejo's GET /commits/{sha}/status
+#     send only `X-Total-Count`. So `paged` follows `Link: rel="next"` when it
+#     is there; else it keeps paging while fewer items than `X-Total-Count`
+#     have arrived; with neither header, while each page came back full. An
+#     empty page always ends it. Only the page number is taken from a link:
+#     the request stays on FORGE_URL, so the token never follows a link to
+#     another host. Reaching LIST_LIMIT exits 3 whichever way paging goes.
 #   - `mergeable` is a plain bool on Gitea: false covers conflicted, still
 #     checking, errored and WIP PRs (src: PullRequest.Mergeable). It maps to
 #     `conflicting` per §7.3, so a still-checking PR may be offered a rebase,
@@ -68,7 +73,8 @@
 #     so a conflicted merge exits 1 only after the 3 backoffs.
 #     `pr-merge` then re-reads the PR and exits 0 only if `merged == true`.
 #   - a 429 is retried 3 times with backoff (rate limits are unverified).
-#   - issue comments have no documented pagination; one GET returns them all.
+#   - issue comments are not paginated (src: ListIssueComments takes no
+#     ListOptions; the swagger has only since/before): one GET returns them all.
 #   - `ci-failures` is unsupported (exit 4): the patcher runs GATE_CMD locally.
 set -euo pipefail
 
@@ -172,6 +178,13 @@ page_size() {
   case "$PAGE" in ''|0|*[!0-9]*) PAGE=$DEFAULT_PAGE ;; esac
 }
 
+# hdr <name>: the value of the last response's header <name> (case-insensitive), or "".
+hdr() {
+  tr -d '\r' < "$tmp/hdr" | awk -v h="$1" 'BEGIN { h = tolower(h) ":" }
+    tolower(substr($0, 1, length(h))) == h { v = substr($0, length(h) + 1); sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v) }
+    END { print v }'
+}
+
 # The page number of the `Link: rel="next"` target of the last response, or "".
 next_page() {
   tr -d '\r' < "$tmp/hdr" | grep -i '^link:' | tail -n 1 | sed 's/^[Ll][Ii][Nn][Kk]:[[:space:]]*//' \
@@ -186,12 +199,16 @@ limit_exit() {
 
 # paged <path[?query]> <out-file> [since] [items] [missing-ok]: GET every page
 # into one JSON array. `items` (a jq path, default `.`) selects each page's
-# array, for an endpoint that wraps it in an object. With `since`, stop after
-# the first page holding a PR updated before it. Whichever way paging ends, a
-# result reaching LIST_LIMIT exits 3. With `missing-ok`, a 404 on page 1 is an
+# array, for an endpoint that wraps it in an object. The next page is, in
+# order: the `Link: rel="next"` target; else page+1 while the items so far are
+# fewer than `X-Total-Count`; else, with no `Link` and no `X-Total-Count`,
+# page+1 while the page was full (length == limit). An empty page ends paging.
+# With `since`, stop after the first page holding a PR updated before it.
+# Whichever way paging ends, a result reaching LIST_LIMIT exits 3 (checked
+# before every further page, too). With `missing-ok`, a 404 on page 1 is an
 # empty list instead of an error.
 paged() {
-  local path="$1" out="$2" since="${3:-}" items="${4:-.}" missing_ok="${5:-}" page=1 next n sep='?'
+  local path="$1" out="$2" since="${3:-}" items="${4:-.}" missing_ok="${5:-}" page=1 next n len total sep='?'
   case "$path" in *\?*) sep='&' ;; esac
   page_size
   echo '[]' > "$out"
@@ -207,9 +224,24 @@ paged() {
        && [ "$(fjq -r --arg t "$since" 'include "forge-gitea"; gt_older_than($t)' "$tmp/page.json")" = true ]; then
       break
     fi
-    next=$(next_page)
-    [ -n "$next" ] && [ "$next" -gt "$page" ] && [ "$(jq 'length' "$tmp/page.json")" -gt 0 ] || break
+    len=$(jq 'length' "$tmp/page.json")
+    [ "$len" -gt 0 ] || break
     n=$(jq 'length' "$out")
+    next=$(next_page)
+    case "$next" in ''|*[!0-9]*) next="" ;; esac
+    if [ -n "$next" ] && [ "$next" -gt "$page" ]; then
+      :                                        # Link rel="next"
+    else
+      next=""
+      total=$(hdr X-Total-Count)
+      case "$total" in *[!0-9]*) total="" ;; esac
+      if [ -n "$total" ]; then
+        [ "$n" -ge "$total" ] || next=$((page + 1))   # X-Total-Count: more to come
+      elif [ -z "$(hdr Link)" ]; then
+        [ "$len" -lt "$PAGE" ] || next=$((page + 1))  # no headers: a full page
+      fi
+    fi
+    [ -n "$next" ] || break
     [ "$n" -lt "$LIST_LIMIT" ] || limit_exit "GET $API_PATH$path" "$n"
     page="$next"
   done
