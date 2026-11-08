@@ -80,7 +80,7 @@ and the tick's planning is prose the orchestrator model interprets. After v0.2:
 **Not in v0.2 (do not decompose).** Everything in §15: cross-machine sync for the local
 backend, write-scope checks, gate-tamper guard, risk lanes, structured verdicts,
 re-plan edge, lessons ledger, metrics, stacked PRs, multi-hop promotion, a "no-forge"
-local mode, and new node kinds beyond `task | epic | promote`.
+local mode, and new node kinds beyond `task | epic | promote | external`.
 
 **Behavior parity is a hard requirement.** With default config (`GRAPH_BACKEND=github`,
 `FORGE=github`, no plan target), these are unchanged from v0.1.4:
@@ -101,6 +101,10 @@ local mode, and new node kinds beyond `task | epic | promote`.
    (GC42). GitHub's closing keywords only fire on the default branch.
 5. Reconcile repairs `claimed → in-review` when an open PR exists (GC43). v0.1.4
    relied on the implementer's own label edit.
+6. An issue labelled both `task` and `epic` is a `task` node only (§4.1 `kind`
+   precedence). v0.1.4 listed it as a task **and** counted it as an epic, so a
+   closed child could mark it started and reorder the ready set. v0.2 never treats
+   it as an epic: not for the started-epic flag, not for epic completion.
 
 ## 3. Architecture
 
@@ -149,7 +153,7 @@ on drift).
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string | github: the issue number as a string (`"42"`). local: a slug matching `^[a-z0-9]+(-[a-z0-9]+)*$`, ≤ 40 chars, must not contain `--`. |
-| `kind` | `task` \| `epic` \| `promote` | github: from the `task` / `epic` / `promote` labels. |
+| `kind` | `task` \| `epic` \| `promote` \| `external` | github: from the `task` / `epic` / `promote` labels. When an issue carries more than one, precedence is `task` > `epic` > `promote` (v0.1.4 listed every `task`-labelled issue as a task; §2 exception 6). An issue with none of them is `external` if the graph references it (§6.2), otherwise it is not a node. local: never `external`. **`external`** is a non-delivery issue the graph references, as a dep target or an epic child. It is never claimable or started (`ready.jq` admits only `kind=="task"`) and takes no transition (§5). Its `status` comes only from the issue's own `state` + `stateReason`: open → `blocked` (open, not done); closed → `done` / `cancelled` as in the `status` row. Its labels are ignored: `module`, `size`, `claim`, `pinged_at`, `promote_to` and `plan_ref` are null, `checklist` and `deps` are `[]`, `needs_human` is false. Its `epic` is derived as for any node. |
 | `title` | string | |
 | `epic` | string \| null | parent epic id, used for ordering and output. github: native `parent.number`, else the legacy `[Ee]pic #E` body match. That is parity with v0.1.4, whose task `epic` came from the body only. |
 | `checklist` | [string] | epic nodes only: ids from the epic's own `- [ ] #N` checklist (github). It is empty on local. `children(epic)` = nodes whose `epic` is this epic ∪ `checklist`. This is used only for the started-epic flag and epic completion, as in v0.1.4. |
@@ -161,7 +165,7 @@ on drift).
 | `needs_human` | bool | orthogonal flag (the design spec's "any → needs-human"). |
 | `claim` | `{actor, run, at, by: "agent"\|"human"}` \| null | github: derived from assignee + `claim:agent` + the winning `CLAIM` comment. |
 | `target_branch` | string | the plan's target. Default `BASE_BRANCH`. github: from a `Delivery-Target: <branch>` body line. |
-| `promote_to` | string \| null | promote nodes only. |
+| `promote_to` | string \| null | promote nodes only. github: from a `Delivery-Promote-To: <branch>` body line, which `plan.sh apply` writes (§8.3, §9). |
 | `plan_ref` | string \| null | `<plan>/<plan-task-id>`, the idempotency key for `plan.sh apply` (§8.3). |
 | `body` | string | markdown: Context + Acceptance criteria (the task contract). |
 | `created_at`, `updated_at` | ISO-8601 | |
@@ -211,6 +215,18 @@ A4) and are used by reconcile, tick-plan and plan lint:
 - `unblocks(id)`: the number of open nodes whose `deps` contain this id.
 - `cycles`: every simple cycle over the `deps` edges, each reported as an id path.
 
+**`external` nodes (§4.1)** are inert references:
+- They never produce actions. `ready.jq` admits only `kind=="task"`, `tick-plan.jq`
+  emits no action for them, and `reconcile.jq` emits no fix record for them (its
+  rules 1–7 apply to `task`, `epic` and `promote` nodes only).
+- They are excluded from `tick-plan`'s `board` counts and from `waiting`.
+- As a dep, an external is satisfied iff it is `done`. An open external
+  (`blocked`) or a `cancelled` one keeps the dependent blocked (GC68, GC2). That is
+  v0.1.4's "any CLOSED dep satisfies", less §2 exception 1.
+- They count toward `children(epic)` exactly as v0.1.4 counted closed and open
+  issues. A `done`/`cancelled` external child makes its epic started, and an open
+  one keeps the epic from completing (reconcile rule 7).
+
 **`ready.jq`.** Input: all nodes. Output: the ready set, best first, as JSON lines of
 `{id, title, unblocks, size, started, epic, module, target_branch}`.
 
@@ -258,6 +274,9 @@ spec's §5 table, which is amended to match (§16):
 
 - `needs_human` is a flag, not a status. `graph.sh flag <id> needs-human
   on|off` sets and clears it.
+- The table covers `task`, `epic` and `promote` nodes. An `external` node has no
+  legal transition: `graph.sh transition` on one exits 2 without writing. Its
+  status changes only when its issue is closed or reopened outside the loop.
 - `graph.sh transition <id> <to> [--actor agent|human|promote]` validates
   `(from, to, actor)` and exits 2 on an illegal transition, without writing (GC8).
 - Reconcile's own fix records are validated against the same table before being
@@ -373,6 +392,16 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
   naming the key (GC10). v0.1.4 silently truncated at 500/1000 and read out-of-window
   deps as OPEN. `gh pr list` is never called without an explicit `--limit`; v0.1.4
   used the default 30, which blinded the stale-claim reaper (GC33).
+- **Referenced non-delivery issues.** An issue with none of the `task` / `epic` /
+  `promote` labels is emitted as an `external` node (§4.1) only when the graph
+  references it:
+  - as a dep target of some node (native `blockedBy` or a `Depends-on:` line);
+  - as an epic child: an entry of an epic's `- [ ] #N` checklist, or an issue whose
+    `epic` derivation (native parent, else `Part of epic #E`) names an `epic` node.
+
+  Every other unlabelled issue is dropped. A referenced number with no issue in the
+  read stays an unknown dep (GC7). This only selects what to store; readiness and
+  legality stay in `lib/*.jq` (§3 rule 1).
 - **PRs for reconcile.** Reconcile receives `forge.sh pr-list --state open` plus
   `forge.sh pr-list --state merged --since <oldest open node's created_at>`. Rule 3
   needs the merged set; §7.3 maps the merged feed per forge (GC67).
@@ -390,7 +419,8 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
   assignment.
 - **Writes:**
   - `create` uses `gh issue create --blocked-by … --parent …` plus labels and the
-    `Delivery-Target:` / `Delivery-Plan:` body lines.
+    `Delivery-Target:` / `Delivery-Plan:` / `Delivery-Promote-To:` body lines (the
+    last on promote nodes only). It never creates `external` nodes.
   - status changes are label edits, as today.
   - `done`/`cancelled` are issue close with `--reason completed|"not planned"`.
 - **`graph.sh migrate`** is idempotent. For every open task, it adds a native
@@ -794,6 +824,7 @@ the case assertions it owns.
 | GC47 | `transition <id> cancelled` with `--actor agent` / `--human ann` | exit 2, unchanged / `cancelled` |
 | GC65 | reconcile produces a fix record that the transition table rejects (fixture: a `done` node and a stale-claim rule match) | warning on stderr, record not applied, other records applied |
 | GC61 | `task-queue.sh` against the GC5 github fixture | stdout byte-identical to the captured v0.1.4 output |
+| GC68 | github fixture: task T with `Depends-on: #A`, A an unlabelled CLOSED (`COMPLETED`) issue; task U with `Depends-on: #B`, B an unlabelled OPEN issue; an unlabelled issue C that nothing references | A and B normalize to `kind:"external"` (`done` / `blocked`) and C is not emitted; T is in `ready`; U is not ready; reconcile emits no `unknown dep` warning and no fix record for A or B |
 
 **Tick plan:**
 
@@ -1011,7 +1042,7 @@ exception).
 | A6 tick-plan | policy | M | A4 (ready order), A3 (PR shape) | `lib/tick-plan.jq`, `tick-plan.sh`; `tests/tick-plan-test.sh` passes GC12–GC20, GC39 (plan assertion), GC62, GC59 (`tick-plan.sh` part) |
 | D1 forge-github | forge | M | A3 (PR shape), A2 (`FORGE`, `LIST_LIMIT`) | `forge.sh` + `backends/forge-github.sh` (every §7.1 op); `tests/forge-github-test.sh` (gh shim) passes GC28 (github), GC29, GC30, GC32, GC33 (`task_id`), GC46, GC57, GC58, GC63, GC67 (github) |
 | B1 graph-github-read | graph | M | A4 (`ready.jq`), A2 (`GRAPH_BACKEND`, `LIST_LIMIT`, `--check`) | `graph.sh` (ready/list/show/export, config check at start) + `backends/graph-github.sh list/show`; `tests/graph-github-read-test.sh` (gh shim) passes GC5 (github fixture), GC9, GC10, GC11, GC44 (`pinged_at` derivation), GC45 (checklist normalization), GC56, GC64, GC59 (`graph.sh` part) |
-| B2 graph-github-write | graph | M | B1 (read path), A5 (`reconcile.jq`), D1 (`forge.sh pr-list` + linkage) | github create/update/link/flag/claim/release/comment, `graph.sh transition`/`claim`/`reconcile --fix`; `task-queue.sh` and `claim-task.sh` become wrappers; the existing claim tests pass unchanged; `tests/graph-github-write-test.sh` passes GC33 (reaper), GC42 (issue closed), GC61 |
+| B2 graph-github-write | graph | M | B1 (read path), A5 (`reconcile.jq`), D1 (`forge.sh pr-list` + linkage) | github create/update/link/flag/claim/release/comment, `graph.sh transition`/`claim`/`reconcile --fix`; `task-queue.sh` and `claim-task.sh` become wrappers; the existing claim tests pass unchanged; `tests/graph-github-write-test.sh` passes GC33 (reaper), GC42 (issue closed), GC61, GC68 |
 | B3 graph-migrate | graph | S | B2 (`link`) | `graph.sh migrate`; `tests/graph-migrate-test.sh` passes GC48 |
 | D2 forge-gitlab | forge | M | D1 (contract, `forge.sh`) | `backends/forge-gitlab.sh`; `tests/forge-gitlab-test.sh` passes GC28 (gitlab), GC29, GC30, GC31, GC32, GC67 (gitlab), GC59 (`forge.sh` part) |
 | D3 forge-gitea | forge | M | D1 (contract, `forge.sh`) | `backends/forge-gitea.sh`; `tests/forge-gitea-test.sh` passes GC28 (gitea), GC29, GC30, GC32, GC67 (gitea) |
