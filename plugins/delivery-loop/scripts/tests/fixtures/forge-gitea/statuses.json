@@ -1,0 +1,193 @@
+{
+  "9a00db21b146959615725b27fea1c421d07587f4": {
+    "state": "success",
+    "sha": "9a00db21b146959615725b27fea1c421d07587f4",
+    "total_count": 2,
+    "statuses": [
+      {
+        "id": 1,
+        "status": "success",
+        "target_url": "https://gitea.example.com/example/repo/actions/runs/7/jobs/0",
+        "description": "",
+        "url": "https://gitea.example.com/api/v1/repos/example/repo/statuses/9a00db21b146959615725b27fea1c421d07587f4",
+        "context": "ci / lint (pull_request)",
+        "creator": {
+          "id": 2,
+          "login": "astra"
+        },
+        "created_at": "2026-11-08T10:00:00Z",
+        "updated_at": "2026-11-08T10:05:00Z"
+      },
+      {
+        "id": 2,
+        "status": "success",
+        "target_url": "https://gitea.example.com/example/repo/actions/runs/7/jobs/1",
+        "description": "",
+        "url": "https://gitea.example.com/api/v1/repos/example/repo/statuses/9a00db21b146959615725b27fea1c421d07587f4",
+        "context": "ci / test (pull_request)",
+        "creator": {
+          "id": 2,
+          "login": "astra"
+        },
+        "created_at": "2026-11-08T10:00:00Z",
+        "updated_at": "2026-11-08T10:05:00Z"
+      }
+    ],
+    "repository": {
+      "id": 1,
+      "full_name": "example/repo"
+    },
+    "commit_url": "https://gitea.example.com/api/v1/repos/example/repo/commits/9a00db21b146959615725b27fea1c421d07587f4",
+    "url": "https://gitea.example.com/api/v1/repos/example/repo/commits/9a00db21b146959615725b27fea1c421d07587f4/status"
+  },
+  "ef13e3a63ba1c78eaa0974f1a3a363d9a5d57277": {
+    "state": "success",
+    "sha": "ef13e3a63ba1c78eaa0974f1a3a363d9a5d57277",
+    "total_count": 1,
+    "statuses": [
+      {
+        "id": 1,
+        "status": "success",
+        "target_url": "https://gitea.example.com/example/repo/actions/runs/7/jobs/0",
+        "description": "",
+        "url": "https://gitea.example.com/api/v1/repos/example/repo/statuses/ef13e3a63ba1c78eaa0974f1a3a363d9a5d57277",
+        "context": "ci / test (pull_request)",
+        "creator": {
+          "id": 2,
+          "login": "astra"
+        },
+        "created_at": "2026-11-08T10:00:00Z",
+        "updated_at": "2026-11-08T10:05:00Z"
+      }
+    ],
+    "repository": {
+      "id": 1,
+      "full_name": "example/repo"
+    },
+    "commit_url": "https://gitea.example.com/api/v1/repos/example/repo/commits/ef13e3a63ba1c78eaa0974f1a3a363d9a5d57277",
+    "url": "https://gitea.example.com/api/v1/repos/example/repo/commits/ef13e3a63ba1c78eaa0974f1a3a363d9a5d57277/status"
+  },
+  "8505fd18a3e71b91cd7b8f5e2bc13412f904a5db": {
+    "state": "failure",
+    "sha": "8505fd18a3e71b91cd7b8f5e2bc13412f904a5db",
+    "total_count": 2,
+    "statuses": [
+      {
+        "id": 1,
+        "status": "success",
+        "target_url": "https://gitea.example.com/example/repo/actions/runs/7/jobs/0",
+        "description": "",
+        "url": "https://gitea.example.com/api/v1/repos/example/repo/statuses/8505fd18a3e71b91cd7b8f5e2bc13412f904a5db",
+        "context": "ci / lint (pull_request)",
+        "creator": {
+          "id": 2,
+          "login": "astra"
+        },
+        "created_at": "2026-11-08T10:00:00Z",
+        "updated_at": "2026-11-08T10:05:00Z"
+      },
+      {
+        "id": 2,
+        "status": "failure",
+        "target_url": "https://gitea.example.com/example/repo/actions/runs/7/jobs/1",
+        "description": "",
+        "url": "https://gitea.example.com/api/v1/repos/example/repo/statuses/8505fd18a3e71b91cd7b8f5e2bc13412f904a5db",
+        "context": "ci / test (pull_request)",
+        "creator": {
+          "id": 2,
+          "login": "astra"
+        },
+        "created_at": "2026-11-08T10:00:00Z",
+        "updated_at": "2026-11-08T10:05:00Z"
+      }
+    ],
+    "repository": {
+      "id": 1,
+      "full_name": "example/repo"
+    },
+    "commit_url": "https://gitea.example.com/api/v1/repos/example/repo/commits/8505fd18a3e71b91cd7b8f5e2bc13412f904a5db",
+    "url": "https://gitea.example.com/api/v1/repos/example/repo/commits/8505fd18a3e71b91cd7b8f5e2bc13412f904a5db/status"
+  },
+  "c95bc06bbda8e67df63b1ad45ade2eb72947e2e8": {
+    "state": "pending",
+    "sha": "c95bc06bbda8e67df63b1ad45ade2eb72947e2e8",
+    "total_count": 2,
+    "statuses": [
+      {
+        "id": 1,
+        "status": "success",
+        "target_url": "https://gitea.example.com/example/repo/actions/runs/7/jobs/0",
+        "description": "",
+        "url": "https://gitea.example.com/api/v1/repos/example/repo/statuses/c95bc06bbda8e67df63b1ad45ade2eb72947e2e8",
+        "context": "ci / lint (pull_request)",
+        "creator": {
+          "id": 2,
+          "login": "astra"
+        },
+        "created_at": "2026-11-08T10:00:00Z",
+        "updated_at": "2026-11-08T10:05:00Z"
+      },
+      {
+        "id": 2,
+        "status": "pending",
+        "target_url": "https://gitea.example.com/example/repo/actions/runs/7/jobs/1",
+        "description": "",
+        "url": "https://gitea.example.com/api/v1/repos/example/repo/statuses/c95bc06bbda8e67df63b1ad45ade2eb72947e2e8",
+        "context": "ci / test (pull_request)",
+        "creator": {
+          "id": 2,
+          "login": "astra"
+        },
+        "created_at": "2026-11-08T10:00:00Z",
+        "updated_at": "2026-11-08T10:05:00Z"
+      }
+    ],
+    "repository": {
+      "id": 1,
+      "full_name": "example/repo"
+    },
+    "commit_url": "https://gitea.example.com/api/v1/repos/example/repo/commits/c95bc06bbda8e67df63b1ad45ade2eb72947e2e8",
+    "url": "https://gitea.example.com/api/v1/repos/example/repo/commits/c95bc06bbda8e67df63b1ad45ade2eb72947e2e8/status"
+  },
+  "b6b1dcf3b1c361fb5a5c12a898060d9db8f78642": {
+    "state": "warning",
+    "sha": "b6b1dcf3b1c361fb5a5c12a898060d9db8f78642",
+    "total_count": 2,
+    "statuses": [
+      {
+        "id": 1,
+        "status": "warning",
+        "target_url": "https://gitea.example.com/example/repo/actions/runs/7/jobs/0",
+        "description": "",
+        "url": "https://gitea.example.com/api/v1/repos/example/repo/statuses/b6b1dcf3b1c361fb5a5c12a898060d9db8f78642",
+        "context": "ext/scan",
+        "creator": {
+          "id": 2,
+          "login": "astra"
+        },
+        "created_at": "2026-11-08T10:00:00Z",
+        "updated_at": "2026-11-08T10:05:00Z"
+      },
+      {
+        "id": 2,
+        "status": "success",
+        "target_url": "https://gitea.example.com/example/repo/actions/runs/7/jobs/1",
+        "description": "",
+        "url": "https://gitea.example.com/api/v1/repos/example/repo/statuses/b6b1dcf3b1c361fb5a5c12a898060d9db8f78642",
+        "context": "ci / test (pull_request)",
+        "creator": {
+          "id": 2,
+          "login": "astra"
+        },
+        "created_at": "2026-11-08T10:00:00Z",
+        "updated_at": "2026-11-08T10:05:00Z"
+      }
+    ],
+    "repository": {
+      "id": 1,
+      "full_name": "example/repo"
+    },
+    "commit_url": "https://gitea.example.com/api/v1/repos/example/repo/commits/b6b1dcf3b1c361fb5a5c12a898060d9db8f78642",
+    "url": "https://gitea.example.com/api/v1/repos/example/repo/commits/b6b1dcf3b1c361fb5a5c12a898060d9db8f78642/status"
+  }
+}

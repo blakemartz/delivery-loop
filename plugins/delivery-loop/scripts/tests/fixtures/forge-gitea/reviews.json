@@ -1,0 +1,86 @@
+{
+  "101": [
+    {
+      "id": 1,
+      "user": {
+        "id": 3,
+        "login": "reviewer",
+        "username": "reviewer"
+      },
+      "team": null,
+      "state": "REQUEST_CHANGES",
+      "body": "## Review — verdict: REQUEST_CHANGES\n\nFix the edge case.\n\nReviewed-Head: c00dbbc9dadfbe1e232e93a729dd4752fade0abf",
+      "commit_id": "c00dbbc9dadfbe1e232e93a729dd4752fade0abf",
+      "stale": false,
+      "official": true,
+      "dismissed": false,
+      "comments_count": 0,
+      "submitted_at": "2026-11-08T10:11:00Z",
+      "updated_at": "2026-11-08T10:11:00Z",
+      "html_url": "https://gitea.example.com/example/repo/pulls/101#issuecomment-1",
+      "pull_request_url": "https://gitea.example.com/example/repo/pulls/101"
+    },
+    {
+      "id": 2,
+      "user": {
+        "id": 3,
+        "login": "reviewer",
+        "username": "reviewer"
+      },
+      "team": null,
+      "state": "COMMENT",
+      "body": "Nit only.",
+      "commit_id": "c00dbbc9dadfbe1e232e93a729dd4752fade0abf",
+      "stale": false,
+      "official": true,
+      "dismissed": true,
+      "comments_count": 0,
+      "submitted_at": "2026-11-08T10:12:00Z",
+      "updated_at": "2026-11-08T10:12:00Z",
+      "html_url": "https://gitea.example.com/example/repo/pulls/101#issuecomment-2",
+      "pull_request_url": "https://gitea.example.com/example/repo/pulls/101"
+    },
+    {
+      "id": 3,
+      "user": {
+        "id": 3,
+        "login": "reviewer",
+        "username": "reviewer"
+      },
+      "team": null,
+      "state": "APPROVED",
+      "body": "## Review — verdict: APPROVE\n\nReviewed-Head: 9a00db21b146959615725b27fea1c421d07587f4",
+      "commit_id": "9a00db21b146959615725b27fea1c421d07587f4",
+      "stale": false,
+      "official": true,
+      "dismissed": false,
+      "comments_count": 0,
+      "submitted_at": "2026-11-08T10:13:00Z",
+      "updated_at": "2026-11-08T10:13:00Z",
+      "html_url": "https://gitea.example.com/example/repo/pulls/101#issuecomment-3",
+      "pull_request_url": "https://gitea.example.com/example/repo/pulls/101"
+    }
+  ],
+  "105": [
+    {
+      "id": 4,
+      "user": {
+        "id": 3,
+        "login": "reviewer",
+        "username": "reviewer"
+      },
+      "team": null,
+      "state": "APPROVED",
+      "body": "## Review — verdict: APPROVE\n\nReviewed-Head: c00dbbc9dadfbe1e232e93a729dd4752fade0abf",
+      "commit_id": "c00dbbc9dadfbe1e232e93a729dd4752fade0abf",
+      "stale": false,
+      "official": true,
+      "dismissed": false,
+      "comments_count": 0,
+      "submitted_at": "2026-11-08T10:14:00Z",
+      "updated_at": "2026-11-08T10:14:00Z",
+      "html_url": "https://gitea.example.com/example/repo/pulls/101#issuecomment-4",
+      "pull_request_url": "https://gitea.example.com/example/repo/pulls/101"
+    }
+  ]
+}

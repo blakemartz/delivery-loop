@@ -1,0 +1,12 @@
+[
+  {"case": "no statuses (total_count 0, state empty)", "status": {"state": "", "total_count": 0, "statuses": []}, "want": "none"},
+  {"case": "no statuses, state pending", "status": {"state": "pending", "total_count": 0, "statuses": []}, "want": "none"},
+  {"case": "success", "status": {"state": "success", "total_count": 2, "statuses": []}, "want": "success"},
+  {"case": "warning", "status": {"state": "warning", "total_count": 1, "statuses": []}, "want": "success"},
+  {"case": "skipped", "status": {"state": "skipped", "total_count": 1, "statuses": []}, "want": "success"},
+  {"case": "error", "status": {"state": "error", "total_count": 3, "statuses": []}, "want": "failure"},
+  {"case": "failure", "status": {"state": "failure", "total_count": 3, "statuses": []}, "want": "failure"},
+  {"case": "pending", "status": {"state": "pending", "total_count": 2, "statuses": []}, "want": "pending"},
+  {"case": "unrecognized state (never success)", "status": {"state": "", "total_count": 1, "statuses": []}, "want": "pending"},
+  {"case": "total_count absent, statuses present", "status": {"state": "success", "statuses": [{"status": "success"}]}, "want": "success"}
+]
