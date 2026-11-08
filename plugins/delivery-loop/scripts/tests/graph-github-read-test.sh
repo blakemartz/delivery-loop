@@ -151,6 +151,22 @@ run -- ready
 eq "ready over the cases board: lib/ready.jq applied to the normalized nodes" '["4","6","43"]' \
   "$(jq -sc 'map(.id)' <<<"$out")"
 
+# --- several size:* labels: L first, then S, then M (v0.1.4 parity) ---------------
+# v0.1.4 excluded any issue carrying size:L and ranked S only on size:S, so a
+# double-sized issue must read L if it has size:L, else S if it has size:S.
+jq '[ .[] | select(.number == 6) ] as [$t]
+    | def sized($n; $sizes): $t | .number = $n | .title = "sizes \($sizes | join("+"))"
+        | .labels = ([.labels[] | select(.name | startswith("size:") | not)]
+                     + [$sizes[] | {id: "LA_size_\(.)", name: "size:\(.)", description: "", color: "EDEDED"}]);
+    [ sized(1; ["S","L"]), sized(2; ["M","L"]), sized(3; ["S","M"]), sized(4; ["M"]) ]' \
+  "$fx/cases-issues.json" > "$tmp/sizes.json"
+run SHIM_FX="$tmp" SHIM_BOARD=sizes.json -- list
+eq "size precedence: S+L -> L, M+L -> L, S+M -> S, M -> M" '["L","L","S","M"]' \
+  "$(jq -c 'sort_by(.id | tonumber) | map(.size)' <<<"$out")"
+run SHIM_FX="$tmp" SHIM_BOARD=sizes.json -- ready
+eq "size precedence: an S+L (or M+L) task is not ready; S+M ranks as S ahead of M" '["3","4"]' \
+  "$(jq -sc 'map(.id)' <<<"$out")"
+
 # --- GC10: LIST_LIMIT -------------------------------------------------------------
 run SHIM_BOARD=gc5-issues.json LIST_LIMIT=11 -- list
 expect "GC10: a list returning exactly LIST_LIMIT items exits 3" '[ "$rc" = 3 ]'

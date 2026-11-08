@@ -126,8 +126,10 @@ def gh_pinged_at:
   [ (.comments // [])[] | select((.body // "") | startswith("STALE-CLAIM-PING")) | .createdAt ]
   | max // null;
 
+# Several size:* labels: L wins (v0.1.4 excluded any size:L issue — L means
+# "split me", never claimable), then S, then M (v0.1.4 ranked S only on size:S).
 def gh_size:
-  _labels as $l | [ ("S", "M", "L") | select(. as $s | any($l[]; . == "size:" + $s)) ] | first // null;
+  _labels as $l | [ ("L", "S", "M") | select(. as $s | any($l[]; . == "size:" + $s)) ] | first // null;
 
 def gh_module:
   [ _labels[] | select(startswith("module:")) | ltrimstr("module:") ] | first // null
