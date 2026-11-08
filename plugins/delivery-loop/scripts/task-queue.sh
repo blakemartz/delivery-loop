@@ -19,8 +19,9 @@
 #     no activity for 4h) are released back to status:ready
 #   * stale HUMAN claims (assignee, no claim:agent, inactive 72h) get one
 #     comment ping — never auto-reclaimed
-#   * tasks whose `Closes #N` PR merged into BASE_BRANCH are closed (GitHub only
-#     auto-closes for PRs into the default branch)
+#   * (first) when BASE_BRANCH is NOT the repo default branch: tasks whose
+#     `Closes #N` PR merged into BASE_BRANCH are closed, once per (issue, PR) —
+#     GitHub only auto-closes for PRs into the default branch
 #   * fully-delivered EPICS are closed: an open `epic` issue every one of
 #     whose child tasks is closed (and which has >=1 child) is done. Children
 #     are the union of tasks whose body says "Part of epic #E" and the `#N`
@@ -34,6 +35,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/config.sh
 . "$SCRIPT_DIR/lib/config.sh"
 
+fetch_and_annotate() {
 open_tasks=$(gh issue list --label task --state open --limit 500 \
   --json number,title,labels,assignees,body,createdAt,updatedAt)
 all_states=$(gh issue list --state all --limit 1000 --json number,state)
@@ -55,8 +57,48 @@ annotated=$(jq -c --argjson states "$all_states" --argjson prs "$open_prs" '
       | {number, title, labelNames, deps, depsClosed, epic, hasOpenPr, idleSeconds,
          createdAt, assignees: [.assignees[].login]}
     )' <<<"$open_tasks")
+}
+fetch_and_annotate
 
 if [ "$FIX" = 1 ]; then
+  # FIRST: tasks whose PR merged into a non-default BASE_BRANCH -> closed.
+  # GitHub's closing keywords (`Closes #N`) only fire for PRs into the repo's
+  # DEFAULT branch, so with a release/feature BASE_BRANCH a merged task PR leaves
+  # its issue open (and dependents blocked) forever. Runs before every other
+  # repair so the stale-claim reaper never "reclaims" merged work, and the board
+  # is re-fetched afterwards so dependents unblock in this same pass. Skipped
+  # entirely when BASE_BRANCH is the default branch (GitHub already closes those),
+  # and acts at most once per (issue, PR): an `AUTO-CLOSE: PR #<pr>` comment marks
+  # it done, so a human who reopens the task is never overridden.
+  default_branch=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null || echo "")
+  if [ -n "$default_branch" ] && [ "$BASE_BRANCH" != "$default_branch" ]; then
+    merged_limit=500
+    merged=$(gh pr list --state merged --base "$BASE_BRANCH" --limit "$merged_limit" \
+      --json number,body 2>/dev/null || echo '[]')
+    if [ "$(jq 'length' <<<"$merged")" -ge "$merged_limit" ]; then
+      echo "warn: >=$merged_limit merged PRs into $BASE_BRANCH; older ones not scanned for Closes #N" >&2
+    fi
+    open_nums=$(jq -c '[.[].number]' <<<"$annotated")
+    closed_any=0
+    while IFS=$'\t' read -r n pr; do
+      [ -n "$n" ] || continue
+      marked=$(gh issue view "$n" --json comments \
+        --jq "[.comments[] | select(.body | startswith(\"AUTO-CLOSE: PR #$pr \"))] | length")
+      [ "$marked" = "0" ] || continue
+      gh issue close "$n" --reason completed --comment \
+        "AUTO-CLOSE: PR #$pr merged into $BASE_BRANCH (closing keywords only fire on the default branch). (Reconciled by scripts/task-queue.sh --fix.)" >/dev/null
+      echo "fix: #$n closed (PR #$pr merged into $BASE_BRANCH)" >&2
+      closed_any=1
+    done < <(jq -r --argjson open "$open_nums" '
+        .[] | .number as $pr
+        | [ (.body // "")
+            | scan("(?i)(?:^|[^A-Za-z0-9_-])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?[ \t]+#([0-9]+)(?![0-9A-Za-z_])")
+            | .[0] | tonumber ]
+        | unique[] | . as $n
+        | select($open | index($n) != null)
+        | "\($n)\t\($pr)"' <<<"$merged")
+    if [ "$closed_any" = 1 ]; then fetch_and_annotate; fi
+  fi
   # blocked -> ready (never un-freeze a needs-human task)
   jq -r '.[] | select(.depsClosed and (.labelNames | index("status:blocked"))
                 and ((.labelNames | index("needs-human")) | not))
@@ -98,24 +140,6 @@ if [ "$FIX" = 1 ]; then
         "STALE-CLAIM-PING: this claim has been inactive for 72h — still on it? (Human claims are never auto-reclaimed.)" >/dev/null
       echo "fix: #$n stale human claim pinged" >&2
     fi
-  done
-  # tasks whose PR merged into BASE_BRANCH -> closed. GitHub's closing keywords
-  # (`Closes #N`) only fire for PRs into the repo's DEFAULT branch, so when
-  # BASE_BRANCH is a release/feature branch a merged task PR leaves its issue open
-  # and its dependents blocked forever. Close them here (a no-op when BASE_BRANCH
-  # is the default branch: GitHub already closed them).
-  open_nums=$(jq -c '[.[].number]' <<<"$annotated")
-  gh pr list --state merged --base "$BASE_BRANCH" --limit 200 --json number,body \
-  | jq -r --argjson open "$open_nums" '
-      .[] | .number as $pr
-      | [ (.body // "") | scan("(?i)\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?) #([0-9]+)") | .[0] | tonumber ]
-      | unique[] | . as $n
-      | select($open | index($n) != null)
-      | "\($n)\t\($pr)"' \
-  | while IFS=$'\t' read -r n pr; do
-    gh issue close "$n" --reason completed --comment \
-      "AUTO-CLOSE: PR #$pr merged into $BASE_BRANCH (closing keywords only fire on the default branch). (Reconciled by scripts/task-queue.sh --fix.)" >/dev/null
-    echo "fix: #$n closed (PR #$pr merged into $BASE_BRANCH)" >&2
   done
   # fully-delivered epics -> closed. An open `epic` issue is done once every
   # child task is closed; children are the union of tasks whose body says

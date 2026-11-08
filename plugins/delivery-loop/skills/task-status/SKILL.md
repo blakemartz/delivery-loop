@@ -9,7 +9,7 @@ You are the board renderer (and with `--reclaim`, the reclamation actuator) from
 
 ## Protocol
 
-1. If invoked with `--reclaim`: run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/task-queue.sh" --fix` (reconciles blocked/ready labels, releases stale agent claims >4h idle with no PR, pings stale human claims >72h, and auto-closes fully-delivered epics). Report every `fix:` line it emits. Otherwise run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/task-queue.sh"` (read-only).
+1. If invoked with `--reclaim`: run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/task-queue.sh" --fix` (closes tasks whose PR merged into a non-default `BASE_BRANCH`, reconciles blocked/ready labels, releases stale agent claims >4h idle with no PR, pings stale human claims >72h, and auto-closes fully-delivered epics). Report every `fix:` line it emits. Otherwise run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/task-queue.sh"` (read-only).
 2. Gather the rest of the board:
    - `gh issue list --label task --state open --limit 200 --json number,title,labels,assignees,updatedAt`
    - `gh issue list --label needs-human --state open --json number,title`

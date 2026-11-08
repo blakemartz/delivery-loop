@@ -23,7 +23,7 @@ Read `.claude/delivery.conf` for `STYLEGUIDES_DIR` (default `styleguides/`), `GA
 4. **Draft** one guide per stack/layer in the scratchpad. Keep each readable in one sitting: prescriptive rules, a short right/wrong example where ambiguity is likely, no restating what the stack's defaults already guarantee.
    - **Checkable rules graduate to the gate.** If a rule can be enforced mechanically (formatter, linter rule, type-checker flag, test), the guide states the principle and the enforcement belongs in the gate — wire it into `GATE_CMD`'s script now if trivial, otherwise flag it as a follow-up task for the backlog.
 5. **Ratify — hard gate.** Present the drafts to the human with every judgment call flagged (each pin taken, anything observed-but-surprising, rules you chose *not* to write). **Nothing lands in the repo before the nod.** Apply their edits; re-present if the changes are substantive.
-6. **Land.** Write the ratified guides into `STYLEGUIDES_DIR` (replace the seeded README stub's "empty constitution" note if present). Commit to `BASE_BRANCH` directly when the loop isn't live yet; open a PR when it is or when the operator prefers.
+6. **Land.** Write the ratified guides into `STYLEGUIDES_DIR` (replace the seeded README stub's "empty constitution" note if present). Commit to `BASE_BRANCH` directly when the loop isn't live yet; open a PR when it is or when the operator prefers — against `BASE_BRANCH` (`gh pr create --base <BASE_BRANCH>`, the literal value from `.claude/delivery.conf`; it may not be the repo default).
 
 ## Hard rules (violating any of these means your constitution is wrong)
 

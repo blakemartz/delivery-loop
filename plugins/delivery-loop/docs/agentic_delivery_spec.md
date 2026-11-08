@@ -162,7 +162,7 @@ Legal transitions and actors:
 | in-review → changes-requested | reviewer |
 | changes-requested → in-review | patcher, on pushing fixes |
 | in-review → approved | reviewer |
-| approved → closed | human merge, or auto-merge (§8.2); PR `Closes #N` auto-closes |
+| approved → closed | human merge, or auto-merge (§8.2); PR `Closes #N` auto-closes (into a non-default `BASE_BRANCH`: `task-queue.sh --fix` closes it, §5.1) |
 | any → needs-human | any actor hitting an impasse |
 
 ### 5.1 Ground-truth precedence
@@ -172,6 +172,8 @@ Labels are a derived cache, not ground truth. Precedence when they disagree:
 closed issue > merged PR > open PR state > labels.
 
 `task-queue.sh --fix` reconciles labels to ground truth every orchestrator tick.
+
+When `BASE_BRANCH` is **not** the repo's default branch, `--fix` first closes (as completed) every open task whose `Closes #N` PR merged into `BASE_BRANCH` — GitHub's closing keywords only act on PRs into the default branch — at most once per (issue, PR), marked by an `AUTO-CLOSE: PR #<pr>` comment so a human reopen is never overridden.
 
 It also closes **fully-delivered epics**: an open `epic` issue is a tracker, and
 once every one of its child tasks is closed the tracker is done, so `--fix` closes
