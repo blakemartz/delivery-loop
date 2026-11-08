@@ -87,16 +87,21 @@ def _nodes: .idx as $idx | .order | map($idx[.]);
 
 def _rec($op; $to; $reason): {op: $op, id, from: .status, to: $to, reason: $reason};
 
+# _rule3 — §5 rule 3 is existential: *an* agent PR merged into the node's merge
+# base closes it. The base is checked per PR before grouping, so a newer merge
+# elsewhere (a cherry-pick into main) cannot hide the qualifying one; among the
+# qualifying PRs the newest names the record.
 def _rule3($prs):
   _offer_all(
     .idx as $idx
     | $prs
     | map(select(.agent and .state == "merged" and .task_id != null
-                 and $idx[.task_id] != null))
+                 and $idx[.task_id] != null
+                 and .base == ($idx[.task_id] | _merge_base)))
     | group_by(.task_id)[]
     | max_by(.number) as $pr
     | $idx[$pr.task_id]
-    | select(is_open and $pr.base == _merge_base)
+    | select(is_open)
     | _rec("transition"; "done"; "PR #\($pr.number) merged into \($pr.base)"));
 
 def _rule7:

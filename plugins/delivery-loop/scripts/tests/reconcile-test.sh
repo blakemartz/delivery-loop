@@ -107,6 +107,16 @@ eq "GC42 a cancelled node is not reopened as done" '[]' "$(moves)"
 run_sparse gc42 '.prs += [.prs[0] | .number = 150 | .url = "https://forge.example/pr/150"]'
 eq "GC42 two merged PRs for one node -> one record, newest PR" '["PR #150 merged into release/x"]' \
   "$(jq -c 'map(.reason)' "$tmp/out")"
+# The base is checked per PR before picking the newest: a newer merge into another
+# base (a cherry-pick into main) must not hide the merge into target_branch.
+run_sparse gc42 '.nodes = [.nodes[0] | .id = "1"]
+                 | .prs = ([{number: 10, state: "merged", task_id: "1", base: "release/x"},
+                            {number: 12, state: "merged", task_id: "1", base: "main"}]
+                           | map(full_pr))'
+eq "GC42 older merge into target, newer merge into main -> 1 done" \
+  '["transition 1 approved->done"]' "$(moves)"
+eq "GC42 the record names the qualifying PR, not the newer off-base one" \
+  '"PR #10 merged into release/x"' "$(jq -c '.[0].reason' "$tmp/out")"
 # A promotion PR targets promote_to (§9): head T, base P.
 run_sparse gc42 '.nodes[0] |= (.kind = "promote" | .status = "in-review" | .promote_to = "main")
                  | .prs[0].base = "main"'
