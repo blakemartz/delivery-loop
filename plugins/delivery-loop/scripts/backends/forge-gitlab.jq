@@ -55,13 +55,25 @@ def gl_mergeable_computing:
 # its jobs (no page of jobs is ever read for it). success → success;
 # failed/canceled/canceling → failure; no pipeline → none; anything else
 # (created, pending, running, manual, skipped, …) → pending, never success.
-# A head_pipeline built for another commit than the MR head says nothing about
-# this head, so it is pending.
+#
+# Which commit the pipeline ran on depends on its ref:
+#   - a merged-results or merge-train pipeline (`refs/merge-requests/<iid>/merge`
+#     or `…/train`) runs on a synthetic merge commit, so its `sha` is never the
+#     MR head; GitLab only makes it the head_pipeline for the MR's current diff
+#     head, so its status is taken as is;
+#   - a branch pipeline (ref = the source branch, or `refs/merge-requests/<iid>/head`)
+#     runs on the head itself: one built for another commit says nothing about
+#     this head, so it is pending. Any other ref is held to the same rule.
+def gl_merge_ref_pipeline($iid):
+  (.ref // "") as $r
+  | $r == "refs/merge-requests/\($iid)/merge" or $r == "refs/merge-requests/\($iid)/train";
+
 def gl_checks:
   .sha as $sha
+  | .iid as $iid
   | .head_pipeline as $p
   | if $p == null then "none"
-    elif ($p.sha // $sha) != $sha then "pending"
+    elif ($p | gl_merge_ref_pipeline($iid) | not) and ($p.sha // $sha) != $sha then "pending"
     elif $p.status == "success" then "success"
     elif ($p.status // "") | is_enum(["failed", "canceled", "canceling"]) then "failure"
     else "pending" end;
@@ -88,15 +100,20 @@ def gl_pr($graph_backend):
       author: ($m.author | _gl_login) }
   | validate_pr;
 
-# The verdict heading every review note opens with (§7.3), and its verdict.
+# A note is a verdict when its first non-blank line is a markdown h2 naming one:
+# `## <anything> verdict: APPROVE|REQUEST_CHANGES|COMMENT` (the verdict word in
+# any case). The adapter's canonical heading (gl_verdict_heading, prefixed by
+# `pr-review` to a body that has none) is one such line; so is a caller's own
+# heading such as `## Review — verdict: APPROVE`, which `pr-review` sends as is.
 def gl_verdict_heading: "## Adversarial review — verdict: ";
+def gl_verdict_line_re: "^##[ \t].*verdict:[ \t]*(?<v>APPROVE|REQUEST_CHANGES|COMMENT)\\b";
+def gl_heading_verdict:
+  (capture(gl_verdict_line_re; "i").v // null)
+  | if . == null then null
+    else {"APPROVE": "approve", "REQUEST_CHANGES": "request-changes", "COMMENT": "comment"}[ascii_upcase] end;
 def _gl_note_verdict:
-  (.body // "" | split("\n") | map(rtrimstr("\r")) | map(select(test("\\S"))) | first // "") as $l
-  | if $l | startswith(gl_verdict_heading)
-    then ($l | ltrimstr(gl_verdict_heading) | capture("^(?<v>[A-Za-z_]+)").v // ""
-          | {"APPROVE": "approve", "REQUEST_CHANGES": "request-changes", "COMMENT": "comment"}[ascii_upcase]
-            // ascii_downcase)
-    else null end;
+  (.body // "" | split("\n") | map(rtrimstr("\r")) | map(select(test("\\S"))) | first // "")
+  | gl_heading_verdict;
 
 # The head a note's `Reviewed-Head:` trailer ties it to, else null.
 def _gl_note_commit:

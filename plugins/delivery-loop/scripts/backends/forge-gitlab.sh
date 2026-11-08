@@ -40,8 +40,13 @@
 #     times with backoff, then stays `unknown`. Only `mergeable` is `clean`.
 #   - `checks` is `head_pipeline.status`, the pipeline's own roll-up over all of
 #     its jobs. `head_pipeline` is sent only by the single-MR GET, so `pr-list`
-#     and `pr-find` re-read every MR they return. A head pipeline for another
-#     commit than the MR head reads `pending`.
+#     and `pr-find` re-read every MR they return (and re-poll an async
+#     merge status: up to ~12 s per such MR). A merged-results or merge-train
+#     pipeline (ref `refs/merge-requests/<iid>/merge|train`) runs on a synthetic
+#     merge commit, so its status is taken as is; a branch pipeline (the source
+#     branch or `…/<iid>/head`) for another commit than the MR head reads
+#     `pending`. `head_pipeline` is sent only to users who may read pipelines:
+#     a token without that right reads `none`.
 #   - `pr-list --state merged --since T` filters server-side with
 #     `updated_after=T` (merging updates the MR) and keeps `merged_at >= T`.
 #   - `pr-create --draft` prefixes the title `Draft: ` (the create API has no
@@ -53,22 +58,29 @@
 #     posts the verdict body as a note, since that note carries `Reviewed-Head:`.
 #     The approve route answers 401 when the user may not approve (src:
 #     `unauthorized!` when ApprovalService fails), which covers an author
-#     blocked from approving their own MR: the verdict is then the note alone
-#     (form "comment"). There is no request-changes endpoint: request-changes
-#     and comment are always a note (form "comment"), and a request-changes
-#     note opens `## Adversarial review — verdict: REQUEST_CHANGES`.
+#     blocked from approving their own MR, and also a user who already
+#     approved (a re-approval after a new push): the verdict is then the note
+#     alone (form "comment"). There is no request-changes endpoint:
+#     request-changes and comment are always a note (form "comment").
+#     Every verdict note opens with a verdict heading, so `pr-reviews` finds
+#     it whichever form landed: a body without one is prefixed
+#     `## Adversarial review — verdict: <VERDICT>`; a body whose first line is
+#     already a heading `## … verdict: <VERDICT>` is sent as is, and one naming
+#     another verdict is refused.
 #     GITLAB_REVIEW_TOKEN (environment only) posts the approval and the note as
 #     that identity.
 #   - a post (`pr-comment`, every `pr-review`) reports `posted:true` only on a
 #     2xx; anything else exits 1 with no JSON. An approval whose note then fails
 #     also exits 1: the verdict body never landed.
 #   - `pr-reviews` lists the approvals (GET …/approvals) as `approve`, then the
-#     non-system notes opening with the verdict heading.
+#     non-system notes whose first non-blank line is a verdict heading
+#     (`^## .*verdict: (APPROVE|REQUEST_CHANGES|COMMENT)`, any case).
 #   - notes carry no URL; it is `<web_url>#note_<id>`, the MR page anchor.
 #   - `pr-merge` PUTs …/merge `{squash, should_remove_source_branch, sha}` (405
 #     cannot merge, 409 sha mismatch, 422 merge failed: each exits 1 at once),
-#     then re-reads the MR (3 times with backoff while it still reads opened:
-#     whether the API merge can land asynchronously is UNVERIFIED) and exits 0
+#     then re-reads the MR (3 times with backoff while it still reads opened;
+#     without `auto_merge` the merge is synchronous (src: execute_immediate_merge!
+#     422s unless merged), so this is belt and braces) and exits 0
 #     only if `state == merged`. Whether `squash:false` makes a merge commit is
 #     the project's merge method (§7.3).
 #   - `pr-diff` rebuilds `diff --git` file headers over GET …/diffs (all
@@ -367,7 +379,7 @@ op_pr_find() {
 
 op_pr_review() {
   local u="pr-review <n> approve|request-changes|comment --sha S --body-file F"
-  local n="${1:-}" verdict="${2:-}" sha="" body="" form=comment last first heading
+  local n="${1:-}" verdict="${2:-}" sha="" body="" form=comment last first hv heading
   need_n "$n" "$u"; shift 2 || usage "$u"
   case "$verdict" in approve|request-changes|comment) : ;; *) usage "$u" ;; esac
   while [ $# -gt 0 ]; do
@@ -388,15 +400,18 @@ op_pr_review() {
     Reviewed-Head:*) die "body ends with '$last', not head $sha; refusing" ;;
     *) { cat "$body"; printf '\n\nReviewed-Head: %s\n' "$sha"; } > "$tmp/verdict.md" ;;
   esac
-  # request-changes has no endpoint: the note itself must read as one (§7.3).
-  if [ "$verdict" = request-changes ]; then
-    heading="## Adversarial review — verdict: REQUEST_CHANGES"
-    first=$(awk 'NF { print; exit }' "$tmp/verdict.md")
-    case "$first" in
-      "$heading"*) : ;;
-      "## Adversarial review — verdict:"*) die "body opens '$first', not a REQUEST_CHANGES verdict; refusing" ;;
-      *) { printf '%s\n\n' "$heading"; cat "$tmp/verdict.md"; } > "$tmp/verdict.n" && mv "$tmp/verdict.n" "$tmp/verdict.md" ;;
-    esac
+  # The note is the verdict whenever no formal one lands (request-changes and
+  # comment always; approve when /approve is refused), so it must read as one
+  # to `pr-reviews` (§7.3): a body whose first line is a verdict heading
+  # (gl_heading_verdict) keeps it if it names this verdict and is refused if it
+  # names another; a body with none gets the canonical heading.
+  first=$(awk 'NF { sub(/\r$/, ""); print; exit }' "$tmp/verdict.md")
+  hv=$(fjq -rn --arg l "$first" 'include "forge-gitlab"; $l | gl_heading_verdict // ""')
+  if [ -z "$hv" ]; then
+    heading="$(fjq -rn 'include "forge-gitlab"; gl_verdict_heading')$(printf '%s' "$verdict" | tr 'a-z-' 'A-Z_')"
+    { printf '%s\n\n' "$heading"; cat "$tmp/verdict.md"; } > "$tmp/verdict.n" && mv "$tmp/verdict.n" "$tmp/verdict.md"
+  elif [ "$hv" != "$verdict" ]; then
+    die "body opens '$first', a $hv verdict, not $verdict; refusing"
   fi
   [ -z "${GITLAB_REVIEW_TOKEN:-}" ] || tok="$GITLAB_REVIEW_TOKEN"
   if [ "$verdict" = approve ]; then

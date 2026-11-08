@@ -68,23 +68,23 @@ gljq() { jq -L "$here/../lib" -L "$here/../backends" "$@"; }
 # --- GC28: pr-view normalization ---------------------------------------------
 reset
 : > "$tmp/gc28.jsonl"
-for n in 201 202 203 204 205 206 207 208 209 210; do
+for n in 201 202 203 204 205 206 207 208 209 210 211 212 213 214; do
   run -- pr-view "$n"
   [ "$rc" = 0 ] || fail "GC28 pr-view $n exits 0"
   printf '%s\n' "$out" >> "$tmp/gc28.jsonl"
 done
 if [ "$(jq -sc . "$tmp/gc28.jsonl")" = "$(jq -c . "$fx/expected-gc28.json")" ]; then
-  ok "GC28: pr-view 201..210 equal expected-gc28.json (opened/merged/closed/locked, conflict, every check state, reviewed_at_head)"
+  ok "GC28: pr-view 201..214 equal expected-gc28.json (opened/merged/closed/locked, conflict, every check state, merged-results/train/stale-branch pipelines, reviewed_at_head)"
 else
   fail "GC28: normalized PRs differ" "$(diff <(jq -S . "$fx/expected-gc28.json") <(jq -sS . "$tmp/gc28.jsonl") || true)"
 fi
-if jq -se -L "$here/../lib" 'include "pr"; map(validate_pr) | length == 10' "$tmp/gc28.jsonl" >/dev/null; then
+if jq -se -L "$here/../lib" 'include "pr"; map(validate_pr) | length == 14' "$tmp/gc28.jsonl" >/dev/null; then
   ok "GC28: every normalized PR passes validate_pr"
 else
   fail "GC28: validate_pr rejected adapter output"
 fi
 expect "GC28: number is the iid, never the global id" \
-  '[ "$(jq -sc "map(.number)" "$tmp/gc28.jsonl")" = "[201,202,203,204,205,206,207,208,209,210]" ] && [ "$(jq -r ".[\"201\"].id" "$fx/mrs.json")" = 84201 ]'
+  '[ "$(jq -sc "map(.number)" "$tmp/gc28.jsonl")" = "[201,202,203,204,205,206,207,208,209,210,211,212,213,214]" ] && [ "$(jq -r ".[\"201\"].id" "$fx/mrs.json")" = 84201 ]'
 expect "GC28: reads the single-MR GET by iid on the URL-encoded project path, PRIVATE-TOKEN header" 'log_line "GET $M/201 token=$TOKEN"'
 expect "GC28: notes paged ascending (sort=asc, order_by=created_at, per_page=100)" \
   'log_line "GET $M/201/$NOTES&page=1 token=$TOKEN" && log_line "GET $M/201/$NOTES&page=3 token=$TOKEN" && [ "$(log_count "201/$NOTES&page=4")" = 0 ]'
@@ -96,7 +96,7 @@ expect "GC28: unchecked then mergeable on the re-poll -> clean (207: two GETs)" 
 expect "GC28: no re-poll for a settled MR (201: one GET)" '[ "$(log_count "GET $M/201 ")" = 1 ]'
 expect "GC28: re-polls back off (1 + 3 sleeps for 207 and 206)" '[ "$(log_count sleep)" = 4 ]'
 expect "GC28: Reviewed-Head equal to head -> true (201); a note on an older head -> false (205)" \
-  '[ "$(jq -sc "map(.reviewed_at_head)" "$tmp/gc28.jsonl")" = "[true,false,false,false,false,false,false,false,false,false]" ]'
+  '[ "$(jq -sc "map(.reviewed_at_head)" "$tmp/gc28.jsonl")" = "[true,false,false,false,false,false,false,false,false,false,false,false,false,false]" ]'
 expect "GC28: system notes are not comments (201: patch_iteration 2 from human notes)" '[ "$(jq -s -r ".[0].patch_iteration" "$tmp/gc28.jsonl")" = 2 ]'
 expect "§4.3: Closes #N ignored off the github graph; legacy head task/16-… -> \"16\"" \
   '[ "$(jq -s -r ".[1].task_id" "$tmp/gc28.jsonl")" = 16 ]'
@@ -127,6 +127,20 @@ done
 got=$(gljq -r 'include "forge-gitlab"; gl_checks' <<<'{"sha":"a","head_pipeline":{"sha":"b","status":"success"}}')
 rc=0; out="$got"; err=""
 expect "GC28: a successful pipeline for another commit is pending, never success" '[ "$got" = pending ]'
+# GC28: merged-results / merge-train pipelines run on a synthetic merge commit
+# (sha != MR head), so their status maps as is (§7.3); the stale-sha guard holds
+# only for branch pipelines (source branch or refs/merge-requests/<iid>/head).
+expect "GC28: merged-results success (ref …/211/merge, sha != head) -> success (211)" '[ "$(jq -s -r ".[10].checks" "$tmp/gc28.jsonl")" = success ]'
+expect "GC28: merged-results failed (ref …/212/merge, sha != head) -> failure (212)" '[ "$(jq -s -r ".[11].checks" "$tmp/gc28.jsonl")" = failure ]'
+expect "GC28: merge-train success (ref …/213/train, sha != head) -> success (213)" '[ "$(jq -s -r ".[12].checks" "$tmp/gc28.jsonl")" = success ]'
+expect "GC28: a stale branch pipeline (ref = source branch, sha != head) -> pending (214)" '[ "$(jq -s -r ".[13].checks" "$tmp/gc28.jsonl")" = pending ]'
+for c in 'refs/merge-requests/7/merge:running:pending' 'refs/merge-requests/7/train:canceled:failure' \
+         'refs/merge-requests/7/head:success:pending' 'feat:failed:pending' 'refs/merge-requests/8/merge:success:pending'; do
+  ref="${c%%:*}"; rest="${c#*:}"; st="${rest%%:*}"; want="${rest#*:}"
+  got=$(gljq -r --arg r "$ref" --arg s "$st" 'include "forge-gitlab"; {iid: 7, sha: "a", source_branch: "feat", head_pipeline: {sha: "b", ref: $r, status: $s}} | gl_checks' <<<null)
+  rc=0; out="$got"; err=""
+  expect "GC28: head_pipeline ref $ref, $st, sha != head -> $want" '[ "$got" = "$want" ]'
+done
 
 # GC28: notes span pages under every header shape GitLab may send: the full set,
 # above 10k (no x-total / x-total-pages / rel=last), Link only, x-total only,
@@ -249,6 +263,39 @@ touch "$tmp/state/approve-conflict"
 run -- pr-review 201 approve --sha "$(sha 201)" --body-file "$tmp/verdict.md"
 expect "pr-review approve: 409 (head moved under the approval) -> exit 1, no note" '[ "$rc" = 1 ] && [ "$(log_count "POST $M/201/notes")" = 0 ]'
 
+# Every verdict note reads as a verdict to pr-reviews, whatever its heading.
+for h in '## Adversarial review — verdict: APPROVE' '## Review — verdict: APPROVE' '## review: verdict: approve' 'not a heading' '# Review — verdict: APPROVE' '## Review — verdict: APPROVED'; do
+  got=$(gljq -c --arg b "$h" 'include "forge-gitlab"; [{body: "\n\($b)\n\nok\n\nReviewed-Head: abc", system: false, author: {username: "r"}, created_at: "2026-11-08T15:00:00.000Z"}] | gl_reviews({approved_by: []}) | map(.verdict)' <<<null)
+  case "$h" in "not a heading"|"# "*|*APPROVED) want='[]' ;; *) want='["approve"]' ;; esac
+  rc=0; out="$got"; err=""
+  expect "gl_reviews: first line '$h' -> $want" '[ "$got" = "$want" ]'
+done
+# B2 round trip: /approve refused (401, an author's own MR), the caller's own
+# `## Review — verdict: APPROVE` heading kept, and pr-reviews finds that note.
+printf '## Review — verdict: APPROVE\n\nok\n' > "$tmp/own.md"
+reset
+touch "$tmp/state/reject-self-approval"
+run -- pr-review 202 approve --sha "$(sha 202)" --body-file "$tmp/own.md"
+expect "round trip: approve refused (401) -> form comment, the caller's heading kept, not re-headed" \
+  '[ "$rc" = 0 ] && jq_true ".form == \"comment\"" && body_true POST.merge_requests_202_notes "(.body | startswith(\"## Review — verdict: APPROVE\n\")) and ([.body | split(\"\n\")[] | select(startswith(\"## \"))] | length == 1)"'
+run -- pr-reviews 202
+expect "round trip: pr-reviews returns that note as approve, commit == head" \
+  '[ "$rc" = 0 ] && jq_true "[.[] | select(.verdict == \"approve\")] | length == 1 and .[0].commit == \"$(sha 202)\" and .[0].author == \"shim-user\""'
+printf 'Looks right, no heading.\n' > "$tmp/bare.md"
+for v in approve:APPROVE comment:COMMENT; do
+  reset
+  touch "$tmp/state/reject-self-approval"
+  run -- pr-review 202 "${v%%:*}" --sha "$(sha 202)" --body-file "$tmp/bare.md"
+  expect "round trip: a heading-less ${v%%:*} body is headed '## Adversarial review — verdict: ${v#*:}'" \
+    '[ "$rc" = 0 ] && body_true POST.merge_requests_202_notes ".body | startswith(\"## Adversarial review — verdict: ${v#*:}\n\n\")"'
+  run -- pr-reviews 202
+  expect "round trip: pr-reviews returns the heading-less ${v%%:*} as ${v%%:*}, commit == head" \
+    '[ "$rc" = 0 ] && jq_true "map(select(.commit == \"$(sha 202)\")) | length == 1 and .[0].verdict == \"${v%%:*}\""'
+done
+reset
+run -- pr-review 202 comment --sha "$(sha 202)" --body-file "$tmp/own.md"
+expect "pr-review comment with an APPROVE heading (any form) -> exit 1, nothing posted" '[ "$rc" = 1 ] && [ "$(log_count POST)" = 0 ]'
+
 # The trailer is appended exactly once; another head's trailer is refused.
 reset
 printf 'verdict: APPROVE\n\nReviewed-Head: %s\n\n' "$(sha 201)" > "$tmp/trailed.md"
@@ -349,7 +396,7 @@ expect "pr-comment -> posted, url is the note anchor" '[ "$rc" = 0 ] && jq_true 
 touch "$tmp/state/fail-note"
 run -- pr-comment 201 --body-file "$tmp/body.md"
 expect "pr-comment: the forge refuses (403) -> exit 1, no posted JSON" '[ "$rc" = 1 ] && [ -z "$out" ]'
-rm -f "$tmp/state/fail-note"
+reset   # drop the note posted above (the shim appends posted notes to the GET)
 run -- pr-comments 201
 expect "pr-comments -> 4 human notes (system note dropped), note-anchor urls" \
   '[ "$rc" = 0 ] && jq_true "length == 4 and .[0].author == \"astra\" and (.[0].url | endswith(\"#note_3002\")) and (.[0] | keys) == [\"at\",\"author\",\"body\",\"url\"]"'

@@ -10,6 +10,9 @@
 #                  fields (head_pipeline, diff_refs, merge_error, user, …).
 #   lists.json     {"opened"|"merged"|"closed": [<iid>, …]}  (created_at asc)
 #   notes.json     {"<iid>": [<Note>]}       approvals.json {"<iid>": <approvals>}
+#                  A note POSTed since the last reset is appended to the GET of
+#                  that MR's notes ($SHIM_STATE/posted-notes-<iid>.json), so a
+#                  verdict can round-trip through pr-reviews.
 #   diffs.json     {"<iid>": [<MR diff>]}    jobs.json {"<pipeline id>": [<Job>]}
 # Lists filter `state`, `source_branch` and `updated_after` (updated_at >= T)
 # like the server, are sliced by `per_page`/`page` (per_page clamped to 2, so
@@ -121,13 +124,15 @@ else
                        web_url: "https://gitlab.example.com/example/sub/repo/-/merge_requests/250"}' <<<"$data")" ;;
     GET\ merge_requests/*/notes)
       n="${route#merge_requests/}"; n="${n%/notes}"
-      page "$(jq -c --arg n "$n" '.[$n] // []' "$SHIM_FX/notes.json")" ;;
+      posted="$SHIM_STATE/posted-notes-$n.json"; [ -f "$posted" ] || posted=/dev/null
+      page "$(jq -c --arg n "$n" --slurpfile p "$posted" '(.[$n] // []) + $p' "$SHIM_FX/notes.json")" ;;
     POST\ merge_requests/*/notes)
       n="${route#merge_requests/}"; n="${n%/notes}"
       if [ -f "$SHIM_STATE/fail-note" ]; then err 403 "403 Forbidden"
       else
         respond 201 "$(jq -c --argjson n "$n" '{id: 9001, type: null, body: .body, author: {id: 7, username: "shim-user"},
                          created_at: "2026-11-08T15:00:00.000Z", system: false, noteable_iid: $n, noteable_type: "MergeRequest"}' <<<"$data")"
+        printf '%s\n' "$body" >> "$SHIM_STATE/posted-notes-$n.json"
       fi ;;
     GET\ merge_requests/*/approvals)
       n="${route#merge_requests/}"; n="${n%/approvals}"
