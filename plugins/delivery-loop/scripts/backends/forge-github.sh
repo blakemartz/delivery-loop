@@ -44,6 +44,9 @@
 #     once the PR exists (createPullRequest takes no labels). When that second
 #     request fails, gh prints the new PR's URL and exits non-zero: the adapter
 #     exits 1 naming that URL rather than reporting either success or "no PR".
+#     Each value is exactly one label: gh CSV-splits a --label value (pflag
+#     StringSlice), so a name holding ',' or '"' is refused, as is one holding a
+#     newline or CR, before gh runs. A repeated name is passed once.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -131,10 +134,22 @@ post_comment() {
 
 op_whoami() { gh api user | jq -r .login; }
 
+# check_label_names <name>…: refuse, before any request, a name gh would not
+# pass through as exactly one label (it CSV-splits the value of --label).
+check_label_names() {
+  local n
+  for n in "$@"; do
+    case "$n" in
+      *,*|*'"'*) die "label names cannot contain ',' or '\"' on github (gh splits them): $n; nothing created" ;;
+      *$'\n'*|*$'\r'*) die "label names cannot contain a newline or CR: $(printf '%q' "$n"); nothing created" ;;
+    esac
+  done
+}
+
 op_pr_create() {
   local u="pr-create --head H --base B --title T --body-file F [--draft] [--label L]…"
-  local head="" base="" title="" body="" draft="" out rc url
-  local labels=()
+  local head="" base="" title="" body="" draft="" out rc url n m dup
+  local names=() uniq=() labels=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --head) head="${2:-}"; shift 2 ;;
@@ -142,14 +157,20 @@ op_pr_create() {
       --title) title="${2:-}"; shift 2 ;;
       --body-file) body="${2:-}"; shift 2 ;;
       --draft) draft=1; shift ;;
-      --label) [ -n "${2:-}" ] || usage "$u"; labels+=(--label "$2"); shift 2 ;;
+      --label) [ -n "${2:-}" ] || usage "$u"; names+=("$2"); shift 2 ;;
       *) usage "$u" ;;
     esac
   done
   [ -n "$head" ] && [ -n "$base" ] && [ -n "$title" ] && [ -f "$body" ] || usage "$u"
+  # ${names[@]+…}: an empty array under `set -u` on bash 3.2.
+  check_label_names ${names[@]+"${names[@]}"}
+  for n in ${names[@]+"${names[@]}"}; do   # first occurrence of each name, in order
+    dup=""
+    for m in ${uniq[@]+"${uniq[@]}"}; do [ "$m" != "$n" ] || dup=1; done
+    [ -n "$dup" ] || { uniq+=("$n"); labels+=(--label "$n"); }
+  done
   set -- --head "$head" --base "$base" --title "$title" --body-file "$body"
   [ -z "$draft" ] || set -- "$@" --draft
-  # ${labels[@]+…}: an empty array under `set -u` on bash 3.2.
   out=$(gh pr create "$@" ${labels[@]+"${labels[@]}"}) && rc=0 || rc=$?
   url=$(printf '%s\n' "$out" | grep -E '^https?://' | tail -n 1) || url=""
   if [ "$rc" != 0 ]; then
