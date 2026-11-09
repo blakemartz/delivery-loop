@@ -56,7 +56,7 @@ def ready_set:
           unblocks: ($all | unblocks($id)),
           size,
           started: (.epic as $e | $e != null and any($started[]; . == $e)),
-          epic, module, target_branch,
+          epic, module: .module, target_branch,
           _created: (.created_at | iso_epoch) } ]
   | sort_by([(if .started then 0 else 1 end), -.unblocks,
              (if .size == "S" then 0 else 1 end), ._created])

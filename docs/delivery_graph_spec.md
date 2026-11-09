@@ -105,6 +105,17 @@ local mode, and new node kinds beyond `task | epic | promote | external`.
    precedence). v0.1.4 listed it as a task **and** counted it as an epic, so a
    closed child could mark it started and reorder the ready set. v0.2 never treats
    it as an epic: not for the started-epic flag, not for epic completion (GC71).
+7. A `Depends-on:` line names edges only when the keyword starts the line (#77).
+   v0.1.4 matched `Depends-on:` anywhere on a line, so a criterion that quoted
+   the convention (``- [ ] verify `Depends-on: #1` handling``) blocked its task.
+   Still counted: optional indentation, then one list bullet (`-`/`*`/`+`, or
+   an ordered `1.` / `1)`), then an optional `**` bold opener, then
+   `Depends-on:` (bold may close before or after the colon: `**Depends-on:**
+   #3`, `**Depends-on**: #3`). No longer counted, so such a task can become
+   ready where v0.1.4 kept it blocked: a mention after other text on the line
+   (prose, a checklist item `- [ ] …` or `1. [ ] …`, a code span), and a
+   blockquote line (`> Depends-on: #5`, usually quoted from elsewhere). The
+   same line rule applies to `Part of epic #E` for `migrate`.
 
 ## 3. Architecture
 
@@ -161,13 +172,13 @@ on drift).
 | `applied_prs` | [int] | PR numbers whose merge reconcile rule 3 already applied to this node (§5), ascending, deduplicated; `[]` when none. Rule 3 skips them, so a human who reopens a closed task is never overridden (GC72). github: the number right after the prefix of every `AUTO-CLOSE: PR #<n>` comment (the comment the backend writes when it applies rule 3, B2; v0.1.4's `AUTO-CLOSE: epic …` comment names no PR). github also counts a merged PR whose GitHub closing keyword (`Closes #N`, default branch only) closed the issue: GitHub writes no `AUTO-CLOSE` comment for it. B2 MUST derive that PR from evidence that survives a reopen (`closedByPullRequestsReferences`, or the issue timeline's `ClosedEvent` closer), after verifying the source against gh and live issue data (GC75); until B2 the read path derives only the comment form. The comment list is read in full: `gh issue list` returns at most 100 comments per issue, so the backend re-reads a longer thread (GC74, §6.2). local: the same, from `comment` events whose body has that prefix (C2 appends one when it applies rule 3). Required on every node; `validate_node` rejects anything but an array of positive integers. |
 | `module` | string \| null | from `module:<m>`. |
 | `size` | `S` \| `M` \| `L` \| null | |
-| `deps` | `[{id, via}]` | blocking edges. `via` is a string, or null for legacy edges. github: union of native `blockedBy.nodes[].number` and legacy `Depends-on:` lines, deduplicated (GC11). |
+| `deps` | `[{id, via}]` | blocking edges. `via` is a string, or null for legacy edges. github: union of native `blockedBy.nodes[].number` and legacy `Depends-on:` lines, deduplicated (GC11). A `Depends-on:` line counts only when the keyword starts the line (indentation, a list bullet, ordered or not, and `**` bold allowed): a mention mid-line (prose such as a criterion quoting the convention) or in a blockquote adds no edge (§2 exception 7, §6.2 trailer block). |
 | `status` | `blocked` \| `ready` \| `claimed` \| `in-review` \| `changes-requested` \| `approved` \| `done` \| `cancelled` | github: `done`/`cancelled` come from `state` + `stateReason` (`COMPLETED` → done; `NOT_PLANNED`/`DUPLICATE` → cancelled). Other statuses come from labels, a cache that reconcile repairs. |
 | `needs_human` | bool | orthogonal flag (the design spec's "any → needs-human"). |
 | `claim` | `{actor, run, at, by: "agent"\|"human"}` \| null | github: derived from assignee + `claim:agent` + the winning `CLAIM` comment. |
-| `target_branch` | string | the plan's target. Default `BASE_BRANCH`. github: from a `Delivery-Target: <branch>` body line. |
-| `promote_to` | string \| null | promote nodes only. github: from a `Delivery-Promote-To: <branch>` body line, which `plan.sh apply` writes (§8.3, §9). |
-| `plan_ref` | string \| null | `<plan>/<plan-task-id>`, the idempotency key for `plan.sh apply` (§8.3). |
+| `target_branch` | string | the plan's target. Default `BASE_BRANCH`. github: from the `Delivery-Target: <branch>` line of the body's trailer block (§6.2); a key line anywhere else in the body is prose. |
+| `promote_to` | string \| null | promote nodes only. github: from the `Delivery-Promote-To: <branch>` line of the body's trailer block (§6.2), which `plan.sh apply` writes through `create` (§8.3, §9). |
+| `plan_ref` | string \| null | `<plan>/<plan-task-id>`, the idempotency key for `plan.sh apply` (§8.3). github: from the `Delivery-Plan: <ref>` line of the body's trailer block (§6.2), so a human body edit cannot steal it. |
 | `body` | string | markdown: Context + Acceptance criteria (the task contract). |
 | `created_at`, `updated_at` | ISO-8601 | |
 
@@ -474,18 +485,108 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
   more entries with `gh issue view <n> --json comments`, which pages them all, so
   `applied_prs`, `pinged_at` and the claim never silently truncate (§2 exception 2,
   GC74). An issue short on both `blockedBy` and `comments` is re-read once for both.
+- **Trailer block.** The machine keys `Delivery-Target:`, `Delivery-Plan:`,
+  `Delivery-Promote-To:` and `Delivery-Task:` are read **only** from the body's
+  trailer block. The body is split into paragraphs on blank lines: empty, or
+  only whitespace, visible or not (spaces, tabs, NBSP, em-space and the other
+  Unicode spaces, ZWSP, BOM). `\r` and trailing spaces, tabs and NBSPs on each
+  line are ignored. The rule, in the spirit of git's trailer parser:
+  1. The **key paragraph** is the body's last paragraph whose **first line** is
+     a key line: `<Key>: <value>` at column 0, with a non-empty value.
+  2. The **trailer block** is that paragraph's leading run of trailer lines:
+     - a key line;
+     - a `Depends-on:` line;
+     - a `Part of epic #E` line (any text may follow the number).
+
+     The last two take the same line lead the edge and parent parsers accept
+     (indentation, one `-`/`*`/`+` or `1.`/`1)` bullet, `**` bold; §2
+     exception 7). So a line that counts as an edge is always a trailer line.
+     The run ends at the first other line, and that line and everything after
+     it are ignored.
+
+  With no key paragraph, every key takes its default (`target_branch` =
+  `BASE_BRANCH`, the others null). Within the block the first line of a key
+  wins, and its value is the first whitespace-delimited token. A key line
+  anywhere else is prose: above the block, in a paragraph it does not open, or
+  below the end of the run. That is what keeps a contract or a human body edit
+  from stealing `plan_ref` (a re-apply would then duplicate the node),
+  retargeting the node, or naming its promotion. `show` warns on stderr for
+  each such prose key line (`gh_stray_key_lines`).
+
+  *What an append below the machine block keeps.* The block (its keys and its
+  edges) survives every append **except one that writes a paragraph opening
+  with a key line**:
+  - any line typed directly under the block, without a blank line: prose
+    (`Update: …`), a checklist item, any `Depends-on:` / `Part of epic` form
+    (it joins the run as an edge), a key line (it joins the run; the block's
+    own earlier line of that key wins), or an em-space/ZWSP line;
+  - any paragraph after a blank line that does not open with a key line: prose,
+    a lone `Depends-on:` or `Part of epic` paragraph, one that opens with
+    `Depends-on:` and names a key later, or a fenced block whose first line is
+    the fence.
+
+  The one exception is the accepted trade-off. A paragraph a human writes below
+  the block that opens with a key line becomes the block, exactly as editing
+  the block would (`Delivery-Target: main\n\nThanks!` reads `main`). That
+  includes a fenced example in which a key line sits alone between blank lines.
+  It grants nothing new, since editing the body needs the same rights as
+  editing the block. It is an accidental footgun, so `show` warns about the
+  machine lines it displaces.
+
+  *Why this rule, not "last paragraph" or a fixed separator.* If only the last
+  paragraph counted, any append would silently drop `plan_ref` and the target,
+  and a re-apply would duplicate the node: the very harm the rule exists to
+  prevent. A fixed separator (an HTML comment marker) was rejected for two
+  reasons. It would have to be written into every existing body: a live
+  mutation, plus a fallback rule for bodies not yet migrated. And it protects
+  nothing more, since anyone who can append below the block can edit the block
+  itself. Fenced code is not special-cased: an unclosed fence above the block
+  must not hide it.
+
+  *Writers.* `create` always writes the block last, opening with
+  `Delivery-Target:`. `link` appends its `Depends-on:` lines below the body's
+  last non-blank line (below). Every value either writes is checked before any
+  `gh` call: keys by `gh_trailer_token` (one token, no whitespace of any kind)
+  and vias by `gh_via_ok` (one line that the read takes back unchanged). So
+  what they write always reads back whole. Bodies written by v0.1.4 and earlier
+  v0.2 creates put their key lines last, with a key line first, so they read
+  unchanged.
+
+  `Depends-on:` and `Part of epic #E` remain human-authored body conventions.
+  They are read on any line, but only when the keyword starts the line (the
+  line lead above): a mid-line or quoted mention adds no edge and gives
+  `migrate` no parent (§2 exception 7). The `epic` field's `[Ee]pic #E` body
+  fallback keeps v0.1.4's match anywhere (§4.1); it orders nodes and adds no
+  edge. The parse functions are pure jq in `backends/graph-github.jq`, callable
+  from outside the backend on any `{body}`: `gh_trailer_block`,
+  `gh_trailer_keys`, `gh_text_edges`, `gh_stray_key_lines`, `gh_trailer_token`
+  and `gh_via_ok`.
 - **Claims are unchanged.** The comment-ordered Lamport lock (`lib/claim-winner.jq`,
   `lib/orphan-claims.jq`) is reused as is; GitHub offers no compare-and-set on
   assignment.
 - **Writes:**
-  - `create` uses `gh issue create --blocked-by … --parent …` plus labels and the
-    `Delivery-Target:` / `Delivery-Plan:` / `Delivery-Promote-To:` body lines (the
-    last on promote nodes only). It never creates `external` nodes.
+  - `create` uses `gh issue create --blocked-by … --parent …` plus labels. It
+    always ends the body with its own trailer block, after a blank line, even
+    when the contract already carries those keys: `Delivery-Target:` (always;
+    `BASE_BRANCH` when unset, so the block always has a key line),
+    `Delivery-Plan:`, `Delivery-Promote-To:` (promote nodes only, where it is
+    required), then any text edges. Every key value must be one token (no
+    whitespace) and a dep's `via` one line that reads back unchanged; `create`
+    refuses anything else (exit 1, nothing written). It never creates
+    `external` nodes.
+  - `link` with a `via`, or on a gh without native relations, records a
+    `Depends-on: #<dep> (via: …)` line: in place if the body already has that
+    dep's line, else directly below the body's last non-blank line, so it joins
+    the trailer block when nothing was appended below it (any `Depends-on:`
+    line counts as an edge wherever it sits). The via gets `create`'s check
+    (`gh_via_ok`): a multi-line via, or one with leading or trailing
+    whitespace, exits 1 before any `gh` call.
   - status changes are label edits, as today.
   - `done`/`cancelled` are issue close with `--reason completed|"not planned"`.
 - **`graph.sh migrate`** is idempotent. For every open task, it adds a native
   blocked-by for each legacy `Depends-on:` ref and sets the native parent from
-  `Part of epic #E`. Text lines are left in place (GC48).
+  `Part of epic #E`, both read at line start only (trailer block, above). Text
+  lines are left in place (GC48).
   - It refuses to exceed 50 blockers per issue: it prints the offender and exits 1.
     The cap is from GitHub's changelog of 2025-08-21: "You can link up to 50 issues
     for each relationship type". It is not in the REST reference, so it is enforced
@@ -864,6 +965,12 @@ message:
 - `GRAPH_BACKEND=github` requires `FORGE=github` (GC40);
 - unknown backend or forge values are rejected, listing the valid ones (GC41);
 - a gitlab/gitea forge with an unset token is rejected (GC59).
+- the jq on `PATH` must be jq ≥ 1.7, excluding 1.8.2 (upstream jqlang/jq#3597,
+  which mis-links nested module includes). jq < 1.7 and exactly 1.8.2 (including
+  `1.8.2-dirty`) are rejected; the message names the bug and the remedy (1.8.1, or
+  1.8.3 or later). A version string that does not parse as a release is accepted
+  without a message. Alpine's jq 1.6 build reports `jq-master-…`, so it is not
+  caught. The gate's bash 3.2 container stage keeps its jq 1.7.1 pin.
 
 `graph.sh`, `forge.sh`, `tick-plan.sh`, `plan.sh` and `promote.sh` each run the
 check once at start-up, and exit 1 on an invalid combination before doing any I/O

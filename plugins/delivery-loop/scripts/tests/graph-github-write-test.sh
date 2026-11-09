@@ -446,7 +446,103 @@ for bad in '{"kind":"external","title":"x"}' '{"id":"9","kind":"task","title":"x
   expect "create refuses $bad (exit 1, no gh issue create)" '[ "$rc" = 1 ] && ! log_has "issue create"'
 done
 run SHIM_GH_VERSION=2.90.0 -- "$graph" create '{"kind":"task","title":"old gh","epic":"1","deps":["2"]}'
-eq "create on gh < 2.94: text edges instead of native flags" '"Part of epic #1\nDepends-on: #2"' "$(issue "$out" .body)"
+eq "create on gh < 2.94: text edges instead of native flags (after the always-written Delivery-Target)" \
+  '"Delivery-Target: main\nPart of epic #1\nDepends-on: #2"' "$(issue "$out" .body)"
+# #77: create always writes its own trailer block, after a blank line, even when
+# the contract carries those keys; the read takes the trailer's values (a key
+# line in the contract is prose, so it can't steal plan_ref or retarget).
+contract=$'## Context\nDelivery-Plan: other/zzz\nDelivery-Target: main\n\nDelivery-Promote-To: other'
+nodejson=$(jq -cn --arg b "$contract" '{kind: "promote", title: "keys in the contract", body: $b,
+  target_branch: "release/x", plan_ref: "p/t2", promote_to: "main"}')
+g -- create "$nodejson"
+eq "#77 create: the trailer block is appended whole even when the contract has those keys" \
+  "$(jq -c --arg b "$contract" -n '$b + "\n\nDelivery-Target: release/x\nDelivery-Plan: p/t2\nDelivery-Promote-To: main"')" \
+  "$(issue "$out" .body)"
+g -- show "$out"
+eq "#77 round trip: the node reads back the trailer's values" '["release/x","p/t2","main"]' \
+  "$(jq -c '[.target_branch, .plan_ref, .promote_to]' <<<"$out")"
+g -- create "$(jq -cn '{kind: "task", title: "no keys", body: "x\n\nDelivery-Plan: other/zzz\n\n"}')"
+n77=$out
+eq "#77 create with no keys set: Delivery-Target: BASE_BRANCH, so the contract's key paragraph is never the trailer" \
+  '"x\n\nDelivery-Plan: other/zzz\n\nDelivery-Target: main"' "$(issue "$n77" .body)"
+g -- show "$n77"
+eq "#77 round trip: plan_ref stays null" '["main",null]' "$(jq -c '[.target_branch, .plan_ref]' <<<"$out")"
+jq --argjson n "$n77" 'map(if .number == $n then .body += "\n\n" else . end)' "$st/board.json" > "$st/b" && mv "$st/b" "$st/board.json"
+g -- link "$n77" 2 "lib/x.jq"
+eq "#77 link: a via line joins the trailer block (trailing blank lines dropped)" \
+  '"x\n\nDelivery-Plan: other/zzz\n\nDelivery-Target: main\nDepends-on: #2 (via: lib/x.jq)"' "$(issue "$n77" .body)"
+g -- show "$n77"
+eq "#77 link: the trailer still reads (target kept, edge with its via)" '["main",null,[{"id":"2","via":"lib/x.jq"}]]' \
+  "$(jq -c '[.target_branch, .plan_ref, .deps]' <<<"$out")"
+# #77 review A: prose a human appends below the trailer block (an "Update: …"
+# paragraph, one that names a key in passing, an NBSP-only line) never loses it:
+# plan_ref and target survive, so a re-apply finds the node instead of
+# duplicating it.
+g -- create '{"kind":"task","title":"appended","body":"## Context\nc","target_branch":"release/x","plan_ref":"p/t1"}'
+n77a=$out
+for extra in $'\n\nUpdate: discussed in standup, see #3.' $'\n\nDepends-on: #2\n\nNotes\nDelivery-Plan: other/x\n\n\u00a0'; do
+  jq --argjson n "$n77a" --arg x "$extra" 'map(if .number == $n then .body += $x else . end)' "$st/board.json" > "$st/b" && mv "$st/b" "$st/board.json"
+  g -- show "$n77a"
+  eq "#77 review A: create -> append $(jq -cn --arg x "$extra" '$x') -> show: target and plan_ref survive" \
+    '["release/x","p/t1"]' "$(jq -c '[.target_branch, .plan_ref]' <<<"$out")"
+done
+# #77 review A′: a line typed directly under the block (no blank line first) —
+# prose, a checklist item, a bulleted / indented / bold Depends-on (an edge),
+# an em-space or ZWSP line — ends the block's run or joins it; the keys survive.
+for extra in $'\nUpdate: standup, see #3.' $'\n- [ ] also handle X' $'\n- Depends-on: #2' $'\n  Depends-on: #2' \
+             $'\n**Depends-on:** #2' $'\n\xe2\x80\x83' $'\n\xe2\x80\x8b\nlater'; do
+  g -- create '{"kind":"task","title":"appended directly","body":"## Context\nc","target_branch":"release/x","plan_ref":"p/t1"}'
+  n77b=$out
+  jq --argjson n "$n77b" --arg x "$extra" 'map(if .number == $n then .body += $x else . end)' "$st/board.json" > "$st/b" && mv "$st/b" "$st/board.json"
+  g -- show "$n77b"
+  eq "#77 review A′: create -> append $(jq -cn --arg x "$extra" '$x') (no blank line) -> show: target and plan_ref survive" \
+    '["release/x","p/t1"]' "$(jq -c '[.target_branch, .plan_ref]' <<<"$out")"
+done
+eq "#77 review A′: … the appended ZWSP line and later prose leave the block whole and add no edge" '[]' "$(jq -c '.deps' <<<"$out")"
+# #77 review B: create refuses any trailer value that is not one token (or a
+# promote node without promote_to), before any gh issue/api call: a line the
+# read rejects would disqualify the whole block, not just its own key.
+: > "$st/log"
+for bad in '{"kind":"promote","title":"x","target_branch":"release/x","promote_to":"","plan_ref":"p/pr"}' \
+           '{"kind":"promote","title":"x","target_branch":"release/x"}' \
+           '{"kind":"promote","title":"x","target_branch":"release/x","promote_to":"ma in"}' \
+           '{"kind":"promote","title":"x","target_branch":"release/x","promote_to":7}' \
+           '{"kind":"task","title":"x","target_branch":"rel\nx","plan_ref":"p/t3"}' \
+           '{"kind":"task","title":"x","target_branch":"rel x"}' \
+           '{"kind":"task","title":"x","target_branch":""}' \
+           '{"kind":"task","title":"x","target_branch":"rel\u00a0x"}' \
+           '{"kind":"task","title":"x","plan_ref":"p\n/t4"}' \
+           '{"kind":"task","title":"x","plan_ref":"p/t 5"}' \
+           '{"kind":"task","title":"x","plan_ref":"p/t5\t"}' \
+           '{"kind":"task","title":"x","deps":[{"id":"2","via":"a\nb"}]}' \
+           '{"kind":"task","title":"x","deps":[{"id":"2","via":"a\rb"}]}' \
+           '{"kind":"task","title":"x","deps":[{"id":"2","via":"a\u2028b"}]}' \
+           '{"kind":"task","title":"x","deps":[{"id":"2","via":" lead"}]}' \
+           '{"kind":"task","title":"x","deps":[{"id":"2","via":""}]}' \
+           '{"kind":"task","title":"x","target_branch":"rel\u200bx"}'; do
+  g -- create "$bad"
+  expect "#77 review B: create refuses $bad (exit 1, no gh issue/api call)" \
+    '[ "$rc" = 1 ] && ! log_has "issue " && ! log_has "api" && grep -qF "create: " <<<"$err"'
+done
+g BASE_BRANCH=$'rel\xc2\xa0x' -- create '{"kind":"task","title":"x"}'
+expect "#77 review B: create refuses an NBSP-carrying BASE_BRANCH as the default target (exit 1, no gh issue/api call)" \
+  '[ "$rc" = 1 ] && ! log_has "issue " && ! log_has "api"'
+# #77 review B′: link's via goes into the same trailer, so it gets create's
+# check (gh_via_ok), before any gh call: exit 1, nothing written.
+g -- create '{"kind":"task","title":"link via","target_branch":"release/x","plan_ref":"p/l"}'
+nl=$out
+body_before=$(issue "$nl" .body)
+: > "$st/log"
+for bad in $'two\nlines' $'cr\rhere' $'ls\xe2\x80\xa8here' ' lead' 'trail ' $'\t'; do
+  g -- link "$nl" 2 "$bad"
+  expect "#77 review B′: link refuses via $(jq -cn --arg v "$bad" '$v') (exit 1, no gh call)" \
+    '[ "$rc" = 1 ] && ! log_has "issue " && ! log_has "api" && grep -qF "link: the via" <<<"$err"'
+done
+eq "#77 review B′: … and the body is untouched" "$body_before" "$(issue "$nl" .body)"
+g -- link "$nl" 2 "lib/a b.jq"
+g -- show "$nl"
+eq "#77 review B′: a valid via still links and the trailer reads back" '["release/x","p/l",[{"id":"2","via":"lib/a b.jq"}]]' \
+  "$(jq -c '[.target_branch, .plan_ref, .deps]' <<<"$out")"
 
 g -- update 4 '{"status":"ready","module":"forge","size":"S","needs_human":true,"title":"renamed"}'
 eq "update: labels swapped in one edit (module/size replace every other module:/size: label)" \
