@@ -293,8 +293,11 @@ spec's §5 table, which is amended to match (§16):
 
 **`reconcile.jq`.** Input: `{nodes, prs, now}`. `prs` contains the open PRs plus the
 PRs merged since the oldest open node was created; §6.2 and §6.3 describe the
-backend queries. Output: a list of fix records `{op, id, from, to, reason}`. The
-backend applies them, and `--fix` prints them as `fix: …` lines.
+backend queries. Output: a list of fix records `{op, id, from, to, reason}`. A
+rule-3 record also carries an optional `pr`: the number of the merged PR it
+applies, the same PR its reason `PR #<n> merged into <base>` names, so a backend
+reads the PR from the record instead of parsing the reason. Other records have no
+`pr`. The backend applies them, and `--fix` prints them as `fix: …` lines.
 
 1. `blocked → ready` when every dep is `done`. Never while `needs_human`.
 2. `ready → blocked` when deps are unmet.
@@ -324,7 +327,9 @@ backend applies them, and `--fix` prints them as `fix: …` lines.
    epic is left to rules 1, 2 and 7. Rule 4 is applied before rules 1 and 2, so an
    open PR outranks the deps and a drifted node is not first moved between `ready`
    and `blocked`.
-5. **Stale agent claims.** A claim with `by=="agent"`, no open PR for the node,
+5. **Stale agent claims.** A claim with `by=="agent"` on an open node (never
+   `done`/`cancelled`: a closed issue's leftover `claim:agent` is not a stale
+   claim, so it gets no record and no warning), no open PR for the node,
    `now - updated_at > 4h` and `needs_human` false is released to `ready`, with the
    reason `RECLAIMED` (GC24). The github backend keeps the
    `RECLAIMED: agent claim was idle >4h…` comment text verbatim. As in v0.1.4,
@@ -892,7 +897,7 @@ the case assertions it owns.
 | GC44 | human claim idle 73h, `pinged_at` null / set | exactly one `ping` record / none; never released |
 | GC45 | epic with children `done` + `cancelled`, one of them linked only through the epic's `- [ ] #N` checklist (github fixture) | epic → `done`; the checklist-only child counts toward completion, and its own `epic` stays null (parity) |
 | GC47 | `transition <id> cancelled` with `--actor agent` / `--human ann` | exit 2, unchanged / `cancelled` |
-| GC65 | reconcile produces a fix record that the transition table rejects (fixture: a `done` node and a stale-claim rule match) | warning on stderr, record not applied, other records applied |
+| GC65 | reconcile produces a fix record that the transition table rejects (no rule emits one for a well-formed board since rule 5 skips closed nodes, so the test offers a `done` node's reclaim to the validation step directly) | warning on stderr, record not applied, other records applied |
 | GC61 | `task-queue.sh` against the GC5 github fixture | stdout byte-identical to the captured v0.1.4 output |
 | GC68 | github fixture: task T with `Depends-on: #A`, A an unlabelled CLOSED (`COMPLETED`) issue; task U with `Depends-on: #B`, B an unlabelled OPEN issue; task V with `Depends-on: #D`, D an unlabelled CLOSED (`NOT_PLANNED`) issue; an unlabelled issue C that nothing references | A, B and D normalize to `kind:"external"` (`done` / `blocked` / `cancelled`) and C is not emitted; T is in `ready`; U and V are not ready (§2 exception 1); reconcile stderr `V: blocked on cancelled dep D` (GC2), and no `unknown dep` warning and no fix record for A, B or D |
 | GC71 | github fixture (§2 exception 6): issue X labelled both `task` and `epic`, open, size S, no deps, unclaimed; ready task T (size S, `unblocks` 0) with body `Part of epic #X`, and a CLOSED (`COMPLETED`) task C with body `Part of epic #X`; ready task U (size S, `unblocks` 0, no epic) created before T; issue Y labelled both `task` and `epic` whose only child, a task with body `Part of epic #Y`, is CLOSED | X and Y normalize to `kind:"task"` with `checklist: []`; X is in `ready`; T has `started:false` and U precedes T (v0.1.4 put T first); reconcile emits no `→ done` record for X or Y (v0.1.4 auto-closed Y) |

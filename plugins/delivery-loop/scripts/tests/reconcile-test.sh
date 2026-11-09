@@ -8,7 +8,8 @@
 # every open status; epic ready -> done; ready/blocked drift -> in-review;
 # stale-claim reclaim from in-review/changes-requested/approved/ready), and
 # GC72/GC73 (issue #52: applied_prs respects a reopen; stale agent claims are
-# released from every open status that can hold one).
+# released from every open status that can hold one), and issue #72 (rule 5
+# acts on open nodes only; rule-3 records carry an explicit `pr`).
 #
 # Offline. GC2/GC4/GC6/GC7 reuse the ready fixtures (fixtures/ready/); the other
 # cases are sparse fixtures in fixtures/reconcile/, filled out by expand.jq.
@@ -129,12 +130,18 @@ eq "GC73 needs_human: no release from any status" '[]' "$(jq -c '[.[] | select(.
 run_sparse gc25
 eq "GC25 merged PR -> x done, its dependent -> ready in the same pass" \
   '["transition gc25-x in-review->done","transition gc25-dependent blocked->ready"]' "$(moves)"
+eq "GC25 only the rule-3 record carries pr" '[true,false]' "$(jq -c 'map(has("pr"))' "$tmp/out")"
 
 run_sparse gc42
 eq "GC42 merged agent PR into the node's target release/x -> done (wrong base, non-agent: none)" \
   '["transition 42 approved->done"]' "$(moves)"
 eq "GC42 the done record names the PR" '"PR #142 merged into release/x"' \
   "$(jq -c '.[0].reason' "$tmp/out")"
+# Issue #72: a rule-3 record carries the PR its reason names as an explicit
+# `pr` number, on top of the usual fields, so a backend need not parse it.
+eq "GC42 the done record carries pr: <the merged PR's number>" 142 "$(jq -c '.[0].pr' "$tmp/out")"
+eq "GC42 a rule-3 record is exactly {op, id, from, to, reason, pr}" \
+  '["from","id","op","pr","reason","to"]' "$(jq -c '.[0] | keys' "$tmp/out")"
 # The amended §5 row: every open status may go done on a merged PR (label drift,
 # human-driven PRs), never a closed one.
 for s in blocked ready claimed in-review changes-requested approved; do
@@ -147,6 +154,7 @@ eq "GC42 a cancelled node is not reopened as done" '[]' "$(moves)"
 run_sparse gc42 '.prs += [.prs[0] | .number = 150 | .url = "https://forge.example/pr/150"]'
 eq "GC42 two merged PRs for one node -> one record, newest PR" '["PR #150 merged into release/x"]' \
   "$(jq -c 'map(.reason)' "$tmp/out")"
+eq "GC42 the record's pr is the newest PR, the one its reason names" '[150]' "$(jq -c 'map(.pr)' "$tmp/out")"
 # The base is checked per PR before picking the newest: a newer merge into another
 # base (a cherry-pick into main) must not hide the merge into target_branch.
 run_sparse gc42 '.nodes = [.nodes[0] | .id = "1"]
@@ -156,7 +164,7 @@ run_sparse gc42 '.nodes = [.nodes[0] | .id = "1"]
 eq "GC42 older merge into target, newer merge into main -> 1 done" \
   '["transition 1 approved->done"]' "$(moves)"
 eq "GC42 the record names the qualifying PR, not the newer off-base one" \
-  '"PR #10 merged into release/x"' "$(jq -c '.[0].reason' "$tmp/out")"
+  '"PR #10 merged into release/x"|10' "$(jq -c '.[0].reason' "$tmp/out")|$(jq -c '.[0].pr' "$tmp/out")"
 # A promotion PR targets promote_to (§9): head T, base P.
 run_sparse gc42 '.nodes[0] |= (.kind = "promote" | .status = "in-review" | .promote_to = "main")
                  | .prs[0].base = "main"'
@@ -260,12 +268,39 @@ eq "GC68 the only warning is the cancelled dep (no skipped record, no unknown de
 run_sparse gc68 '.nodes = [.nodes[] | select(.kind == "external")]'
 eq "GC68 a board of externals only -> no records, no warnings" '[]|' "$(moves)|$(cat "$tmp/err")"
 
-# --- GC65: a record the table rejects is skipped; the rest stand ------------------------------
+# --- rule 5 on closed nodes (issue #72), and GC65 ----------------------------------------------
+# A closed node's leftover agent claim (claim:agent + assignee on a closed
+# issue) is not a stale claim: rule 5 skips it, so it yields no record and no
+# per-tick "skipped reclaim" warning. The open claimed node is still released.
 run_sparse gc65
-eq "GC65 the done node's reclaim is skipped, the claimed node's is applied" \
+eq "rule 5: a done node's stale agent claim -> no record (the claimed node's is applied)" \
   '["transition gc65-blocked blocked->ready","reclaim gc65-claimed claimed->ready"]' "$(moves)"
-stderr_has "GC65 the rejected record is a warning on stderr" \
-  'warn: skipped reclaim gc65-done: illegal transition "gc65-done": done -> ready by reconcile'
+eq "rule 5: a done node's stale agent claim -> no warning" '' "$(cat "$tmp/err")"
+run_sparse gc65 '.nodes[0].status = "cancelled"'
+eq "rule 5: a cancelled node's stale agent claim -> no record, no warning" \
+  '["transition gc65-blocked blocked->ready","reclaim gc65-claimed claimed->ready"]|' "$(moves)|$(cat "$tmp/err")"
+# GC65: a record the table rejects is a warning and is skipped; the other
+# records stand. No rule now emits one for a well-formed board (rule 5 no
+# longer reaches closed nodes), so the guard is driven through _offer directly.
+# offer <records-json>: offer each record to a pass state over the gc65 board.
+offer() {
+  jq -c -L "$lib" -L "$fx" --argjson recs "$1" 'include "expand"; include "node"; include "graph";
+    include "reconcile";
+    full_input | .nodes | map(validate_node)
+    | {order: map(.id), idx: index_by_id, touched: {}, records: [], warnings: []}
+    | reduce $recs[] as $r (.; _offer($r)) | {records, warnings}' "$fx/gc65.json"
+}
+offer '[{"op":"reclaim","id":"gc65-done","from":"done","to":"ready","reason":"r"},
+        {"op":"reclaim","id":"gc65-claimed","from":"claimed","to":"ready","reason":"r"}]' >"$tmp/offer"
+eq "GC65 the rejected record is skipped, the other record is applied" \
+  '["gc65-claimed"]' "$(jq -c '.records | map(.id)' "$tmp/offer")"
+eq "GC65 the rejected record is a warning" \
+  '["skipped reclaim gc65-done: illegal transition \"gc65-done\": done -> ready by reconcile (r)"]' \
+  "$(jq -c '.warnings' "$tmp/offer")"
+# Record validation accepts a rule-3 record's `pr` and keeps it.
+offer '[{"op":"transition","id":"gc65-claimed","from":"claimed","to":"done","reason":"PR #7 merged into main","pr":7}]' >"$tmp/offer"
+eq "GC65 validation accepts a record with pr and keeps it" '[7]|[]' \
+  "$(jq -c '.records | map(.pr)' "$tmp/offer")|$(jq -c '.warnings' "$tmp/offer")"
 
 # --- input validation ----------------------------------------------------------------------
 if jq -c -L "$lib" -L "$fx" 'include "expand"; include "reconcile";
