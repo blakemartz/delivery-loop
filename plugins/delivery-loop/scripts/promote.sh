@@ -29,7 +29,11 @@
 # terminal hangup, `kill -- -pgid`) also kills that step's child, so its
 # outcome is re-read: a claim carrying this run's id is released; once the
 # gate has passed, an open promotion PR (head T into P, `forge.sh pr-find`)
-# keeps the claim. A PR that was opened is still reported on stdout.
+# keeps the claim. A PR that was opened is still reported on stdout when the
+# signal went to this script's PID; a process-group signal can kill the forge
+# call that would report it. With the forge unreachable, a group signal after
+# the PR is recorded cannot confirm it (`forge.sh pr-find` fails), so the claim
+# is released while the PR is open; the next promote.sh run adopts that PR.
 # SIGINT cannot be trapped when a non-interactive shell without job control
 # starts this script in the background (`promote.sh … &`): POSIX has such a
 # child ignore INT at entry, so INT is then a no-op. Use TERM, or start it
@@ -192,7 +196,8 @@ gated=1
 
 # 5. Green (GC51): open (or reuse) the promotion PR, then in-review. A signal
 # from the PR find on is held: the PR's existence decides the claim
-# (release_claim), and an opened PR is still reported.
+# (release_claim), and an opened PR is still reported (to a PID signal; see the
+# header for a process-group signal).
 defer=1
 pr_json=$(forge pr-find --head "$T") || release_fail "forge pr-find --head $T failed"
 if [ -n "$pr_json" ] && [ "$(jq -r .base <<<"$pr_json")" = "$P" ]; then

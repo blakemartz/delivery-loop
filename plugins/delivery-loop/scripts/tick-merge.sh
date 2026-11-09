@@ -54,6 +54,11 @@
 # until the merge is settled: a landed merge is reconciled and its `merged`
 # line printed, then the script exits 128+n. Before the merge request a
 # signal exits at once, stopping a running gate.
+# That holds for a signal sent to this script's PID. A signal sent to the whole
+# process group (Ctrl-C, a terminal hangup, `kill -- -pgid`) also kills the
+# forge call in flight, so during the post-merge re-read the script can exit
+# before printing `merged`. The task then stays `approved` until the next
+# tick's reconcile closes it from the merged PR (rule 3): self-healing.
 # SIGINT cannot be trapped when a non-interactive shell without job control
 # starts this script in the background (`tick-merge.sh … &`): POSIX has such
 # a child ignore INT at entry, so INT is then a no-op. Use TERM, or start it
@@ -193,8 +198,9 @@ now_base=$(git ls-remote origin "refs/heads/$base" | cut -f1) || now_base=""
 [ "$now_base" = "$gated_base" ] \
   || refuse "origin/$base moved from $gated_base to ${now_base:-?} while the gate ran; re-plan"
 
-# 5. Merge, pinned to the head, then verify. From the request on, a signal is
-# held until the merge is reported (a landed merge is never left unreported).
+# 5. Merge, pinned to the head, then verify. From the request on, a signal to
+# this PID is held until the merge is reported (a process-group signal can still
+# kill the re-read; reconcile then closes the task, see the header).
 defer=1
 merge_rc=0
 forge pr-merge "$pr" --method "$TASK_MERGE_METHOD" --sha "$sha" >&2 || merge_rc=$?

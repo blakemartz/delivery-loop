@@ -9,11 +9,16 @@ the loop here. For how the loop works and how a consumer uses it, read
 ## What this is
 
 A self-contained **agentic software-delivery loop** for Claude Code, shipped as a
-**plugin + marketplace**. Consumers write specs; the loop files them as a
-GitHub-Issues backlog, then agents claim → implement → adversarially review →
-patch → merge each task in its own git worktree, behind one per-repo correctness
-gate. There is no server and no database — state is the consumer's repo, its
-Issues, and `gh` + `git` + `jq`.
+**plugin + marketplace**. Consumers write specs; the loop turns them into a
+reviewed plan file and then a work graph — GitHub Issues
+(`GRAPH_BACKEND=github`) or JSON files in the clone (`GRAPH_BACKEND=local`) —
+and agents claim → implement → adversarially review → patch → merge each task in
+its own git worktree, behind one per-repo correctness gate. PRs live on a forge
+(`FORGE=github|gitlab|gitea`). Task PRs merge into a plan's target branch, which
+a promotion PR carries onward. There is no server and no database — state is the
+consumer's repo, its graph backend, its forge, and `git` + `jq` (+ `gh` or
+`curl`). Skills reach that state only through two seams, `graph.sh` and
+`forge.sh`.
 
 The system was extracted and **generalized** from the Lineage monorepo, where it
 runs live. Lineage is upstream: most changes originate there and get ported here
@@ -47,14 +52,30 @@ delivery-loop/
     ├── .claude-plugin/plugin.json        # the plugin manifest (version B — keep == A)
     ├── skills/                           # the 10 /delivery-loop:* skills (SKILL.md each)
     ├── scripts/                          # the engine the skills drive
-    │   ├── task-queue.sh                 # compute ready set; --fix reconciles labels
-    │   ├── claim-task.sh + lib/*.jq      # comment-ordered Lamport claim lock
-    │   ├── task-worktree.sh              # per-task isolated worktree lifecycle
-    │   ├── delivery-init.sh              # one-time consumer bootstrap (labels+conf+gate seed)
+    │   ├── graph.sh                      # the graph seam: ready/list/show/claim/transition/reconcile/migrate/…
+    │   ├── forge.sh                      # the forge seam: pr-create/pr-view/pr-list/pr-review/pr-merge/…
+    │   ├── tick-plan.sh                  # the tick's action plan (lib/tick-plan.jq); changes nothing
+    │   ├── tick-merge.sh                 # the tick's merge action: re-check, gate merged result, merge
+    │   ├── promote.sh                    # the tick's promote action: gate target, open promotion PR
+    │   ├── plan.sh                       # plan files: lint / render / apply
+    │   ├── task-worktree.sh              # per-task worktree, forked from the node's target branch
+    │   ├── task-queue.sh, claim-task.sh  # v0.1.4-compatible wrappers over graph.sh ready / claim
+    │   ├── delivery-init.sh              # one-time consumer bootstrap (seams+conf+gate seed+labels/store)
+    │   ├── delivery-config.sh            # print the resolved config; --check validates it
+    │   ├── backends/                     # graph-{github,local}.sh, forge-{github,gitlab,gitea}.sh (+ .jq),
+    │   │                                 #   forge-verdict.jq
     │   ├── lib/config.sh                 # resolve .claude/delivery.conf (defaults<file<env)
-    │   └── tests/                        # jq unit tests for the claim logic
+    │   ├── lib/worktree-gate.sh          # run a gate in a throwaway worktree (tick-merge, promote)
+    │   ├── lib/*.jq                      # pure policy core: node/pr/shape, graph, ready, transitions,
+    │   │                                 #   reconcile, tick-plan, claim-*, orphan-claims, plan-*
+    │   └── tests/                        # *-test.sh unit tests (gh/git shims) + fixtures/
     └── docs/                             # agentic_delivery_spec.md (design) + delivery_runbook.md (ops)
 ```
+
+The repo root also carries the dogfood artifacts (not shipped): `scripts/check.sh`
+(the gate) with its helpers `scripts/lib/{bash32,private-tmp}.sh` and their
+self-tests `scripts/tests/`, `.claude/delivery.conf`, `styleguides/`, and the
+specs under `docs/`.
 
 Two artifact types, two audiences:
 - **Skills** (`skills/*/SKILL.md`) are prompts an agent follows. Edit these to
@@ -70,13 +91,24 @@ Two artifact types, two audiences:
 built-in defaults → the consumer's `.claude/delivery.conf` → environment
 variables (for CI). Keys: `GATE_CMD`, `BASE_BRANCH`, `WORKTREE_SETUP_CMD`,
 `SPEC_SOURCES`, `STYLEGUIDES_DIR`, `MODULES`, `NOTIFY_APPROVE_CMD`,
-`NOTIFY_ESCALATE_CMD` (documented in the README table).
+`NOTIFY_ESCALATE_CMD`, `GRAPH_BACKEND`, `STATE_DIR`, `LOCK_STALE_SECONDS`,
+`LIST_LIMIT`, `FORGE`, `FORGE_URL`, `FORGE_REPO`, `PLANS_DIR`,
+`TASK_MERGE_METHOD`, `PROMOTE_MERGE_METHOD`, `PROMOTE_GATE_CMD` (documented in
+the README table and design spec §2.2). Environment-only keys (`_DL_ENV_ONLY`,
+never read from the file): `GITLAB_TOKEN`, `GITEA_TOKEN`, `GH_REVIEW_TOKEN`,
+`GITLAB_REVIEW_TOKEN`, `GITEA_REVIEW_TOKEN`, `LOCK_WAIT_SECONDS`.
+`dl_config_check` in `lib/config.sh` (`delivery-config.sh --check`) validates the
+combination and the jq version; every seam entry point runs it before any I/O.
 
-**Adding a config key touches four places** — miss one and it silently defaults:
-1. `lib/config.sh` — add to `_DL_VARS`, the `:` default, and the `export` list.
+**Adding a config key touches five places** — miss one and it silently defaults:
+1. `lib/config.sh` — add to `_DL_VARS`, the `:` default, and the `export` list
+   (or to `_DL_ENV_ONLY` for a secret or runtime knob).
 2. `delivery-init.sh` — scaffold it into the generated `.claude/delivery.conf`.
-3. `README.md` — the config table.
-4. Any skill that reads it — reference the key, never a hardcoded value.
+3. `delivery-config.sh` — it prints each file key explicitly; add the new one
+   there (env-only keys are never printed).
+4. `README.md` — the config table (and design spec §2.2's).
+5. Any skill that reads it — reference the key (via `delivery-config.sh`), never
+   a hardcoded value.
 
 ## Verify a change (the gate)
 
@@ -86,12 +118,19 @@ Before any commit, run the gate:
 bash scripts/check.sh
 ```
 
-It encodes this package's invariants: every script parses (`bash -n`), the
-claim-logic unit tests pass, the plugin manifest validates, **both manifests
-agree on the version**, and `grep -ri lineage plugins/` stays empty. A change
-that adds a new class of check belongs **in** `scripts/check.sh`, not in prose
-here — the gate is the single definition of "correct" (it is `GATE_CMD` in
-`.claude/delivery.conf`).
+It encodes this package's invariants: every script parses (`bash -n`); a
+**bash-3.2 lint** finds no bash-4+ construct (`declare -A`, `mapfile`,
+`readarray`, `${x,,}`, `${x^^}`, `&>>`, `|&`, `coproc`) under
+`plugins/delivery-loop/scripts/`; **every** `plugins/delivery-loop/scripts/tests/*-test.sh`
+passes, discovered by glob (a new test needs no gate edit), each run under a
+fresh private `TMPDIR` it must leave empty (a leaked temp file fails the gate);
+the gate's own self-tests pass; the plugin manifest validates; **both manifests
+agree on the version**; and the leak check `grep -ri lineage plugins/` stays
+empty. The jq version rule (≥ 1.7, never 1.8.2) is enforced by `dl_config_check`
+and covered by `tests/config-check-test.sh`; the bash-3.2 container stage
+installs a jq < 1.8 for the same reason. A change that adds a new class of check
+belongs **in** `scripts/check.sh`, not in prose here — the gate is the single
+definition of "correct" (it is `GATE_CMD` in `.claude/delivery.conf`).
 
 The gate also re-runs the unit tests under a real **bash 3.2**: set
 `DL_BASH32=/path/to/bash-3.2` (a bare name resolves via PATH; it is linked by

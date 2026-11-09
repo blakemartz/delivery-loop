@@ -116,6 +116,32 @@ local mode, and new node kinds beyond `task | epic | promote | external`.
    (prose, a checklist item `- [ ] …` or `1. [ ] …`, a code span), and a
    blockquote line (`> Depends-on: #5`, usually quoted from elsewhere). The
    same line rule applies to `Part of epic #E` for `migrate`.
+8. One `children(epic)` set serves both the started-epic flag and epic
+   completion (§4.1, §5 rule 7). v0.1.4 used two sets: the broad `[Ee]pic #E`
+   body match (plus the checklist) for *started*, but only `Part of epic #E`
+   (plus the checklist) for *auto-close*. So "parity with v0.1.4" holds for the
+   started flag, not for completion: an open unlabelled issue that says
+   `Epic #9` but not `Part of epic #9` (an `external` child) now keeps #9 from
+   auto-closing, where v0.1.4 would have closed it. It errs safe, and the ready
+   set is unaffected.
+9. Merged-PR closing (rule 3) acts only on **agent** PRs, one task per PR (the
+   §4.3 linkage). v0.1.4's H0 step closed *every* issue named by a closing
+   keyword in *any* merged PR into a non-default `BASE_BRANCH`. Human PRs into
+   the *default* branch are unaffected (GitHub closes those natively). A human
+   PR into a non-default base that `Closes` delivery tasks no longer closes
+   them: close them by hand, or label the PR `agent-authored`.
+10. `claim-task.sh` on a `needs-human` issue labelled `status:ready` with no
+    assignee: v0.1.4 claimed it (exit 0); v0.2 refuses (exit 1, nothing
+    written) through the `graph.sh claim` policy pre-check. Safer, consistent
+    with v0.1.4's "never auto-claimable" rule for `needs-human`, and unreachable
+    from `next-task`, which only claims from the ready set.
+11. A **newer** merged PR closes a reopened task (GC72). v0.1.4 stopped at any
+    `AUTO-CLOSE: PR #` marker on the issue, whichever PR it named.
+
+**Parity notes** (not behavior exceptions, but observable differences): reclaiming
+a stale agent claim now clears every `status:*` label (v0.1.4 left `status:ready`
+set), and the wording of the `fix:` lines `task-queue.sh --fix` prints changed;
+their prefix and stream (stderr) are preserved.
 
 ## 3. Architecture
 
@@ -271,9 +297,10 @@ A4) and are used by reconcile, tick-plan and plan lint:
 - As a dep, an external is satisfied iff it is `done`. An open external
   (`blocked`) or a `cancelled` one keeps the dependent blocked (GC68, GC2). That is
   v0.1.4's "any CLOSED dep satisfies", less §2 exception 1.
-- They count toward `children(epic)` exactly as v0.1.4 counted closed and open
-  issues. A `done`/`cancelled` external child makes its epic started, and an open
-  one keeps the epic from completing (reconcile rule 7).
+- They count toward `children(epic)` as v0.1.4 counted closed and open issues
+  for the started flag. A `done`/`cancelled` external child makes its epic
+  started, and an open one keeps the epic from completing (reconcile rule 7),
+  which v0.1.4's narrower auto-close set did not always see (§2 exception 8).
 
 **`ready.jq`.** Input: all nodes. Output: the ready set, best first, as JSON lines of
 `{id, title, unblocks, size, started, epic, module, target_branch}`.
@@ -388,8 +415,10 @@ reads the PR from the record instead of parsing the reason. Other records have n
    gets exactly one `ping` record, emitted only when `pinged_at` is null (§4.1).
    Human claims are never released (GC44).
 7. **Epics done.** An open epic with ≥ 1 child is set to `done` when every child is
-   `done` or `cancelled` (GC45). Parity with v0.1.4, which closed an epic when every
-   child was CLOSED.
+   `done` or `cancelled` (GC45). v0.1.4 closed an epic when every child was
+   CLOSED, but counted children for completion through `Part of epic #E` only;
+   v0.2's single `children(epic)` also counts a `[Ee]pic #E` mention (§2
+   exception 8).
 8. **Warnings, never mutations,** printed on stderr:
    - `blocked on cancelled dep <id>`
    - `unknown dep <id>`
@@ -470,20 +499,30 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
 | `comment <id> <text>` | Durable note on the node (github: issue comment; local: journal event). |
 | `link <id> <dep-id> [via]` | Adds a blocking edge. github: `gh issue edit <id> --add-blocked-by <dep>`; `via` is recorded as a `Depends-on: #<dep> (via: …)` body line, because native links carry no label. local: appends to `deps`. |
 | `flag <id> needs-human on\|off` | Sets or clears `needs_human` (github: the `needs-human` label). |
+| `parent <id> <epic>` (github) | Sets the issue's native parent (`gh issue edit --parent`). Idempotent: a no-op when it already has that parent; refuses (exit 1, nothing written) to replace a different existing parent, since re-parenting is a human's call. Needs native relations (gh ≥ 2.94). Used by `migrate --apply`. |
+| `migrate-plan` (github) | The edits `migrate` would make, as JSON; read-only. |
+| `reconcile <record>` | Applies one fix record as a compare-and-set against the node as the plan saw it; exit 4 when the node changed. |
+| `unlock --force` (local) | Operator cleanup of a lock no process holds (§6.3). Not routed by `graph.sh`. |
 
 `graph.sh` adds:
 - `ready`;
 - `reconcile [--fix]`;
 - `transition <id> <to> [--actor …]`;
 - `claim <id> <actor>` (policy pre-check, then the backend's atomic `claim`);
-- `migrate`, github only (§6.2);
+- `migrate [--apply]`, github only (§6.2): a dry run unless `--apply` is passed;
 - `export`, which dumps nodes as JSON for backup and debugging.
 
 ### 6.2 `github` backend
 
 - **Reads** one paginated `gh issue list --state all --json
-  number,title,state,stateReason,labels,assignees,body,createdAt,updatedAt,blockedBy,parent,comments`
-  with `--limit "$LIST_LIMIT"`. If the result count equals `LIST_LIMIT`, it exits 3
+  number,title,state,stateReason,labels,assignees,body,createdAt,updatedAt,blockedBy,parent,closedByPullRequestsReferences,comments`
+  with `--limit "$LIST_LIMIT"`. `closedByPullRequestsReferences` only selects
+  which issues to look up for GC75: an OPEN delivery issue with a closing-PR
+  reference may have been closed by a closing keyword and reopened. The
+  evidence is the issue timeline's `ClosedEvent.closer` (`gh api graphql`),
+  verified read-only on public reopened issues: the reference list survives a
+  reopen but also lists still-open linked PRs, and PRs into non-default bases
+  never appear in it. If the result count equals `LIST_LIMIT`, it exits 3
   naming the key (GC10). v0.1.4 silently truncated at 500/1000 and read out-of-window
   deps as OPEN. `gh pr list` is never called without an explicit `--limit`; v0.1.4
   used the default 30, which blinded the stale-claim reaper (GC33).
@@ -624,8 +663,18 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
   - `done`/`cancelled` are issue close with `--reason completed|"not planned"`.
 - **`graph.sh migrate`** is idempotent. For every open task, it adds a native
   blocked-by for each legacy `Depends-on:` ref and sets the native parent from
-  `Part of epic #E`, both read at line start only (trailer block, above). Text
-  lines are left in place (GC48).
+  `Part of epic #E` (through the `parent` primitive, §6.1), both read at line
+  start only (trailer block, above). Text lines are left in place (GC48). It is
+  a **dry run by default**: it prints each planned edit as a JSON line
+  (`{op: "link", id, dep}` / `{op: "parent", id, epic}`) and writes nothing.
+  Only `graph.sh migrate --apply` writes, so GC48's "first run" means the first
+  `--apply`.
+  - Operational notes (runbook §10.1): run `--apply` against a live repo only
+    with line-start `Depends-on:` parsing in place (#77, merged in B1c); before
+    it, mid-line prose such as "verify `Depends-on: #1` handling" would become a
+    real native edge. A `Part of epic` target is not verified to be an epic, so
+    a parent cycle could wedge `--apply`; GitHub's 100-sub-issue limit is not
+    pre-checked by `migrate` (`plan.sh apply` checks it).
   - It refuses to exceed 50 blockers per issue: it prints the offender and exits 1.
     The cap is from GitHub's changelog of 2025-08-21: "You can link up to 50 issues
     for each relationship type". It is not in the REST reference, so it is enforced
@@ -717,6 +766,10 @@ are derived on read (`list`, `show`) from the node's journal `comment` events, a
 - Every mutation appends `{ts, actor, run, op, id, from, to, body}` to `events.jsonl`
   inside the same lock. `op` is one of `create` | `claim` | `release` | `reclaim` |
   `transition` | `comment` | `link` | `apply` | `lock-broken`.
+- There is no `update` or `flag` op: both journal as `transition`. `from`/`to`
+  are the node's status before/after, so `from == to` when the status did not
+  change. A `flag`'s body is `needs-human on` / `needs-human off`; an
+  `update`'s body is the patch.
 - The epic files are the source of truth. The journal is the audit trail, and in
   v0.3 the metrics input. `graph.sh show <id> --events` prints the node's last 10
   events after the node (opt-in, so a plain `show` stays exactly one node). Its
@@ -800,13 +853,24 @@ not in the docs.
 | `pr-review` approve | `gh pr review --approve` | `POST /merge_requests/:iid/approve` with `sha` (409 if not head). The endpoint takes no body, so the verdict body (with `Reviewed-Head:`) is **also** posted as a note. | `POST /pulls/{n}/reviews` `event=APPROVED, commit_id` |
 | `pr-review` request-changes | `--request-changes` | **No REST endpoint.** Always comment form: a note whose body starts `## Adversarial review — verdict: REQUEST_CHANGES` | `event=REQUEST_CHANGES` |
 | self-review rejection | GitHub rejects on own PR | author approval is blocked by default (the setting is Premium+; behavior on Free is UNVERIFIED) | 422 "approve/reject your own pull is not allowed" (src); `COMMENT` is allowed |
-| `pr-reviews` | `reviews` | `GET .../approvals` (`approved_by[].user.username`) + `GET .../notes` (verdict-prefixed, non-`system`) | `GET /pulls/{n}/reviews` (`state, user.login, commit_id, stale, dismissed`) |
+| `pr-reviews` | formal `reviews`, then every PR comment that is a verdict (below) | `GET .../approvals` (`approved_by[].user.username`) + `GET .../notes` (verdict-headed, non-`system`) | `GET /pulls/{n}/reviews` (`state, user.login, commit_id, stale, dismissed`), then every issue comment that is a verdict (below) |
 | `pr-comment(s)` | `gh pr comment` / `comments` | `POST/GET .../notes` (`sort=asc`) | `POST/GET /issues/{n}/comments` (no documented pagination: use `since`) |
 | `pr-merge` | `gh pr merge --squash\|--merge --match-head-commit S` | `PUT .../merge` `squash, should_remove_source_branch, sha` (405 not mergeable, 409 sha mismatch) | `POST /pulls/{n}/merge` `Do=squash\|merge, delete_branch_after_merge, head_commit_id` (409 conflicts / head out of date) |
 | `pr-set-base` | `gh pr edit --base` | `PUT /merge_requests/:iid` `target_branch` | `PATCH /pulls/{n}` `base` |
 | `pr-files` / `pr-diff` | `gh pr diff --name-only` / `gh pr diff` | `GET .../diffs` (`new_path`; `/changes` is deprecated) | `GET /pulls/{n}/files` / `GET /pulls/{n}.diff` |
 | `ci-failures` | `gh run view --log-failed` | job traces of the head pipeline (best effort) | exit 4 (unsupported) |
 | auth header | gh auth | `PRIVATE-TOKEN: $GITLAB_TOKEN` | `Authorization: token $GITEA_TOKEN` |
+
+**Comment-form verdicts (D4).** Every adapter shares one rule,
+`backends/forge-verdict.jq`: a comment (a GitLab note) is a verdict when its first
+non-blank line matches `^## .*verdict: (APPROVE|REQUEST_CHANGES|COMMENT)` (any
+case); `verdict` comes from that heading and `commit` from the body's
+`Reviewed-Head:` trailer. So `pr-reviews` returns the comment fallback on github
+and gitea too, not only formal reviews. When posting a comment-form verdict, the
+github and gitea fallbacks prefix `## Adversarial review — verdict: <VERDICT>`
+unless the body's first non-blank line already is a heading naming that verdict;
+gitlab, where every verdict is a note, refuses a body whose heading names a
+different verdict.
 
 **Adapter rules from the verified contracts:**
 
@@ -929,7 +993,9 @@ the graph itself.
 
 - **Targets.** Each node has a `target_branch` (§4.1), default `BASE_BRANCH`.
   `task-worktree.sh` forks from `origin/<target_branch>`, `next-task` and
-  `patch-task` rebase onto it, and `forge.sh pr-create --base <target_branch>`.
+  `patch-task` catch up with it by **merging** `origin/<target_branch>` into the
+  task branch (never rebasing, never force-pushing; F2), and `forge.sh pr-create
+  --base <target_branch>`.
 - **Missing target.** If the target is missing at worktree time, the script exits 1
   with an error that names `plan.sh apply` (GC38).
 - **Merge methods.** Task PRs merge with `TASK_MERGE_METHOD` (default `squash`).
@@ -951,7 +1017,10 @@ the graph itself.
      `NOTIFY_ESCALATE_CMD`, release the claim, and exit 1 (GC50).
   5. If it is green:
      - open a PR with head T, base P, the title `Promote T → P`, a body listing the
-       plan's done tasks, and `Delivery-Task: <promote id>`;
+       plan's done tasks, and `Delivery-Task: <promote id>`. As implemented (E4),
+       it is created with `--label agent-authored`, which makes it an agent PR
+       to reconcile (rules 3 and 4); an open PR already on head T into P is
+       reused instead;
      - set the node to `in-review` (GC51).
 - **Merging a promotion PR.**
   - A human merges it, with `PROMOTE_MERGE_METHOD` (default `merge`, which keeps
@@ -966,15 +1035,15 @@ the graph itself.
 
 | Skill | Change |
 |---|---|
-| `delivery-tick` | Reconcile (`graph.sh reconcile --fix`) → `tick-plan.sh [--parallel N] [--auto-merge]`. Merge actions run via `tick-merge.sh <pr> <sha>`. It re-reads the PR and re-applies the merge rule from §5. It exits 1 without merging if the PR is no longer eligible, for example because the head moved or checks went red (GC52). Otherwise it merges via `forge.sh pr-merge --method $TASK_MERGE_METHOD --sha`, then reconciles. Promote actions run via `promote.sh`. Agents are dispatched only for `patch`/`rebase`/`review`/`start`. The prose priority rules are deleted and replaced by "execute the plan's actions in order". |
+| `delivery-tick` | Reconcile (`graph.sh reconcile --fix`) → `tick-plan.sh [--parallel N] [--auto-merge]`. Merge actions run via `tick-merge.sh <pr> <sha>`. It re-reads the PR and re-applies the merge rule from §5. It exits 1 without merging if the PR is no longer eligible, for example because the head moved or checks went red (GC52). Otherwise it merges via `forge.sh pr-merge --method $TASK_MERGE_METHOD --sha`, then reconciles. As implemented (E4, E4b), it also runs `GATE_CMD` on the **merged result** (a fresh worktree of `origin/<base>` with the head merged in, config keys unset so the tree's own conf governs) and refuses if the base moved meanwhile. A red or conflicting merged result is a structured outcome on stdout: a `rebase` action for the tick to dispatch, or, at the patch budget, its own escalation (needs-human, a `MERGE-NEEDS-HUMAN:` comment, `NOTIFY_ESCALATE_CMD`) reported as `{pr, id, result: "needs-human", reason}`. Promote actions run via `promote.sh`. Agents are dispatched only for `patch`/`rebase`/`review`/`start`. The prose priority rules are deleted and replaced by "execute the plan's actions in order". |
 | `next-task` | `graph.sh ready`/`claim`/`show --format md`/`transition`. The PR goes through `forge.sh pr-create --base <target_branch>`, with a body carrying `Delivery-Task:` and, on the local backend, the full task contract. |
 | `review-task` | Reads the contract via `graph.sh show`, PR state via `forge.sh pr-view`/`pr-diff`. Posts via `forge.sh pr-review --sha <head_sha>` and verifies via `pr-reviews`. Verdict of record: `graph.sh transition`. |
-| `patch-task` | `forge.sh pr-view`/`pr-comments`/`ci-failures`. Rebases onto `target_branch`. Iteration counter unchanged (a PR comment). |
+| `patch-task` | `forge.sh pr-view`/`pr-comments`/`ci-failures`. Catches up with `target_branch` by **merging** `origin/<target_branch>` into the task branch, never rebasing, and pushes plainly, **never force-pushing** (F2; the tick's `rebase` action is carried out the same way). Iteration counter unchanged (a PR comment). |
 | `deliver-task` | Passes node ids, not issue numbers. Otherwise unchanged. |
 | `decompose` | §8.5. |
 | `task-status` | `graph.sh list` + `forge.sh pr-list` → board. `--graph` prints Mermaid. `--reclaim` → `graph.sh reconcile --fix`. |
 | `init` | Asks for or detects `GRAPH_BACKEND` and `FORGE`. The local backend skips labels and creates `STATE_DIR`. Checks forge auth via `forge.sh whoami`. gh is required only when either seam is github. Its repo-settings advice keeps merge commits **enabled**, because promotion merges with `PROMOTE_MERGE_METHOD=merge`. v0.1.4 advised `--enable-merge-commit=false`. |
-| `author-spec` | Board reads via `graph.sh`. Docs-review verdict via `forge.sh pr-review <pr> comment --sha <head> --body-file F`. |
+| `author-spec` | Board reads via `graph.sh`. Docs-review verdict via `forge.sh pr-review <pr> comment --sha <head> --body-file F`. As implemented (F3), the body's first line is the plain-text `Docs-review verdict: APPROVE` / `Docs-review verdict: REQUEST_CHANGES`, never a `## … verdict:` heading: the adapter heads the comment `## Adversarial review — verdict: COMMENT` and appends `Reviewed-Head:` (gitlab refuses a `comment` whose heading names another verdict). |
 | `author-styleguides` | No change. |
 
 ## 11. Configuration
@@ -1021,6 +1090,9 @@ message:
   1.8.3 or later). A version string that does not parse as a release is accepted
   without a message. Alpine's jq 1.6 build reports `jq-master-…`, so it is not
   caught. The gate's bash 3.2 container stage keeps its jq 1.7.1 pin.
+  Deferred follow-up (#62): once jq 1.8.3 ships, or if 1.8.2 must be supported,
+  list full include chains (leaves last) at every nested-module call site, and
+  add a gate run under jq 1.8.x that actually calls into each module.
 
 `graph.sh`, `forge.sh`, `tick-plan.sh`, `plan.sh` and `promote.sh` each run the
 check once at start-up, and exit 1 on an invalid combination before doing any I/O
