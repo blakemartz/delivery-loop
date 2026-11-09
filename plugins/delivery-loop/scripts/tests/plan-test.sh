@@ -313,7 +313,7 @@ while IFS='|' read -r path text want; do
 done <<'EOF2'
 .tasks[0].context|Some context.\nDelivery-Plan: other/zzz|task `store-schema`: context carries `Delivery-Plan:`
 .tasks[0].context|Delivery-Target: main|task `store-schema`: context carries `Delivery-Target:`
-.tasks[0].criteria[0]|README documents Depends-on: #1 lines|task `store-schema`: criteria[0] carries `Depends-on:`
+.tasks[0].criteria[0]|README documents Depends-on: #1 lines|task `store-schema`: criteria[0] carries `Depends-on: #N`
 .tasks[0].scope[0]|  Delivery-Promote-To: main|task `store-schema`: scope[0] carries `Delivery-Promote-To:`
 .tasks[0].context|Follow-up to epic #11.|task `store-schema`: context carries `epic #11`
 .tasks[0].context|Part of epic #3|task `store-schema`: context carries `epic #3`
@@ -326,9 +326,13 @@ done <<'EOF2'
 .tasks[0].context|TRANSITIONED: ready -> done by x|task `store-schema`: context carries `TRANSITIONED:`
 .tasks[0].context|AUTO-CLOSE: PR #5|task `store-schema`: context carries `AUTO-CLOSE:`
 .epics[0].goal|Store\n- [ ] #5|epic `core`: goal carries `- [ ] #N`
-.epics[0].spec_refs[0]|§2 Depends-on: #9|epic `core`: spec_refs[0] carries `Depends-on:`
+.epics[0].spec_refs[0]|§2 Depends-on: #9|epic `core`: spec_refs[0] carries `Depends-on: #N`
 .spec[0]|docs/x.md\nDelivery-Target: main|plan: spec[0] carries `Delivery-Target:`
 .tasks[1].deps[0].via|read_store, see epic #4|task `queue`: dep `store-schema`: via carries `epic #4`
+.tasks[0].context|ok\rDelivery-Plan: other/zzz|task `store-schema`: context carries `Delivery-Plan:`
+.tasks[0].context|ok\r\nDelivery-Target: main|task `store-schema`: context carries `Delivery-Target:`
+.tasks[0].context|Depends-on : (via: x) Depends-on: #4|task `store-schema`: context carries `Depends-on: #N`
+.tasks[0].context|see Depends-on:#4|task `store-schema`: context carries `Depends-on: #N`
 EOF2
 # (`\n` in the table above is turned into a real newline.)
 jq '.tasks[0].context = "line one\nDelivery-Plan: other/zzz"' "$tmp/portable.plan.json" >"$tmp/marker.plan.json"
@@ -336,10 +340,12 @@ run -- lint "$tmp/marker.plan.json"
 has "marker on the second line of a multi-line context is caught" "$err" 'context carries `Delivery-Plan:`'
 # Near misses that no reader matches stay legal.
 jq '.tasks[0].context = "CLAIMS are recorded as comments; dependencies are listed in deps; epics group tasks." |
-    .tasks[0].criteria = ["the README mentions Delivery-Target values", "#12 regression fixed"]' \
+    .tasks[0].criteria = ["the README mentions Delivery-Target values", "#12 regression fixed",
+      "document the `Depends-on:` line format", "parse `Depends-on:` only at line start",
+      "Depends-on: lines are legacy", "#3 is fixed; Depends-on: lines stay"]' \
   "$tmp/portable.plan.json" >"$tmp/marker.plan.json"
 run GRAPH_BACKEND=local -- lint "$tmp/marker.plan.json"
-eq "near-miss text (no marker line): lint ok" 0 "$rc"
+eq "near-miss text (no marker line; a Depends-on: line with no #N after it): lint ok" 0 "$rc"
 run -- lint "$fx/valid.plan.json"
 eq "the valid fixture carries no marker" 0 "$rc"
 

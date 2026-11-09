@@ -43,6 +43,9 @@ if [ "\${1:-}" = push ]; then
     *) echo "git shim: refusing to push to \$url (not a test remote)" >&2; exit 97 ;;
   esac
   [ ! -f "$tmp/fail-push" ] || { echo "git shim: injected push failure" >&2; exit 1; }
+  # A push that exits 0 but leaves origin without the branch (as a ref-update
+  # error such as \`cannot lock ref\` can): apply must re-read origin.
+  [ ! -f "$tmp/silent-push" ] || { echo "error: cannot lock ref (git shim: injected)" >&2; exit 0; }
 fi
 exec "$realgit" "\$@"
 EOF
@@ -59,7 +62,7 @@ hasnt() { if printf '%s\n' "$2" | grep -qF -- "$3"; then fail "$1" "unexpected: 
 # fresh_repo [branch…]: a new bare origin holding main (+ the given branches)
 # and a fresh clone at $repo; resets the shim state and logs.
 fresh_repo() {
-  rm -rf "$tmp/origin.git" "$tmp/repo" "$tmp/seed" "$st" "$tmp/fail-push"
+  rm -rf "$tmp/origin.git" "$tmp/repo" "$tmp/seed" "$st" "$tmp/fail-push" "$tmp/silent-push"
   mkdir -p "$st"; echo '[]' >"$st/board.json"; echo '[]' >"$st/prs.json"; : >"$st/log"
   "$realgit" init -q --bare "$tmp/origin.git"
   "$realgit" -C "$tmp/origin.git" symbolic-ref HEAD refs/heads/main
@@ -187,7 +190,11 @@ for case in 'release/x..y|target_branch `release/x..y` is not a valid branch nam
             '@|target_branch `@` is not a valid branch name' \
             'refs/heads/x|target_branch `refs/heads/x` is not a valid branch name' \
             'refs/remotes/origin/qa|target_branch `refs/remotes/origin/qa` is not a valid branch name' \
-            'origin/main|target_branch `origin/main` is not a valid branch name'; do
+            'origin/main|target_branch `origin/main` is not a valid branch name' \
+            'HEAD/x|target_branch `HEAD/x` is not a valid branch name' \
+            'head/x|target_branch `head/x` is not a valid branch name' \
+            'Head/y|target_branch `Head/y` is not a valid branch name' \
+            'head|target_branch `head` is not a valid branch name'; do
   b="${case%%|*}" want="${case#*|}"
   jq --arg b "$b" '.target_branch = $b' "$demo" >"$tmp/bad.plan.json"
   refused "branch name $b" "$tmp/bad.plan.json" "$want"
@@ -199,6 +206,13 @@ refused "promote_to starting refs/" "$tmp/bad.plan.json" 'promote_to `refs/heads
 jq 'del(.promote_to)' "$demo" >"$tmp/bad.plan.json"
 refused "BASE_BRANCH @ (the source when promote_to is unset)" "$tmp/bad.plan.json" \
   'BASE_BRANCH `@` is not a valid branch name' BASE_BRANCH=@
+jq '.promote_to = "HEAD/main"' "$demo" >"$tmp/bad.plan.json"
+refused "promote_to under HEAD/" "$tmp/bad.plan.json" 'promote_to `HEAD/main` is not a valid branch name'
+jq '.promote_to = "head/main"' "$demo" >"$tmp/bad.plan.json"
+refused "promote_to under head/ (case-insensitive)" "$tmp/bad.plan.json" 'promote_to `head/main` is not a valid branch name'
+jq 'del(.promote_to)' "$demo" >"$tmp/bad.plan.json"
+refused "BASE_BRANCH under HEAD/" "$tmp/bad.plan.json" 'BASE_BRANCH `HEAD/main` is not a valid branch name' BASE_BRANCH=HEAD/main
+refused "BASE_BRANCH under Head/ (case-insensitive)" "$tmp/bad.plan.json" 'BASE_BRANCH `Head/main` is not a valid branch name' BASE_BRANCH=Head/main
 jq '.tasks[2].deps[0].via = "lib/store.jq\nread_store"' "$demo" >"$tmp/bad.plan.json"
 refused "a multi-line via" "$tmp/bad.plan.json" 'the via of dep `store-schema` must be one line to apply'
 jq '.tasks[2].context = "Order it.\nDelivery-Plan: other/zzz"' "$demo" >"$tmp/bad.plan.json"
@@ -228,8 +242,14 @@ rm -rf "$repo/plans"
 touch "$tmp/fail-push"
 pushed="$push"
 refused "a failed git push" "$demo" "git push failed"
-pushed=""
 rm -f "$tmp/fail-push"
+touch "$tmp/silent-push"
+refused "a git push that exits 0 but creates no branch" "$demo" \
+  "git push reported success but origin does not hold refs/heads/release/x"
+eq "silent push: origin still has no release/x" "missing" \
+  "$("$realgit" -C "$tmp/origin.git" rev-parse --verify --quiet refs/heads/release/x || echo missing)"
+pushed=""
+rm -f "$tmp/silent-push"
 # A local branch named origin/main, on another commit, would win `origin/main`.
 "$realgit" -C "$repo" branch -q origin/main "$("$realgit" -C "$repo" -c user.name=t -c user.email=t@example.com \
   commit-tree -m shadow "$("$realgit" -C "$repo" rev-parse 'HEAD^{tree}')")"
@@ -378,7 +398,7 @@ marker_refused "context Delivery-Plan: other/zzz" '.tasks[0].context = "Define t
 marker_refused "context Delivery-Target: main" '.tasks[0].context = "Delivery-Target: main"' \
   'task `store-schema`: context carries `Delivery-Target:`'
 marker_refused "criterion mentioning Depends-on: #1" '.tasks[3].criteria = ["README documents Depends-on: #1 lines"]' \
-  'task `user-guide`: criteria[0] carries `Depends-on:`'
+  'task `user-guide`: criteria[0] carries `Depends-on: #N`'
 marker_refused "epic goal naming another epic" '.epics[1].goal = "Follows epic #42"' \
   'epic `ui`: goal carries `epic #42`'
 

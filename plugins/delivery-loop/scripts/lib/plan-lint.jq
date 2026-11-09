@@ -69,8 +69,9 @@ def _is_text: type == "string" and test("\\S");
 #   backends/graph-github.jq  _trailer: a line starting `Delivery-Target:`,
 #                             `Delivery-Plan:`, `Delivery-Promote-To:` (the
 #                             first such line wins over the appended trailer);
-#                             _text_edges: every `#N` on any line containing
-#                             `Depends-on:`; gh_epic: `[Ee]pic #N` anywhere in
+#                             _text_edges: every `#N` after `Depends-on:` on a
+#                             line (so a `Depends-on:` line with no `#N` after
+#                             it is no edge and passes); gh_epic: `[Ee]pic #N` anywhere in
 #                             the body (so `Part of epic #N` too); gh_checklist:
 #                             a `- [ ] #N` / `* [x] #N` line (an epic's members).
 #   backends/forge-github.jq  `Delivery-Task:` and `Reviewed-Head:` lines.
@@ -80,14 +81,16 @@ def _is_text: type == "string" and test("\\S");
 #                             `AUTO-CLOSE:`, `TRANSITIONED:`: read from comments
 #                             only today, refused anyway so plan text never
 #                             reads as a protocol record wherever it is copied.
-# Start-anchored markers also match after leading whitespace (stricter than
-# the readers, never looser). Lines are split first: Oniguruma `^` does not
-# reliably anchor at line boundaries.
+# Start-anchored markers also match after leading whitespace, and
+# `Depends-on:` refuses any `#N` after it, even inside a `(via: …)` (stricter
+# than the readers, never looser). Lines are split first, on LF, CRLF and a
+# lone CR (a lone CR normalised to LF anywhere would start a new line):
+# Oniguruma `^` does not reliably anchor at line boundaries.
 def plan_text_markers:
-  ( split("\n")[] | rtrimstr("\r") ) as $l
+  splits("[\r\n]") as $l
   | ( ($l | capture("^[ \t]*(?<m>Delivery-Target|Delivery-Plan|Delivery-Promote-To|Delivery-Task|Reviewed-Head|AUTO-CLOSE|TRANSITIONED)[ \t]*:") | "\(.m):"),
       ($l | capture("^[ \t]*(?<m>CLAIM-WITHDRAWN|CLAIM|RECLAIMED|STALE-CLAIM-PING)([ \t:]|$)") | .m),
-      ($l | select(test("Depends-on[ \t]*:")) | "Depends-on:"),
+      ($l | select(test("Depends-on[ \t]*:.*#[0-9]")) | "Depends-on: #N"),
       ($l | capture("(?<m>[Ee]pic #[0-9]+)") | .m),
       ($l | select(test("^[ \t]*[-*] \\[[ xX]\\][ \t]*#[0-9]+")) | "- [ ] #N") );
 

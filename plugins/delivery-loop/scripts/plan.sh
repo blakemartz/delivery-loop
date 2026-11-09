@@ -15,12 +15,13 @@
 #                    1. lint, against the full `graph.sh list` (so `#N` deps
 #                       resolve only against that list); lint also refuses
 #                       plan text carrying a line a backend would read back
-#                       as a marker (`Delivery-Plan:`, `Depends-on:`, …), so
+#                       as a marker (`Delivery-Plan:`, `Depends-on: #N`, …), so
 #                       no plan text can rewrite a node's metadata;
 #                    2. `git check-ref-format --branch` on target_branch,
 #                       promote_to and the branch a missing target is cut from
 #                       (output must equal input, so `@{-1}` never expands),
-#                       and none of them `HEAD`, `@`, `refs/…` or `origin/…`;
+#                       and none of them `@`, `HEAD` or `HEAD/…` (any case),
+#                       `refs/…` or `origin/…`;
 #                    3. lib/plan-apply.jq preflight: plan_ref collisions, local
 #                       id reuse across plans (GC35), the promote id, one-line
 #                       titles, the 50-blocker cap on github;
@@ -30,7 +31,9 @@
 #                       <field>` on stderr and is left unchanged (GC54);
 #                    5. a target_branch missing on origin is created from
 #                       origin/<promote_to or BASE_BRANCH>: the exact `git push`
-#                       is printed, then run (GC53);
+#                       is printed, then run (GC53); a failed push, or one
+#                       origin does not then show at the pushed commit
+#                       (`git ls-remote`), stops apply before any node;
 #                    6. `graph.sh create` for each missing node: epics, tasks
 #                       in topological order (github: `--parent` and
 #                       `--blocked-by`, GC36), then the promote node (deps = the
@@ -177,18 +180,21 @@ source_branch="${promote_to:-$BASE_BRANCH}"
 
 # Branch names, before anything is created or pushed. `--branch` prints the
 # name it resolved; it must be the name itself (`@{-1}` would expand). Some
-# names it accepts are refused too: `@` (HEAD's shorthand, like HEAD), and a
-# name starting `refs/` or `origin/`, which would be pushed as
+# names it accepts are refused too: `@` (HEAD's shorthand); a first path
+# component of HEAD in any case (`HEAD/x` pushed as refs/heads/HEAD/x collides
+# with refs/remotes/origin/HEAD in every clone, so `git clone`/`git fetch` of
+# origin break; `head/x` does the same on a case-insensitive filesystem); and
+# a name starting `refs/` or `origin/`, which would be pushed as
 # refs/heads/refs/… or refs/heads/origin/… and shadow other refs.
 bad_branches=0
 check_branch() {
   local what="$1" b="$2" norm=""
   case "$b" in
-    -*|HEAD|@|refs/*|origin/*|*@\{*) norm="" ;;
+    -*|@|[Hh][Ee][Aa][Dd]|[Hh][Ee][Aa][Dd]/*|refs/*|origin/*|*@\{*) norm="" ;;
     *) norm="$(git check-ref-format --branch "$b" 2>/dev/null)" || norm="" ;;
   esac
   if [ "$norm" != "$b" ]; then
-    echo "plan.sh: $file: error: apply: $what \`$b\` is not a valid branch name (git check-ref-format --branch; not @, refs/…, origin/…)" >&2
+    echo "plan.sh: $file: error: apply: $what \`$b\` is not a valid branch name (git check-ref-format --branch; not @, HEAD[/…] in any case, refs/…, origin/…)" >&2
     bad_branches=1
   fi
 }
@@ -226,7 +232,15 @@ case "$rc" in
     echo "plan.sh: target branch $target is missing on origin; creating it from origin/$source_branch:"
     echo "git push origin origin/$source_branch:refs/heads/$target"
     git push origin "origin/$source_branch:refs/heads/$target" </dev/null \
-      || die "git push failed: target branch $target not created (nothing else written)" ;;
+      || die "git push failed: target branch $target not created (nothing else written)"
+    # The push's exit status is not the whole result (a ref-update error on
+    # either side can still exit 0): origin must now hold the target at the
+    # commit pushed, or nothing is created.
+    remote_heads="$(git ls-remote --heads origin "refs/heads/$target" </dev/null)" \
+      || die "git push: cannot re-read origin to confirm target branch $target (nothing else written)"
+    pushed_at="$(printf '%s\n' "$remote_heads" | awk -v r="refs/heads/$target" '$2 == r { print $1 }')"
+    [ -n "$want" ] && [ "$pushed_at" = "$want" ] \
+      || die "git push reported success but origin does not hold refs/heads/$target at $want (nothing else written)" ;;
   *) die "cannot read origin (git ls-remote exit $rc; nothing written)" ;;
 esac
 
