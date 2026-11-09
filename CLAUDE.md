@@ -94,9 +94,13 @@ here — the gate is the single definition of "correct" (it is `GATE_CMD` in
 `.claude/delivery.conf`).
 
 The gate also re-runs the unit tests under a real **bash 3.2**: set
-`DL_BASH32=/path/to/bash-3.2`, or keep a local `bash:3.2` docker image (override
-with `DL_BASH32_IMAGE`; never pulled). With neither it prints a `SKIPPED` notice
-and continues; `DL_BASH32=off` skips explicitly. Details in `scripts/check.sh`.
+`DL_BASH32=/path/to/bash-3.2` (a bare name resolves via PATH; it is linked by
+absolute path and re-verified as 3.2 through the shim, else the gate fails), or
+keep a local `bash:3.2` docker image (override with `DL_BASH32_IMAGE`; never
+pulled). The stock `bash:3.2` image lacks git and jq, so each run needs network
+to `apk add` them; a prebuilt local image with git + jq<1.8 avoids that. With
+neither it prints a `SKIPPED` notice and continues; `DL_BASH32=off` skips
+explicitly. Details in `scripts/check.sh`.
 
 To smoke-test an install without touching your real config, point Claude Code at
 a throwaway config dir: `CLAUDE_CONFIG_DIR=$(mktemp -d) claude plugin marketplace
