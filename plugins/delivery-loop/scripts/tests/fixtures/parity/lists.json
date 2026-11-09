@@ -1,0 +1,30 @@
+{
+  "open": [
+    [
+      {
+        "number": 202,
+        "headRefName": "spike-11",
+        "mergedAt": null
+      },
+      {
+        "number": 204,
+        "headRefName": "task/12--unblocks-two",
+        "mergedAt": null
+      },
+      {
+        "number": 205,
+        "headRefName": "task/15--in-the-started-epic",
+        "mergedAt": null
+      }
+    ]
+  ],
+  "merged": [
+    [
+      {
+        "number": 203,
+        "headRefName": "task/17--medium-oldest",
+        "mergedAt": "2026-01-08T12:00:00Z"
+      }
+    ]
+  ]
+}

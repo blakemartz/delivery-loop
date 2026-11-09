@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "epic": {
+    "id": "1",
+    "kind": "epic",
+    "title": "Epic: started",
+    "epic": null,
+    "checklist": [],
+    "module": null,
+    "size": null,
+    "deps": [],
+    "status": "ready",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "- [ ] #10\n- [ ] #13\n- [ ] #15",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  "nodes": [
+    {
+      "id": "10",
+      "kind": "task",
+      "title": "Done child of the started epic",
+      "epic": "1",
+      "checklist": [],
+      "module": "a",
+      "size": "S",
+      "deps": [],
+      "status": "done",
+      "needs_human": false,
+      "claim": null,
+      "target_branch": "main",
+      "promote_to": null,
+      "plan_ref": null,
+      "body": "Part of epic #1",
+      "created_at": "2026-01-01T01:00:00Z",
+      "updated_at": "2026-01-02T00:00:00Z"
+    },
+    {
+      "id": "13",
+      "kind": "task",
+      "title": "Blocked on 12",
+      "epic": "1",
+      "checklist": [],
+      "module": "a",
+      "size": "S",
+      "deps": [
+        {
+          "id": "12",
+          "via": null
+        }
+      ],
+      "status": "blocked",
+      "needs_human": false,
+      "claim": null,
+      "target_branch": "main",
+      "promote_to": null,
+      "plan_ref": null,
+      "body": "Part of epic #1\n\nDepends-on: #12",
+      "created_at": "2026-01-01T02:00:00Z",
+      "updated_at": "2026-01-01T02:00:00Z"
+    },
+    {
+      "id": "15",
+      "kind": "task",
+      "title": "In the started epic",
+      "epic": "1",
+      "checklist": [],
+      "module": "a",
+      "size": "M",
+      "deps": [],
+      "status": "ready",
+      "needs_human": false,
+      "claim": null,
+      "target_branch": "main",
+      "promote_to": null,
+      "plan_ref": null,
+      "body": "Part of epic #1",
+      "created_at": "2026-01-07T00:00:00Z",
+      "updated_at": "2026-01-07T00:00:00Z"
+    }
+  ]
+}

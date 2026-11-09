@@ -497,7 +497,7 @@ done
 eq "B3: ... and changes nothing" "$before" "$(snap)"
 # gl_put_node itself must refuse a replace that matches no stored node.
 (cd "$repo" && env $ENV_CLEAR STATE_DIR="$M" bash -c '
-   . "$1"; gl_resolve_state
+   . "$1"; gl_scratch; gl_resolve_state   # scratch in this shell, not lazily in a subshell
    gl_with_lock gl_put_node "{\"id\":\"ghost-1\",\"kind\":\"task\",\"epic\":\"auth\",\"title\":\"g\"}"' _ "$backend" \
    > "$tmp/out" 2> "$tmp/err") && rc=0 || rc=$?
 expect "B3: gl_put_node of an id stored nowhere in its file fails" '[ "$rc" != 0 ] && grep -q "expected exactly 1" "$tmp/err"'

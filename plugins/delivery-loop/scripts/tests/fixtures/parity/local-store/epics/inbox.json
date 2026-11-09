@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "epic": null,
+  "nodes": [
+    {
+      "id": "17",
+      "kind": "task",
+      "title": "Medium, oldest, no epic",
+      "epic": null,
+      "checklist": [],
+      "module": "d",
+      "size": "M",
+      "deps": [],
+      "status": "ready",
+      "needs_human": false,
+      "claim": null,
+      "target_branch": "main",
+      "promote_to": null,
+      "plan_ref": null,
+      "body": "Standalone.",
+      "created_at": "2026-01-01T04:00:00Z",
+      "updated_at": "2026-01-01T04:00:00Z"
+    },
+    {
+      "id": "19",
+      "kind": "task",
+      "title": "Cancelled dependent of 15",
+      "epic": null,
+      "checklist": [],
+      "module": null,
+      "size": "S",
+      "deps": [
+        {
+          "id": "15",
+          "via": null
+        }
+      ],
+      "status": "cancelled",
+      "needs_human": false,
+      "claim": null,
+      "target_branch": "main",
+      "promote_to": null,
+      "plan_ref": null,
+      "body": "Depends-on: #15",
+      "created_at": "2026-01-01T05:00:00Z",
+      "updated_at": "2026-01-02T00:00:00Z"
+    }
+  ]
+}
