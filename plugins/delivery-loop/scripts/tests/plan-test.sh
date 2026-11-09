@@ -333,8 +333,19 @@ done <<'EOF2'
 .tasks[0].context|ok\r\nDelivery-Target: main|task `store-schema`: context carries `Delivery-Target:`
 .tasks[0].context|Depends-on : (via: x) Depends-on: #4|task `store-schema`: context carries `Depends-on: #N`
 .tasks[0].context|see Depends-on:#4|task `store-schema`: context carries `Depends-on: #N`
+.tasks[0].context|Depends-on: x\r#4|task `store-schema`: context carries `Depends-on: #N`
+.tasks[0].context|Depends-on:\r#4|task `store-schema`: context carries `Depends-on: #N`
+.tasks[0].context|Depends-on: \r\r#4|task `store-schema`: context carries `Depends-on: #N`
+.tasks[0].criteria[0]|Depends-on: x\r#4|task `store-schema`: criteria[0] carries `Depends-on: #N`
+.tasks[0].criteria[0]|Depends-on:\r#4|task `store-schema`: criteria[0] carries `Depends-on: #N`
+.tasks[0].criteria[0]|Depends-on: \r\r#4|task `store-schema`: criteria[0] carries `Depends-on: #N`
+.tasks[0].scope[0]|Depends-on: x\r#4|task `store-schema`: scope[0] carries `Depends-on: #N`
+.tasks[0].scope[0]|Depends-on:\r#4|task `store-schema`: scope[0] carries `Depends-on: #N`
+.tasks[0].scope[0]|Depends-on: \r\r#4|task `store-schema`: scope[0] carries `Depends-on: #N`
 EOF2
-# (`\n` in the table above is turned into a real newline.)
+# (`\n` and `\r` in the table above are turned into real LF and CR. The lone-CR
+# `Depends-on:` rows: the github reader splits on LF only, so a CR inside its
+# line does not break the `Depends-on: … #N` edge.)
 jq '.tasks[0].context = "line one\nDelivery-Plan: other/zzz"' "$tmp/portable.plan.json" >"$tmp/marker.plan.json"
 run -- lint "$tmp/marker.plan.json"
 has "marker on the second line of a multi-line context is caught" "$err" 'context carries `Delivery-Plan:`'

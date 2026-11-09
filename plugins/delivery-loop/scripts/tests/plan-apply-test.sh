@@ -218,6 +218,13 @@ refused "a multi-line via" "$tmp/bad.plan.json" 'the via of dep `store-schema` m
 jq '.tasks[2].context = "Order it.\nDelivery-Plan: other/zzz"' "$demo" >"$tmp/bad.plan.json"
 refused "a marker line in plan text (local too: plans stay portable)" "$tmp/bad.plan.json" \
   'task `queue`: context carries `Delivery-Plan:`'
+for form in 'Depends-on: x\r#1' 'Depends-on:\r#1' 'Depends-on: \r\r#1'; do
+  for field in context 'criteria[0]' 'scope[0]'; do
+    jq ".tasks[2].${field%%\[*} = (\"$form\" | if \"$field\" == \"context\" then . else [.] end)" "$demo" >"$tmp/bad.plan.json"
+    refused "lone CR (local): $field = $form" "$tmp/bad.plan.json" \
+      "task \`queue\`: $field carries \`Depends-on: #N\`"
+  done
+done
 jq 'del(.promote_to)' "$demo" >"$tmp/bad.plan.json"
 refused "BASE_BRANCH name (the source when promote_to is unset)" "$tmp/bad.plan.json" \
   'BASE_BRANCH `bad..base` is not a valid branch name' BASE_BRANCH=bad..base
@@ -375,6 +382,11 @@ probe $'## Acceptance criteria\n- [ ] README documents Depends-on: #42 lines'
 eq "reproduce: a criterion mentioning Depends-on: #N adds a phantom edge" \
   '["42"]' "$(jq -c '[.[] | select(.title == "probe")][0] | [.deps[].id]' <<<"$board")"
 
+gh_board
+probe $'Depends-on: x\r#42'
+eq "reproduce: a lone CR inside a Depends-on: line still adds the edge (the reader splits on LF only)" \
+  '["42"]' "$(jq -c '[.[] | select(.title == "probe")][0] | [.deps[].id]' <<<"$board")"
+
 # marker_refused <name> <jq edit of the plan> <expected error>: github apply
 # exits 1, says why, and writes nothing (no gh write, board byte-identical, no
 # git remote call at all).
@@ -401,6 +413,13 @@ marker_refused "criterion mentioning Depends-on: #1" '.tasks[3].criteria = ["REA
   'task `user-guide`: criteria[0] carries `Depends-on: #N`'
 marker_refused "epic goal naming another epic" '.epics[1].goal = "Follows epic #42"' \
   'epic `ui`: goal carries `epic #42`'
+# A lone CR splits lint's lines but not the reader's: each form, in each field.
+for form in 'Depends-on: x\r#1' 'Depends-on:\r#1' 'Depends-on: \r\r#1'; do
+  for field in context 'criteria[0]' 'scope[0]'; do
+    marker_refused "lone CR: $field = $form" ".tasks[0].${field%%\[*} = (\"$form\" | if \"$field\" == \"context\" then . else [.] end)" \
+      "task \`store-schema\`: $field carries \`Depends-on: #N\`"
+  done
+done
 
 # Drift no longer hides a marker line: a human inserting `Delivery-Target: main`
 # above the trailer block is body drift (and target_branch drift), not just the

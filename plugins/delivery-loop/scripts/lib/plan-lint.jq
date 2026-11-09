@@ -83,11 +83,15 @@ def _is_text: type == "string" and test("\\S");
 #                             reads as a protocol record wherever it is copied.
 # Start-anchored markers also match after leading whitespace, and
 # `Depends-on:` refuses any `#N` after it, even inside a `(via: …)` (stricter
-# than the readers, never looser). Lines are split first, on LF, CRLF and a
-# lone CR (a lone CR normalised to LF anywhere would start a new line):
-# Oniguruma `^` does not reliably anchor at line boundaries.
+# than the readers, never looser). Lines are split first (Oniguruma `^` does
+# not reliably anchor at line boundaries), and every marker is checked against
+# the union of two splittings: the readers' own lines (`_lines`: LF, with a
+# trailing CR trimmed), which keep a lone CR inside a line, so the unanchored
+# `Depends-on: … #N` check sees `Depends-on: x\r#4` whole, as the reader does;
+# and LF, CRLF and lone-CR lines, so a start-anchored marker after a lone CR is
+# refused too (a lone CR normalised to LF anywhere would start a new line).
 def plan_text_markers:
-  splits("[\r\n]") as $l
+  ((split("\n") | map(rtrimstr("\r"))) + [splits("[\r\n]")])[] as $l
   | ( ($l | capture("^[ \t]*(?<m>Delivery-Target|Delivery-Plan|Delivery-Promote-To|Delivery-Task|Reviewed-Head|AUTO-CLOSE|TRANSITIONED)[ \t]*:") | "\(.m):"),
       ($l | capture("^[ \t]*(?<m>CLAIM-WITHDRAWN|CLAIM|RECLAIMED|STALE-CLAIM-PING)([ \t:]|$)") | .m),
       ($l | select(test("Depends-on[ \t]*:.*#[0-9]")) | "Depends-on: #N"),
