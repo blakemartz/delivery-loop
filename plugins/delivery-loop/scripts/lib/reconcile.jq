@@ -13,7 +13,9 @@
 #              claim; to = "ready") or "ping" (comment on a stale human claim;
 #              from = to, no status change). `reason` is the text the backend
 #              posts or prints: a RECLAIMED / STALE-CLAIM-PING reason keeps the
-#              v0.1.4 comment text verbatim.
+#              v0.1.4 comment text verbatim. A rule-3 record also carries
+#              `pr` (the merged PR's number, the one its reason names), so a
+#              backend need not parse it out of the reason.
 #   warnings — [string]: rule 8 diagnostics, plus one line per record that the
 #              transition table rejected (GC65). Never mutations.
 # `reconcile` prints the warnings on stderr ("warn: …" lines) and outputs the
@@ -36,11 +38,13 @@
 #      PR outranks the deps.
 #   1. blocked -> ready when deps_done and not needs_human (GC4).
 #   2. ready -> blocked when not deps_done.
-#   5. agent claim, no open PR for the node, now - updated_at > 4h, not
-#      needs_human -> reclaim to ready (GC24), from claimed or any later open
-#      status, or from ready itself (claim drift), so a claim whose PR closed
-#      unmerged is released, not warned about forever (GC73). The node's status
-#      is not pre-filtered: the transition table is the judge (GC65).
+#   5. agent claim on an open node, no open PR for the node, now - updated_at
+#      > 4h, not needs_human -> reclaim to ready (GC24), from claimed or any
+#      later open status, or from ready itself (claim drift), so a claim whose
+#      PR closed unmerged is released, not warned about forever (GC73). A
+#      done/cancelled node's leftover claim is never a release: it gets no
+#      record and no warning. Among open statuses the table is the judge
+#      (GC65).
 #   6. human claim on an open node, now - updated_at > 72h, pinged_at null ->
 #      one ping; human claims are never released (GC44).
 #   8. warnings: `blocked on cancelled dep`, `unknown dep` (open nodes), and
@@ -124,7 +128,8 @@ def _rule3($prs):
     | max_by(.number) as $pr
     | $idx[$pr.task_id]
     | select(_is_subject and is_open)
-    | _rec("transition"; "done"; "PR #\($pr.number) merged into \($pr.base)"));
+    | _rec("transition"; "done"; "PR #\($pr.number) merged into \($pr.base)")
+    | .pr = $pr.number);
 
 def _rule7:
   until(
@@ -168,7 +173,8 @@ def _rule4($open):
 def _rule5($open; $now):
   _offer_all(
     _subjects
-    | select(.claim != null and .claim.by == "agent" and (.needs_human | not)
+    | select(.claim != null and .claim.by == "agent" and is_open
+             and (.needs_human | not)
              and ($now - (.updated_at | iso_epoch)) > stale_agent_seconds)
     | .id as $id
     | select(any($open[]; .task_id == $id) | not)
