@@ -56,6 +56,14 @@
 #     while paging cannot shift between pages and be missed.
 #   - `pr-create --draft` prefixes the title `WIP: ` (Gitea's default WIP
 #     prefix; the API has no draft field).
+#   - `pr-create --label L` (repeatable) sends `labels` (label ids) in the
+#     create POST (CreatePullRequestOption.labels []int64), so the PR is
+#     labelled atomically. The create silently drops an id it cannot find
+#     (src: GetLabelsInRepoByIDs, no count check), so names are resolved first,
+#     by exact name, over GET /repos/{o}/{r}/labels and, only for names still
+#     unmatched, GET /orgs/{owner}/labels (a 404 there = a user owner, no org
+#     labels); a repo label wins a name clash. An unknown name exits 1
+#     before anything is sent, and nothing is ever created.
 #   - verdicts and merges pin the head SHA: a pre-read refuses a stale --sha
 #     before any write, the review carries `commit_id` and the merge
 #     `head_commit_id` (409 when the head moved).
@@ -325,9 +333,35 @@ op_whoami() {
   jq -r '.login' "$tmp/resp"
 }
 
+# resolve_labels <out-file> <name>…: write the ids of the named labels (repo
+# labels first, then the owner org's) as a JSON array. An unknown name exits 1
+# before anything is sent; nothing is created.
+resolve_labels() {
+  local out="$1" org
+  shift
+  printf '%s\n' "$@" | jq -R . | jq -s 'unique' > "$tmp/want.json"
+  paged "$RP/labels" "$tmp/labels.json"
+  if [ -n "$(missing_labels)" ]; then
+    org=$(jq -rn --arg s "${FORGE_REPO%%/*}" '$s | @uri')
+    paged "/orgs/$org/labels" "$tmp/org-labels.json" "" . missing-ok
+    jq -s '.[0] + .[1]' "$tmp/labels.json" "$tmp/org-labels.json" > "$tmp/labels.n" && mv "$tmp/labels.n" "$tmp/labels.json"
+  fi
+  [ -z "$(missing_labels)" ] \
+    || die "unknown label(s) on $FORGE_REPO: $(missing_labels); nothing created (pr-create never creates labels)"
+  jq -c --slurpfile have "$tmp/labels.json" \
+     'map(. as $w | first($have[0][] | select(.name == $w) | .id))' "$tmp/want.json" > "$out"
+}
+
+# The wanted names ($tmp/want.json) absent from $tmp/labels.json, comma-joined.
+missing_labels() {
+  jq -r --slurpfile have "$tmp/labels.json" \
+     '($have[0] | map(.name)) as $h | map(select(. as $w | $h | index([$w]) | not)) | join(", ")' "$tmp/want.json"
+}
+
 op_pr_create() {
-  local u="pr-create --head H --base B --title T --body-file F [--draft]"
-  local head="" base="" title="" body="" draft=""
+  local u="pr-create --head H --base B --title T --body-file F [--draft] [--label L]…"
+  local head="" base="" title="" body="" draft="" ids="[]"
+  local names=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --head) head="${2:-}"; shift 2 ;;
@@ -335,13 +369,20 @@ op_pr_create() {
       --title) title="${2:-}"; shift 2 ;;
       --body-file) body="${2:-}"; shift 2 ;;
       --draft) draft=1; shift ;;
+      --label) [ -n "${2:-}" ] || usage "$u"; names+=("$2"); shift 2 ;;
       *) usage "$u" ;;
     esac
   done
   [ -n "$head" ] && [ -n "$base" ] && [ -n "$title" ] && [ -f "$body" ] || usage "$u"
   [ -z "$draft" ] || title="WIP: $title"
+  if [ "${#names[@]}" -gt 0 ]; then
+    resolve_labels "$tmp/label-ids.json" "${names[@]}"
+    ids=$(cat "$tmp/label-ids.json")
+  fi
   api POST "$RP/pulls" "$(jq -cn --arg h "$head" --arg b "$base" --arg t "$title" --rawfile body "$body" \
-                          '{head: $h, base: $b, title: $t, body: $body}')"
+                          --argjson l "$ids" \
+                          '{head: $h, base: $b, title: $t, body: $body}
+                           + (if $l == [] then {} else {labels: $l} end)')"
   ok2xx || die_http "POST pull ($head -> $base)"
   jq -ce '{number: .number, url: .html_url} | select((.number | type) == "number" and (.url | type) == "string")' \
     "$tmp/resp" || die "POST pull: response has no number/html_url"

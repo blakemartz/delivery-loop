@@ -255,6 +255,24 @@ printf 'Closes #20\n\nDelivery-Task: 20\n' > "$tmp/body.md"
 run -- pr-create --head task/20-x --base release/0.2.0 --title "T (#20)" --body-file "$tmp/body.md"
 expect "pr-create -> {number, url}" '[ "$rc" = 0 ] && jq_true '\''. == {number: 150, url: "https://github.com/example/repo/pull/150"}'\'''
 expect "pr-create passes head/base/title/body-file" 'log_has "gh pr create --head task/20-x --base release/0.2.0 --title T (#20) --body-file $tmp/body.md"'
+expect "pr-create without --label passes no --label" '[ "$(log_count "--label")" = 0 ]'
+reset
+run -- pr-create --head task/20-x --base release/0.2.0 --title "T (#20)" --body-file "$tmp/body.md" --label agent-authored --label task --draft
+expect "pr-create --label x2 -> gh pr create --label agent-authored --label task, one call" \
+  '[ "$rc" = 0 ] && jq_true ".number == 150" && log_line "gh pr create --head task/20-x --base release/0.2.0 --title T (#20) --body-file $tmp/body.md --draft --label agent-authored --label task" && [ "$(log_count "pr create")" = 1 ]'
+reset
+touch "$tmp/state/unknown-label"
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label no-such-label
+expect "pr-create --label unknown (gh resolves before creating) -> exit 1, no PR, no JSON" \
+  '[ "$rc" = 1 ] && grep -qF "no PR created" <<<"$err" && grep -qF "no-such-label" <<<"$err" && [ -z "$out" ]'
+reset
+touch "$tmp/state/fail-label-update"
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label agent-authored
+expect "pr-create: gh created the PR but its label step failed -> exit 1 naming the PR URL" \
+  '[ "$rc" = 1 ] && grep -qF "opened https://github.com/example/repo/pull/150 but failed to apply its labels" <<<"$err" && [ -z "$out" ]'
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label
+expect "pr-create --label without a name -> usage exit 2" '[ "$rc" = 2 ]'
+reset
 run -- pr-find --head task/104-conflict
 expect "pr-find --head -> that open PR" '[ "$rc" = 0 ] && jq_true '\''.number == 104'\'''
 run -- pr-find --head no-such-branch

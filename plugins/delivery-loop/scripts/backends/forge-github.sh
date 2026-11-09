@@ -38,6 +38,12 @@
 #     (`^## .*verdict: (APPROVE|REQUEST_CHANGES|COMMENT)`, any case), with
 #     `commit` from its `Reviewed-Head:` trailer (backends/forge-verdict.jq).
 #   - GH_REVIEW_TOKEN (environment only) posts `pr-review` as that identity.
+#   - `pr-create --label L` (repeatable) passes `gh pr create --label L`. gh
+#     resolves every name to a label id before creating, so an unknown label
+#     fails with nothing created; it then applies the labels in a second request
+#     once the PR exists (createPullRequest takes no labels). When that second
+#     request fails, gh prints the new PR's URL and exits non-zero: the adapter
+#     exits 1 naming that URL rather than reporting either success or "no PR".
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -126,7 +132,9 @@ post_comment() {
 op_whoami() { gh api user | jq -r .login; }
 
 op_pr_create() {
-  local head="" base="" title="" body="" draft="" url
+  local u="pr-create --head H --base B --title T --body-file F [--draft] [--label L]…"
+  local head="" base="" title="" body="" draft="" out rc url
+  local labels=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --head) head="${2:-}"; shift 2 ;;
@@ -134,17 +142,24 @@ op_pr_create() {
       --title) title="${2:-}"; shift 2 ;;
       --body-file) body="${2:-}"; shift 2 ;;
       --draft) draft=1; shift ;;
-      *) usage "pr-create --head H --base B --title T --body-file F [--draft]" ;;
+      --label) [ -n "${2:-}" ] || usage "$u"; labels+=(--label "$2"); shift 2 ;;
+      *) usage "$u" ;;
     esac
   done
-  [ -n "$head" ] && [ -n "$base" ] && [ -n "$title" ] && [ -f "$body" ] \
-    || usage "pr-create --head H --base B --title T --body-file F [--draft]"
-  if [ -n "$draft" ]; then
-    url=$(gh pr create --head "$head" --base "$base" --title "$title" --body-file "$body" --draft)
-  else
-    url=$(gh pr create --head "$head" --base "$base" --title "$title" --body-file "$body")
+  [ -n "$head" ] && [ -n "$base" ] && [ -n "$title" ] && [ -f "$body" ] || usage "$u"
+  set -- --head "$head" --base "$base" --title "$title" --body-file "$body"
+  [ -z "$draft" ] || set -- "$@" --draft
+  # ${labels[@]+…}: an empty array under `set -u` on bash 3.2.
+  out=$(gh pr create "$@" ${labels[@]+"${labels[@]}"}) && rc=0 || rc=$?
+  url=$(printf '%s\n' "$out" | grep -E '^https?://' | tail -n 1) || url=""
+  if [ "$rc" != 0 ]; then
+    # gh resolves label names before creating (an unknown one: nothing is
+    # created), but applies them in a second request after the PR exists; if
+    # that fails it still prints the new PR's URL, then exits non-zero.
+    [ -z "$url" ] || die "gh pr create opened $url but failed to apply its labels (gh exit $rc); nothing retried (add them with gh pr edit --add-label, or pr-find --head $head)"
+    die "gh pr create failed (exit $rc); no PR created"
   fi
-  url=$(printf '%s\n' "$url" | grep -E '^https?://' | tail -n 1) || die "gh pr create printed no PR URL"
+  [ -n "$url" ] || die "gh pr create printed no PR URL"
   jq -cn --arg url "$url" '{number: ($url | capture("/pull/(?<n>[0-9]+)").n | tonumber), url: $url}'
 }
 

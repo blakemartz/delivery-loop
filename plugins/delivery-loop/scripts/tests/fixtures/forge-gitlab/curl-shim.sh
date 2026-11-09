@@ -14,6 +14,7 @@
 #                  that MR's notes ($SHIM_STATE/posted-notes-<iid>.json), so a
 #                  verdict can round-trip through pr-reviews.
 #   diffs.json     {"<iid>": [<MR diff>]}    jobs.json {"<pipeline id>": [<Job>]}
+#   labels.json    [<Label>]  (GET labels, project + ancestor-group labels)
 #   commits.json   {"<sha>": <Commit>}       (GET repository/commits/:sha; a
 #                  missing sha → 404)
 # Lists filter `state`, `source_branch` and `updated_after` (updated_at >= T)
@@ -112,6 +113,7 @@ if [ -f "$SHIM_STATE/rate-limit-once" ]; then
 else
   case "$method $route" in
     "GET /user") respond 200 '{"id":7,"username":"shim-user","name":"Shim User","state":"active","web_url":"https://gitlab.example.com/shim-user"}' ;;
+    "GET labels") page "$(cat "$SHIM_FX/labels.json")" ;;
     "GET merge_requests")
       st=$(qp state); src=$(urldecode "$(qp source_branch)"); ua=$(urldecode "$(qp updated_after)")
       page "$(jq -c --arg s "${st:-all}" --arg src "$src" --arg ua "$ua" --slurpfile mrs "$SHIM_FX/mrs.json" -L "$lib" -L "$lib/../lib" '
@@ -123,6 +125,7 @@ else
     "POST merge_requests")
       respond 201 "$(jq -c '{id: 84250, iid: 250, project_id: 278964, title: .title, description: .description,
                        state: "opened", source_branch: .source_branch, target_branch: .target_branch,
+                       labels: ((.labels // "") | split(",") | map(select(. != ""))),
                        web_url: "https://gitlab.example.com/example/sub/repo/-/merge_requests/250"}' <<<"$data")" ;;
     GET\ merge_requests/*/notes)
       n="${route#merge_requests/}"; n="${n%/notes}"

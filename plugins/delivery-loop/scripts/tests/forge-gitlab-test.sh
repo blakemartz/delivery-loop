@@ -392,6 +392,27 @@ expect "GC31: + body with source/target/title (and description)" \
 expect "GC31: nothing sent" '[ "$(log_count POST)" = 0 ]'
 run FORGE_DRY_RUN=1 -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --draft
 expect "pr-create --draft -> Draft: title prefix" '[ "$rc" = 0 ] && [ "$(sed -n 2p <<<"$out" | jq -r .title)" = "Draft: T" ]'
+expect "GC31: no --label -> no labels field" '[ "$(sed -n 2p <<<"$out" | jq -c "has(\"labels\")")" = false ]'
+reset
+run FORGE_DRY_RUN=1 -- pr-create --head task/ready-policy--x --base release/0.2.0 --title T --body-file "$tmp/body.md" --label agent-authored --label task
+expect "GC31: pr-create --label x2 -> labels \"agent-authored,task\" in the create POST" \
+  '[ "$rc" = 0 ] && [ "$(sed -n 1p <<<"$out")" = "POST /api/v4/projects/example%2Fsub%2Frepo/merge_requests" ] && [ "$(sed -n 2p <<<"$out" | jq -r .labels)" = "agent-authored,task" ]'
+expect "pr-create --label: names checked over the paged project+group label list; nothing sent" \
+  'log_line "GET $R/labels?include_ancestor_groups=true&per_page=100&page=1 token=$TOKEN" && log_line "GET $R/labels?include_ancestor_groups=true&per_page=100&page=2 token=$TOKEN" && [ "$(log_count POST)" = 0 ]'
+reset
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label agent-authored --label no-such-label
+expect "pr-create --label unknown -> exit 1 naming it, before the MR is created (GitLab would create the label)" \
+  '[ "$rc" = 1 ] && grep -qF "unknown label(s) on example/sub/repo: no-such-label" <<<"$err" && [ "$(log_count POST)" = 0 ] && [ -z "$out" ]'
+reset
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label "a,b"
+expect "pr-create --label with a comma -> exit 1, nothing read or sent" \
+  '[ "$rc" = 1 ] && grep -qF "cannot contain" <<<"$err" && [ "$(log_count POST)" = 0 ] && [ "$(log_count labels)" = 0 ]'
+reset
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label agent-authored
+expect "pr-create --label agent-authored -> one create POST carrying labels" \
+  '[ "$rc" = 0 ] && jq_true ".number == 250" && [ "$(jq -r .labels "$tmp/state/POST.merge_requests.json")" = agent-authored ] && [ "$(log_count POST)" = 1 ]'
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label
+expect "pr-create --label without a name -> usage exit 2" '[ "$rc" = 2 ]'
 reset
 run -- pr-create --head task/ready-policy--x --base release/0.2.0 --title T --body-file "$tmp/body.md"
 expect "pr-create -> {number, url} from iid/web_url" '[ "$rc" = 0 ] && jq_true ". == {number: 250, url: \"https://gitlab.example.com/example/sub/repo/-/merge_requests/250\"}"'

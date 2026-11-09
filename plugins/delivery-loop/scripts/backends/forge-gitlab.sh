@@ -55,6 +55,12 @@
 #     `updated_after=T` (merging updates the MR) and keeps `merged_at >= T`.
 #   - `pr-create --draft` prefixes the title `Draft: ` (the create API has no
 #     draft field).
+#   - `pr-create --label L` (repeatable) sends `labels` (comma-separated) in the
+#     create POST, so the MR is labelled atomically. GitLab creates a project
+#     label for any name that does not exist, so the adapter first pages GET
+#     …/labels (project and ancestor-group labels) and exits 1 on an unknown
+#     name before anything is sent: pr-create never creates a label. A name
+#     with a comma is refused too (GitLab label titles cannot hold one).
 #   - verdicts and merges pin the head SHA: a pre-read refuses a stale --sha
 #     before any write, the approval carries `sha` and the merge `sha` (409 when
 #     the head moved).
@@ -333,9 +339,27 @@ op_whoami() {
   jq -r '.username' "$tmp/resp"
 }
 
+# resolve_labels <out-file> <name>…: check every name against the project's
+# labels (ancestor-group labels included) and write them as one comma-separated
+# string. An unknown name exits 1 before anything is sent: GitLab would create it.
+resolve_labels() {
+  local out="$1" missing
+  shift
+  printf '%s\n' "$@" | jq -R . | jq -s . > "$tmp/want.json"
+  jq -e 'any(.[]; test(","))' "$tmp/want.json" >/dev/null \
+    && die "label names cannot contain ',' on gitlab: $(jq -r 'map(select(test(","))) | join(" ")' "$tmp/want.json")"
+  paged "$P/labels?include_ancestor_groups=true" "$tmp/labels.json"
+  missing=$(jq -r --slurpfile have "$tmp/labels.json" \
+              '($have[0] | map(.name)) as $h | map(select(. as $w | $h | index([$w]) | not)) | unique | join(", ")' \
+              "$tmp/want.json")
+  [ -z "$missing" ] || die "unknown label(s) on $FORGE_REPO: $missing; nothing created (pr-create never creates labels)"
+  jq -r 'unique | join(",")' "$tmp/want.json" > "$out"
+}
+
 op_pr_create() {
-  local u="pr-create --head H --base B --title T --body-file F [--draft]"
-  local head="" base="" title="" body="" draft=""
+  local u="pr-create --head H --base B --title T --body-file F [--draft] [--label L]…"
+  local head="" base="" title="" body="" draft="" labels=""
+  local names=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --head) head="${2:-}"; shift 2 ;;
@@ -343,13 +367,20 @@ op_pr_create() {
       --title) title="${2:-}"; shift 2 ;;
       --body-file) body="${2:-}"; shift 2 ;;
       --draft) draft=1; shift ;;
+      --label) [ -n "${2:-}" ] || usage "$u"; names+=("$2"); shift 2 ;;
       *) usage "$u" ;;
     esac
   done
   [ -n "$head" ] && [ -n "$base" ] && [ -n "$title" ] && [ -f "$body" ] || usage "$u"
   [ -z "$draft" ] || title="Draft: $title"
+  if [ "${#names[@]}" -gt 0 ]; then
+    resolve_labels "$tmp/labels.txt" "${names[@]}"
+    labels=$(cat "$tmp/labels.txt")
+  fi
   api POST "$P/merge_requests" "$(jq -cn --arg h "$head" --arg b "$base" --arg t "$title" --rawfile d "$body" \
-                                 '{source_branch: $h, target_branch: $b, title: $t, description: $d}')"
+                                 --arg l "$labels" \
+                                 '{source_branch: $h, target_branch: $b, title: $t, description: $d}
+                                  + (if $l == "" then {} else {labels: $l} end)')"
   ok2xx || die_http "POST merge request ($head -> $base)"
   jq -ce '{number: .iid, url: .web_url} | select((.number | type) == "number" and (.url | type) == "string")' \
     "$tmp/resp" || die "POST merge request: response has no iid/web_url"

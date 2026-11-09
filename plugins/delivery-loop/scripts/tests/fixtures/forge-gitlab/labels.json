@@ -1,0 +1,5 @@
+[
+  {"id": 701, "name": "bug", "color": "#d9534f", "text_color": "#FFFFFF", "description": null, "priority": null, "is_project_label": true},
+  {"id": 702, "name": "agent-authored", "color": "#ededed", "text_color": "#333333", "description": "Produced by an agent", "priority": null, "is_project_label": true},
+  {"id": 703, "name": "task", "color": "#1d76db", "text_color": "#FFFFFF", "description": null, "priority": null, "is_project_label": false}
+]

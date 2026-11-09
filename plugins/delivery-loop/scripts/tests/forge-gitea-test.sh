@@ -345,6 +345,35 @@ expect "pr-create sends head/base/title/body" 'body_true POST.pulls "[.head, .ba
 run FORGE_DRY_RUN=1 -- pr-create --head task/20-x --base release/0.2.0 --title "T (#20)" --body-file "$tmp/body.md" --draft
 expect "FORGE_DRY_RUN: pr-create prints POST …/pulls + body; --draft -> WIP: title" \
   '[ "$rc" = 0 ] && [ "$(sed -n 1p <<<"$out")" = "POST /api/v1/repos/example/repo/pulls" ] && [ "$(sed -n 2p <<<"$out" | jq -r .title)" = "WIP: T (#20)" ]'
+expect "FORGE_DRY_RUN: pr-create without --label sends no labels field" '[ "$(sed -n 2p <<<"$out" | jq -c "has(\"labels\")")" = false ]'
+
+# --- pr-create --label: names -> ids in the create POST, never created --------
+reset
+run FORGE_DRY_RUN=1 -- pr-create --head task/20-x --base release/0.2.0 --title "T (#20)" --body-file "$tmp/body.md" --label agent-authored --label task
+expect "FORGE_DRY_RUN: pr-create --label x2 -> POST …/pulls with labels [12,13] (repo label ids)" \
+  '[ "$rc" = 0 ] && [ "$(sed -n 1p <<<"$out")" = "POST /api/v1/repos/example/repo/pulls" ] && [ "$(sed -n 2p <<<"$out" | jq -c .labels)" = "[12,13]" ]'
+expect "pr-create --label: names resolved over the paged repo label list" \
+  'log_line "GET $R/labels?limit=2&page=1 token=$TOKEN" && log_line "GET $R/labels?limit=2&page=2 token=$TOKEN"'
+expect "pr-create --label: no org lookup when the repo has every name; nothing sent" \
+  '[ "$(log_count "/orgs/")" = 0 ] && [ "$(log_count POST)" = 0 ]'
+reset
+run FORGE_DRY_RUN=1 -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label promote --label agent-authored
+expect "pr-create --label: an org label resolves via GET /orgs/{owner}/labels; a repo label wins a name clash" \
+  '[ "$rc" = 0 ] && [ "$(sed -n 2p <<<"$out" | jq -c .labels)" = "[12,91]" ] && log_line "GET $B/orgs/example/labels?limit=2&page=1 token=$TOKEN"'
+reset
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label agent-authored --label no-such-label
+expect "pr-create --label unknown -> exit 1 naming it, before the PR is created" \
+  '[ "$rc" = 1 ] && grep -qF "unknown label(s) on example/repo: no-such-label" <<<"$err" && [ "$(log_count POST)" = 0 ] && [ -z "$out" ]'
+reset
+run FORGE_URL=https://gitea.example.com FORGE_REPO=someone/repo -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label nope
+expect "pr-create --label: a user owner (org labels 404) -> unknown label exit 1, nothing sent" \
+  'log_has "GET $B/orgs/someone/labels?" && [ "$rc" = 1 ] && grep -qF "unknown label(s) on someone/repo: nope" <<<"$err" && [ "$(log_count POST)" = 0 ]'
+reset
+run -- pr-create --head task/20-x --base release/0.2.0 --title "T (#20)" --body-file "$tmp/body.md" --label agent-authored
+expect "pr-create --label agent-authored -> one create POST carrying labels [12]" \
+  '[ "$rc" = 0 ] && jq_true ".number == 150" && body_true POST.pulls ".labels == [12]" && [ "$(log_count POST)" = 1 ]'
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label
+expect "pr-create --label without a name -> usage exit 2" '[ "$rc" = 2 ]'
 reset
 run -- pr-find --head task/105-none
 expect "pr-find --head with no PR -> empty, exit 0" '[ "$rc" = 0 ] && [ -z "$out" ]'
