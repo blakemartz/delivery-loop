@@ -91,10 +91,15 @@
 #                               <dep>` / `migrate: parent <id> -> <epic>`, so a
 #                               second run plans and issues 0 edits. Before any
 #                               write (dry run too), an issue that would exceed
-#                               50 blockers (GitHub's per-relationship cap) is
+#                               50 blockers (GitHub's per-relationship cap), or
+#                               a dep that would block more than 50 issues, is
 #                               named and the run exits 1 with nothing
-#                               written. A plan warning goes to stderr as
-#                               `warn: …`; the summary line goes to stderr.
+#                               written. A ref GitHub would reject (not an
+#                               issue in this repo, a PR, cross-repo
+#                               `owner/repo#N`, a self edge) is never planned,
+#                               so --apply cannot wedge on it. A plan warning
+#                               goes to stderr as `warn: …`; the summary line
+#                               goes to stderr.
 #
 # Exit codes: 0 ok · 1 failed / invalid config / not claimable · 2 usage · 3
 # the backend list reached LIST_LIMIT · 4 reconcile --fix: the board changed
@@ -269,9 +274,15 @@ case "$op" in
     jq -r '.[].warnings[] | "warn: \(.)"' "$tmp/migrate.json" >&2
     over=$(jq -r --argjson cap "$cap" '.[] | select(.links != [] and .blockers > $cap)
       | "graph.sh: migrate: #\(.id) would have \(.blockers) blockers; GitHub links at most \($cap) per issue"' "$tmp/migrate.json")
+    # The cap likely binds the blocking side too: refuse a dep that would block
+    # more than $cap issues (the backend's `blocking` count; a lower bound).
+    over_b=$(jq -r --argjson cap "$cap" '[ .[] | (.blocking // {}) | to_entries[] | select(.value > $cap) ]
+      | unique_by(.key | tonumber)[]
+      | "graph.sh: migrate: #\(.key) would block \(.value) issues; GitHub links at most \($cap) per issue"' "$tmp/migrate.json")
+    over=$(printf '%s\n%s' "$over" "$over_b" | sed '/^$/d')
     if [ -n "$over" ]; then
       printf '%s\n' "$over" >&2
-      echo "graph.sh: migrate: refusing to exceed $cap blockers per issue; split those dependencies, then re-run (nothing written)" >&2
+      echo "graph.sh: migrate: refusing to exceed $cap blockers / blocked issues per issue; split those dependencies, then re-run (nothing written)" >&2
       exit 1
     fi
     jq -c '.[] | (.id as $id | (.links[] | {op: "link", id: $id, dep: .}),

@@ -131,7 +131,9 @@ jq '. + [
    | .body = ([range(200; 250) | "Depends-on: #\(.)"] | join("\n"))),
   (.[1] | .number = 102 | .title = "49 native + 2 text" | .parent = null
    | .blockedBy = {nodes: [range(300; 349) | {number: ., state: "OPEN"}], totalCount: 49}
-   | .body = "Depends-on: #400\nDepends-on: #401") ]' "$fx/board.json" > "$tmp/cap.json"
+   | .body = "Depends-on: #400\nDepends-on: #401") ]
+  | . + [ (.[8]) as $u | (range(200; 251), range(300; 349), 400, 401) as $n | $u | .number = $n ]' \
+  "$fx/board.json" > "$tmp/cap.json"
 load "$tmp/cap.json"
 g -- migrate --apply
 eq "GC48: an issue needing 51 blockers exits 1" 1 "$rc"
@@ -141,6 +143,77 @@ expect "GC48: exactly 50 is not an offender" '! grep -qF "#101 " <<<"$err"'
 eq "GC48: nothing is written (the check precedes every edit)" 0 "$(writes)"
 g -- migrate
 eq "GC48: the dry run refuses too" 1 "$rc"
+
+# --- the blocking side of the cap ------------------------------------------------------------
+# #500 already blocks 45 issues natively (#600-#644); 6 tasks (#700-#705) name it
+# in text, so it would block 51. #501 is named by exactly 50 tasks (allowed).
+jq '(.[1] | .parent = null | .body = "x") as $t | (.[8]) as $u
+  | [ .[0] ]
+  + [ (500, 501) as $n | $u | .number = $n ]
+  + [ range(600; 645) as $n | $u | .number = $n | .blockedBy = {nodes: [{number: 500, state: "OPEN"}], totalCount: 1} ]
+  + [ range(700; 706) as $n | $t | .number = $n | .body = "Depends-on: #500" ]
+  + [ range(800; 850) as $n | $t | .number = $n | .body = "Depends-on: #501" ]' \
+  "$fx/board.json" > "$tmp/hub.json"
+load "$tmp/hub.json"
+g -- migrate --apply
+eq "cap, blocking side: a dep that would block 51 issues exits 1" 1 "$rc"
+expect "cap, blocking side: the dep is named once, natives counted" \
+  '[ "$(grep -cF "#500 would block 51 issues" <<<"$err")" = 1 ]'
+expect "cap, blocking side: exactly 50 is not an offender" '! grep -qF "#501 " <<<"$err"'
+eq "cap, blocking side: nothing is written" 0 "$(writes)"
+jq '[ .[] | select(.number < 700 or .number > 705) ]' "$tmp/hub.json" > "$tmp/hub50.json"
+load "$tmp/hub50.json"
+g -- migrate
+eq "cap, blocking side: 50 blocked issues plan fine" 0:50 "$rc:$(wc -l <<<"$out" | tr -d ' ')"
+
+# --- a ref that is not an issue of the repo (GC7 unknown dep, a PR, a deleted issue) -----------
+# The review's repro: before the fix, --apply failed at link 2→999 on every
+# re-run and #4's link was never applied.
+jq '(.[1] | .parent = null) as $t
+  | [ .[2] | .parent = null | .body = "x" ]
+  + [ $t | .number = 2 | .body = "Depends-on: #3 #999" ]
+  + [ $t | .number = 4 | .body = "Depends-on: #3" ]' "$fx/board.json" > "$tmp/unknown.json"
+load "$tmp/unknown.json"
+echo '[{"number": 50, "state": "OPEN", "baseRefName": "main", "headRefName": "x"}]' > "$st/prs.json"
+g -- migrate
+want=$(printf '%s\n' '{"op":"link","id":"2","dep":"3"}' '{"op":"link","id":"4","dep":"3"}')
+eq "unknown dep: the dry run plans only the valid links" "0:$want" "$rc:$out"
+expect "unknown dep: warned about, not linked" \
+  'grep -qF "warn: #2 Depends-on: #999, which is not an issue in this repo; not linked" <<<"$err"'
+g -- migrate --apply
+eq "unknown dep: --apply links every valid dep" "0:[3]:[3]" "$rc:$(native 2):$(native 4)"
+eq "unknown dep: no edit names #999" 0 "$(log_count "--add-blocked-by 999")"
+: > "$st/log"
+g -- migrate --apply
+eq "unknown dep: a second run issues 0 edits and exits 0" "0:0" "$rc:$(writes)"
+expect "unknown dep: the second run still warns" 'grep -qF "warn: #2 Depends-on: #999" <<<"$err"'
+jq '(.[1] | .parent = null) as $t | . + [ $t | .number = 6 | .body = "Depends-on: #50" ]' \
+  "$tmp/unknown.json" > "$tmp/unknown-pr.json"
+load "$tmp/unknown-pr.json"
+echo '[{"number": 50, "state": "OPEN", "baseRefName": "main", "headRefName": "x"}]' > "$st/prs.json"
+g -- migrate
+expect "a PR number dep is not linked" \
+  '[ "$rc" = 0 ] && ! grep -qF "\"dep\":\"50\"" <<<"$out" && grep -qF "warn: #6 Depends-on: #50, which is not an issue in this repo" <<<"$err"'
+
+# --- cross-repo refs, parent drift, an unknown epic ----------------------------------------------
+jq '(.[1] | .parent = null) as $t
+  | [ .[0], (.[2] | .parent = null | .body = "x"), (.[8] | .number = 5) ]
+  + [ $t | .number = 2 | .body = "Depends-on: other/repo#5, #3\nDepends-on: o.rg/r_e-po#3" ]
+  + [ $t | .number = 4 | .parent = {number: 1} | .body = "Part of epic #6" ]
+  + [ $t | .number = 6 | .labels = [{name: "epic"}] | .body = "" ]
+  + [ $t | .number = 7 | .body = "Part of epic #999" ]' "$fx/board.json" > "$tmp/misc.json"
+load "$tmp/misc.json"
+g -- migrate
+eq "cross-repo: only the local ref is linked; no parent for drift or an unknown epic" \
+  '0:{"op":"link","id":"2","dep":"3"}' "$rc:$out"
+expect "cross-repo: each cross-repo ref is warned about" \
+  'grep -qF "warn: #2 Depends-on: other/repo#5 is in another repo; not linked" <<<"$err" && grep -qF "warn: #2 Depends-on: o.rg/r_e-po#3 is in another repo" <<<"$err"'
+expect "parent drift: a native parent that differs from the text is warned about" \
+  'grep -qF "warn: #4 has native parent #1 but \`Part of epic #6\`; parent left as is (fix the body)" <<<"$err"'
+expect "an epic that is not an issue is warned about, not set" \
+  'grep -qF "warn: #7 Part of epic #999, which is not an issue in this repo; parent not set" <<<"$err"'
+g -- migrate --apply
+eq "cross-repo: --apply writes only the local link" "0:1:[3]" "$rc:$(writes):$(native 2)"
 
 # --- refusals ---------------------------------------------------------------------------------
 load "$fx/board.json"
