@@ -47,14 +47,14 @@ Every graph read or write goes through `graph.sh`, every PR read through `forge.
      ( [$open[].deps[].id | select(IN($ids[], $subs[]) | not)] | unique[]
        | "  \(mid("n_"))[\"\(if $by[.] then $by[.] | caption else "\(.): not in the graph" | mermaid_text end)\"]" ),
      ( $open[] | (.id | mid("t_")) as $to | .deps[]
-       | "  \(.id | ref) -->\(if .via then "|\"\(.via | mermaid_text)\"|" else "" end) \($to)" )
+       | "  \(.id | ref) -->\(if (.via // "") != "" then "|\"\(.via | mermaid_text)\"|" else "" end) \($to)" )
    ' "$TMPDIR/nodes.json"
    ```
    Every label goes through `lib/plan-render.jq`'s `mermaid_text`, the tested rule (GC37). Node ids take plan-render's role prefixes, with `-` mapped to `_`, so ids such as `end` or `graph` never reach id position: `t_` for each open task or promote node, `e_` for each epic subgraph, `n_` for each other node. The chart draws:
    - one subgraph per epic that holds at least one open task or promote node, labeled `id: title [status]`;
    - each open task or promote node (status other than `done` or `cancelled`), labeled `id: title [status]`, inside its epic's subgraph, or at top level when it has no epic;
    - each dep target that is not drawn above (a done or cancelled node, an epic with no open member, an external issue) once, as a plain top-level `n_` node with the same label. A dep id missing from `graph.sh list` is drawn as `id: not in the graph`. No edge ever names an undeclared node;
-   - one edge per dep of an open node, dep → dependent, labeled with its `via` when set. A dep on a drawn epic links from its subgraph.
+   - one edge per dep of an open node, dep → dependent, labeled with its `via` when set and non-empty (an empty `via` draws a plain edge, never `-->|""|`, which Mermaid rejects). A dep on a drawn epic links from its subgraph.
    If `jq` exits nonzero, report its stderr and print no chart. For a plan's own shape, `bash "$S/plan.sh" render <plan file>` prints it from the plan file.
 5. **End with a one-line "next action"**: the first of `plan`'s `actions` (what a single `delivery-tick` would do right now), or, when `actions` is empty, its `waiting` lines.
 

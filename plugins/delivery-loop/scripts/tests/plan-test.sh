@@ -269,7 +269,8 @@ eq "Mermaid safety: every line matches the statement grammar (no raw syntax char
 decode() {
   jq -Rr 'gsub("#quot;"; "\"") | gsub("#91;"; "[") | gsub("#93;"; "]") | gsub("#124;"; "|")
           | gsub("#123;"; "{") | gsub("#125;"; "}") | gsub("#lt;"; "<") | gsub("#gt;"; ">")
-          | gsub("#96;"; "`") | gsub("#35;"; "#")'
+          | gsub("#96;"; "`") | gsub("#38;"; "&") | gsub("#58;"; ":") | gsub("#32;"; " ")
+          | gsub("#35;"; "#")'
 }
 eq "Mermaid safety: the task label decodes to the title, newline as a space" \
   'store-schema: He said "hi" [x] | y {z} <b>b</b> #quot; `c` end second line [policy/S]' \
@@ -278,6 +279,39 @@ eq "Mermaid safety: the edge label decodes to the via" 'a|b "c" [d] -->|x| e f' 
   "$(printf '%s\n' "$out" | grep -- '| t_queue$' | head -n 1 | sed 's/^  t_store_schema -->|"//; s/"| t_queue$//' | decode)"
 eq "Mermaid safety: the epic title decodes" 'core: E "q" ]) | p nl' \
   "$(printf '%s\n' "$out" | grep '^  subgraph e_core\[' | sed 's/^  subgraph e_core\["//; s/"\]$//' | decode)"
+
+# Mermaid's whole-line passes ignore quoting: `.*direction\s+(TB|BT|RL|LR)` lexes
+# the rest of a line as one token, and the `style…:\S*#…;` / `classDef…:\S*#…;`
+# pre-pass strips a line's last `;`. `&` must stay literal (`&amp;` is text).
+mt() { jq -rn -L "$sd/lib" --arg s "$1" 'include "plan-render"; $s | mermaid_text'; }
+eq "mermaid_text: direction + space is broken" 'Flip direction#32;TB' "$(mt 'Flip direction TB')"
+eq "mermaid_text: direction + any whitespace is broken" 'direction#8195;LR' "$(mt $'direction\342\200\203LR')"
+eq "mermaid_text: direction without whitespace is left alone" 'directional x' "$(mt 'directional x')"
+eq "mermaid_text: & is encoded" '#38;amp; #38;lt;' "$(mt '&amp; &lt;')"
+eq "mermaid_text: a : before a non-space is encoded" 'style fill#58;#35;f00;' "$(mt 'style fill:#f00;')"
+eq "mermaid_text: the label's own ': ' is kept" 'id: x#58;' "$(mt 'id: x:')"
+jq '.epics[0].title = "Flip layout direction TB" | .tasks[0].title = "Make direction LR the default"
+    | .tasks[1].deps[0].via = "direction RL output" | .tasks[2].title = "&amp; &lt; style fill:#f00;"
+    | .epics[1].title = "classDef:#1;" | .tasks[2].deps[1].via = "a:#x; style b:#y;"' \
+  "$fx/valid.plan.json" >"$tmp/lines.plan.json"
+run -- render "$tmp/lines.plan.json"
+eq "line passes: exit 0" 0 "$rc"
+eq "line passes: no line has direction + whitespace" "" \
+  "$(printf '%s\n' "$out" | grep -E 'direction[[:space:]]' || true)"
+eq "line passes: no line matches the style/classDef ;-stripping pre-pass" "" \
+  "$(printf '%s\n' "$out" | grep -E '(style|classDef).*:[^[:space:]]*#.*;' || true)"
+bad="$(printf '%s\n' "$out" | grep -vE "$grammar" || true)"
+eq "line passes: every line matches the statement grammar" "" "$bad"
+eq "line passes: the epic title decodes" 'core: Flip layout direction TB' \
+  "$(printf '%s\n' "$out" | grep '^  subgraph e_core\[' | sed 's/^  subgraph e_core\["//; s/"\]$//' | decode)"
+eq "line passes: the task label decodes" 'store-schema: Make direction LR the default [policy/S]' \
+  "$(printf '%s\n' "$out" | grep '^    t_store_schema\[' | sed 's/^    t_store_schema\["//; s/"\]$//' | decode)"
+eq "line passes: the via decodes" 'direction RL output' \
+  "$(printf '%s\n' "$out" | grep -- '| t_queue$' | head -n 1 | sed 's/^  t_store_schema -->|"//; s/"| t_queue$//' | decode)"
+eq "line passes: & and the style look-alike decode" 'board-view: &amp; &lt; style fill:#f00; [plan/S]' \
+  "$(printf '%s\n' "$out" | grep '^    t_board_view\[' | sed 's/^    t_board_view\["//; s/"\]$//' | decode)"
+eq "line passes: the classDef look-alike decodes" 'ui: classDef:#1;' \
+  "$(printf '%s\n' "$out" | grep '^  subgraph e_ui\[' | sed 's/^  subgraph e_ui\["//; s/"\]$//' | decode)"
 
 # --- usage --------------------------------------------------------------------------
 run -- lint
