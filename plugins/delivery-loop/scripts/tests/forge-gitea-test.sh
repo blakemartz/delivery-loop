@@ -374,6 +374,24 @@ expect "pr-create --label agent-authored -> one create POST carrying labels [12]
   '[ "$rc" = 0 ] && jq_true ".number == 150" && body_true POST.pulls ".labels == [12]" && [ "$(log_count POST)" = 1 ]'
 run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label
 expect "pr-create --label without a name -> usage exit 2" '[ "$rc" = 2 ]'
+# Each --label value is exactly one label.
+reset
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label agent-authored --label $'agent-authored\ntask'
+expect "pr-create --label \$'a\\nb' -> exit 1, nothing read or sent (was split into two labels)" \
+  '[ "$rc" = 1 ] && grep -qF "newline or CR" <<<"$err" && [ ! -s "$tmp/state/log" ] && [ -z "$out" ]'
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label $'task\r'
+expect "pr-create --label with a CR -> exit 1, nothing read or sent" \
+  '[ "$rc" = 1 ] && grep -qF "newline or CR" <<<"$err" && [ ! -s "$tmp/state/log" ]'
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label "agent-authored,task"
+expect "pr-create --label a,b -> one name, not split (unknown here), nothing sent" \
+  '[ "$rc" = 1 ] && grep -qF "unknown label(s) on example/repo: agent-authored,task;" <<<"$err" && [ "$(log_count POST)" = 0 ]'
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label -x
+expect "pr-create --label -x -> one name kept exactly (unknown), nothing sent" \
+  '[ "$rc" = 1 ] && grep -qF "unknown label(s) on example/repo: -x;" <<<"$err" && [ "$(log_count POST)" = 0 ]'
+reset
+run FORGE_DRY_RUN=1 -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label task --label agent-authored --label task
+expect "pr-create --label task x2 -> sent once (labels [12,13])" \
+  '[ "$rc" = 0 ] && [ "$(sed -n 2p <<<"$out" | jq -c .labels)" = "[12,13]" ]'
 reset
 run -- pr-find --head task/105-none
 expect "pr-find --head with no PR -> empty, exit 0" '[ "$rc" = 0 ] && [ -z "$out" ]'
