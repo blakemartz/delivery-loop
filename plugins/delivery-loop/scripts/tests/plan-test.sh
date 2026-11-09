@@ -88,6 +88,14 @@ eq "GC34 schema: both errors listed" 2 "$(errors)"
 # GC6 / GC7 lint assertions.
 run -- lint "$fx/gc34-cycle.plan.json"
 eq "GC6 lint: exactly one error, the named cycle" "plan.sh: $fx/gc34-cycle.plan.json: error: plan: cycle: a -> b -> a" "$err"
+# A 3-task SCC whose representative cycle skips one member: one error, naming
+# the cycle and the members (graph.jq cycle_text).
+jq '.tasks[1].deps += [{"id": "c", "via": "c.sh"}]
+    | .tasks += [.tasks[0] | .id = "c" | .title = "Task C" | .deps = [{"id": "a", "via": "a.sh"}]]' \
+  "$fx/gc34-cycle.plan.json" >"$tmp/scc.plan.json"
+run -- lint "$tmp/scc.plan.json"
+eq "GC6 lint: one error per SCC, naming its members" \
+  "plan.sh: $tmp/scc.plan.json: error: plan: cycle: a -> b -> a (SCC: a, b, c)" "$err"
 run -- lint "$fx/gc34-unresolved-dep.plan.json"
 eq "GC7 lint: the unresolved dep is checked against graph.sh list" "graph.sh list" "$(cat "$tmp/log")"
 eq "GC7 lint: one error" 1 "$(errors)"

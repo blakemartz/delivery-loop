@@ -64,6 +64,16 @@ stderr_has "GC6 reconcile warns on the cycle" "warn: cycle: gc6-a → gc6-b → 
 eq "GC6 cycle members are not ready: both ready -> blocked" \
   '["transition gc6-a ready->blocked","transition gc6-b ready->blocked"]' "$(moves)"
 
+# A 3-node SCC whose representative cycle skips one member names the members.
+jq '[.[] | if .id == "gc6-b" then .deps += [{id: "gc6-c", via: null}] else . end]
+    + [(.[] | select(.id == "gc6-a") | .id = "gc6-c" | .deps = [{id: "gc6-a", via: null}])]' \
+  "$rfx/gc6.json" >"$tmp/scc.json"
+jq -c -L "$lib" --argjson now "$now" 'include "reconcile";
+  {nodes: ., prs: [], now: $now} | reconcile' "$tmp/scc.json" >"$tmp/out" 2>"$tmp/err"
+stderr_has "reconcile names the SCC members the cycle misses" \
+  "warn: cycle: gc6-a → gc6-b → gc6-a (SCC: gc6-a, gc6-b, gc6-c)"
+eq "reconcile warns once per SCC, not once per cycle" 1 "$(grep -c 'warn: cycle:' "$tmp/err")"
+
 run_nodes gc7.json
 stderr_has "GC7 reconcile warns on an unknown dep" "warn: gc7-orphan: unknown dep gc7-missing"
 eq "GC7 the unknown dep is unmet: ready -> blocked" \

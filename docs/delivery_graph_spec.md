@@ -214,7 +214,12 @@ A4) and are used by reconcile, tick-plan and plan lint:
 - `index_by_id`: build an id → node lookup.
 - `children(epic)`: the epic's child nodes.
 - `unblocks(id)`: the number of open nodes whose `deps` contain this id.
-- `cycles`: every simple cycle over the `deps` edges, each reported as an id path.
+- `cycles`: one representative cycle per non-trivial SCC (strongly connected
+  component of the `deps` edges; a self-loop counts), each an id path `[a, …, a]`:
+  the shortest cycle through the SCC's smallest id. Deterministic, O(V + E) via the
+  Tarjan pass, and capped (`cycle_cap`) — §5 needs cycles reported, not enumerated.
+  `cycle_report` adds each SCC's members and the uncapped count; `cycle_text`
+  renders both for reconcile's warning and lint's error.
 
 **`external` nodes (§4.1)** are inert references:
 - They never produce actions. `ready.jq` admits only `kind=="task"`, `tick-plan.jq`
@@ -341,7 +346,8 @@ backend applies them, and `--fix` prints them as `fix: …` lines.
 8. **Warnings, never mutations,** printed on stderr:
    - `blocked on cancelled dep <id>`
    - `unknown dep <id>`
-   - `cycle: <id> → … → <id>`
+   - `cycle: <id> → … → <id>`, one per non-trivial SCC, with ` (SCC: <ids>)` appended
+     when the cycle misses some of the SCC's members
 
 **`tick-plan.jq`.** Input: `{nodes, prs, flags: {parallel, auto_merge}, now}`.
 Output: `{mode, actions: [{action, pr?, id?, reason}], board: {<status>: count},

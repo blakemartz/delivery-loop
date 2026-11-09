@@ -154,7 +154,7 @@ def plan_lint($ctx):
       | [$tasks[].id | strings] as $tids
       | ($p.target_branch // $ctx.base_branch) as $target
       | ($p.promote_to // null) as $promote
-      # the task graph inside this plan, for cycle detection (graph.jq `cycles`)
+      # the task graph inside this plan, for cycle detection (graph.jq `cycle_text`)
       | [ $tasks[] | select(.id | type == "string")
           | {id, deps: [.deps | _objs[] | .id | strings
                         | select(_is_existing_ref($backend) | not)
@@ -177,7 +177,7 @@ def plan_lint($ctx):
            then .tasks | _task_errors($backend; $modules; $tids; $eids; $nodes) else empty end),
           ($eids + $tids | group_by(.)[] | select(length > 1)
            | "plan: duplicate id `\(.[0])` (epic and task ids share one namespace)"),
-          ($graph | cycles[] | "plan: cycle: \(join(" -> "))"),
+          ($graph | cycle_text(" -> ") | "plan: cycle: \(.)"),
           ($ctx.others // [] | .[]
            | select((.target_branch // $ctx.base_branch) == $target
                     and (.promote_to // null) != $promote)
