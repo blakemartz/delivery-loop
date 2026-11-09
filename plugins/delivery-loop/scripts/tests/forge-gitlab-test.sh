@@ -355,8 +355,11 @@ run FORGE_DRY_RUN=1 -- pr-merge 241 --method squash --sha "$OLD"
 expect "GC30: stale --sha under FORGE_DRY_RUN -> exit nonzero, no merge request in the dry-run log" '[ "$rc" != 0 ] && ! grep -q "^PUT" <<<"$out"'
 reset
 run FORGE_DRY_RUN=1 -- pr-merge 241 --method squash --sha "$(sha 241)"
+# Build the expected body outside expect's eval: bash 3.2 brace-expands a jq
+# object constructor nested as "$(jq "{a, b}")" inside eval'd text.
+want=$(jq -cn --arg s "$(sha 241)" '{squash: true, should_remove_source_branch: true, sha: $s}')
 expect "FORGE_DRY_RUN: pr-merge prints PUT …/merge_requests/241/merge + {squash, should_remove_source_branch, sha}" \
-  '[ "$rc" = 0 ] && [ "$(sed -n 1p <<<"$out")" = "PUT /api/v4/projects/$ENC/merge_requests/241/merge" ] && [ "$(sed -n 2p <<<"$out" | jq -c .)" = "$(jq -cn --arg s "$(sha 241)" "{squash: true, should_remove_source_branch: true, sha: \$s}")" ] && [ "$(log_count PUT)" = 0 ]'
+  '[ "$rc" = 0 ] && [ "$(sed -n 1p <<<"$out")" = "PUT /api/v4/projects/$ENC/merge_requests/241/merge" ] && [ "$(sed -n 2p <<<"$out" | jq -c .)" = "$want" ] && [ "$(log_count PUT)" = 0 ]'
 reset
 run FORGE_DRY_RUN=1 -- pr-merge 241 --method merge --sha "$(sha 241)"
 expect "FORGE_DRY_RUN: --method merge -> squash false, branch kept" '[ "$rc" = 0 ] && [ "$(sed -n 2p <<<"$out" | jq -r "[.squash, .should_remove_source_branch] | @tsv")" = "$(printf "false\tfalse")" ]'
