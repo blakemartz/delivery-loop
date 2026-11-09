@@ -312,6 +312,138 @@ mrc=0; for p in $pids; do wait "$p" || mrc=1; done
 expect "GC22: six concurrent breakers all acquire in turn" '[ "$mrc" = 0 ] && [ ! -e "$L/lock" ]'
 eq "GC22: ... with exactly one lock-broken event" '1' "$(events "$L" '.op == "lock-broken"')"
 
+# --- durability: a failed producer never commits (review B1) ----------------------
+# jq shim: when any argument contains $JQ_FAIL_MATCH it emits a torn fragment and
+# exits $JQ_FAIL_RC (an E2BIG/OOM/killed producer); every other call is real jq.
+shim="$tmp/shim"; mkdir -p "$shim"
+real_jq=$(command -v jq)
+cat > "$shim/jq" <<EOF
+#!/usr/bin/env bash
+if [ -n "\${JQ_FAIL_MATCH:-}" ]; then
+  for a in "\$@"; do
+    case "\$a" in *"\$JQ_FAIL_MATCH"*) [ "\${JQ_FAIL_RC:-1}" = 0 ] || printf '{"schema":1,"ep'; exit "\${JQ_FAIL_RC:-1}" ;; esac
+  done
+fi
+exec "$real_jq" "\$@"
+EOF
+chmod +x "$shim/jq"
+D="$tmp/s-dur"; cp -R "$S" "$D"
+for spec in 'create|.nodes += $n|1' 'create|.nodes += $n|126' 'create|.nodes += $n|0' \
+            'update|elif (.epic // {}).id == $n.id|1' 'epic|epic: $n[0], nodes: []|1'; do
+  op="${spec%%|*}" rest="${spec#*|}" match="${rest%|*}" frc="${rest##*|}"
+  before=$(cat "$D"/epics/*.json "$D/store.json" | cksum); ev0=$(wc -l < "$D/events.jsonl")
+  case "$op" in
+    create) set -- create '{"kind":"task","epic":"auth","title":"doomed"}' ;;
+    update) set -- update auth-7 '{"title":"doomed"}' ;;
+    epic)   set -- create '{"id":"doomed","kind":"epic","title":"doomed"}' ;;
+  esac
+  export JQ_FAIL_MATCH="$match" JQ_FAIL_RC="$frc"   # exported: _run word-splits its VAR=value list
+  gl "$repo" STATE_DIR="$D" PATH="$shim:$PATH" -- "$@"
+  unset JQ_FAIL_MATCH JQ_FAIL_RC
+  expect "B1: $op with its producer exiting $frc -> nonzero exit, a clear message" '[ "$rc" != 0 ] && grep -q "unchanged" <<<"$err"'
+  eq "B1: ... every epic file and store.json stay byte-identical" "$before" "$(cat "$D"/epics/*.json "$D/store.json" | cksum)"
+  expect "B1: ... no new epic file, no tmp file, no lock, no journal event" \
+    '[ ! -e "$D/epics/doomed.json" ] && [ -z "$(find "$D" -name "*.tmp.*")" ] && [ ! -e "$D/lock" ] && [ "$(wc -l < "$D/events.jsonl")" = "$ev0" ]'
+done
+set --
+gl "$repo" STATE_DIR="$D" -- list
+expect "B1: the store still reads back whole after the failed writes" '[ "$rc" = 0 ] && valid && [ "$(jq length <<<"$out")" = 18 ]'
+
+# Large nodes: no argv ceiling inside the backend (Linux MAX_ARG_STRLEN is 128 KiB).
+# A 131000-byte node-json still fits one argv string; the stored node does not.
+big=$(head -c 130950 /dev/zero | tr '\0' x)
+nj=$(printf '%s' "$big" | jq -Rc '{kind:"task",epic:"auth",title:"big",body:.}')
+gl "$repo" STATE_DIR="$D" -- create "$nj"
+id_big="$out"
+expect "B1: a create of a ${#nj}-byte node-json (stored node > 128 KiB) succeeds" \
+  '[ "$rc" = 0 ] && [ -n "$id_big" ] && [ "$(wc -c < "$D/epics/auth.json")" -gt 131072 ]'
+gl "$repo" STATE_DIR="$D" -- show "$id_big"
+eq "B1: ... and reads back with its whole body" '130950' "$(jq '.body | length' <<<"$out")"
+huge=$(head -c 300000 /dev/zero | tr '\0' y)
+(cd "$repo" && printf '%s' "$huge" | jq -Rc '{kind:"task",epic:"auth",title:"huge",body:.}' \
+   | env $ENV_CLEAR STATE_DIR="$D" bash "$backend" create - > "$tmp/out" 2> "$tmp/err") && rc=0 || rc=$?
+out=$(cat "$tmp/out"); err=$(cat "$tmp/err"); id_huge="$out"
+expect "B1: create - reads a 300 KB node from stdin" '[ "$rc" = 0 ] && [ -n "$id_huge" ]'
+(cd "$repo" && printf '%s' "$huge$huge" | jq -Rc '{body:.}' \
+   | env $ENV_CLEAR STATE_DIR="$D" bash "$backend" update "$id_huge" - > "$tmp/out" 2> "$tmp/err") && rc=0 || rc=$?
+out=$(cat "$tmp/out"); err=$(cat "$tmp/err")
+expect "B1: update - applies a 600 KB patch from stdin and journals it" \
+  '[ "$rc" = 0 ] && [ "$(tail -n 1 "$D/events.jsonl" | jq -r ".body | fromjson | .body | length")" = 600000 ]'
+gl "$repo" STATE_DIR="$D" -- show "$id_huge"
+eq "B1: ... and the node reads back with the patched body" '600000' "$(jq '.body | length' <<<"$out")"
+
+# The reader refuses a broken epic file instead of reading "no nodes".
+for broken in empty blank two array torn; do
+  B="$tmp/s-broken-$broken"; cp -R "$S" "$B"
+  case "$broken" in
+    empty) : > "$B/epics/auth.json" ;;
+    blank) printf '  \n' > "$B/epics/auth.json" ;;
+    two)   jq -c . "$S/epics/auth.json" "$S/epics/auth.json" > "$B/epics/auth.json" ;;
+    array) echo '[]' > "$B/epics/auth.json" ;;
+    torn)  head -c 40 "$S/epics/auth.json" > "$B/epics/auth.json" ;;
+  esac
+  gl "$repo" STATE_DIR="$B" -- list
+  expect "B1: an epic file that is $broken -> list fails loudly (exit 1, message), prints no nodes" \
+    '[ "$rc" = 1 ] && [ -z "$out" ] && grep -qi "epic file\|cannot read" <<<"$err"'
+done
+B="$tmp/s-broken-empty"
+gl "$repo" STATE_DIR="$B" -- list
+expect "B1: the empty-file message names the file" 'grep -q "auth.json is empty" <<<"$err"'
+gl "$repo" STATE_DIR="$B" -- create '{"kind":"task","epic":"auth","title":"x"}'
+expect "B1: ... and writes over a broken store are refused too" '[ "$rc" = 1 ] && [ ! -s "$B/epics/auth.json" ]'
+
+# --- durability: a torn journal tail (review B2) -----------------------------------
+J="$tmp/s-torn"
+gl "$repo" STATE_DIR="$J" -- create '{"id":"hum-2","kind":"task","title":"never pinged","status":"claimed","claim":{"actor":"bob","run":null,"at":null,"by":"human"}}'
+cat "$fx/gc44-events.jsonl" >> "$J/events.jsonl"   # ends in a torn line, no newline
+(cd "$repo" && env $ENV_CLEAR STATE_DIR="$J" bash -c '
+   . "$1"; gl_resolve_state; GL_ACTOR=loop
+   gl_with_lock gl_event comment hum-2 "" "" "STALE-CLAIM-PING: torn-tail regression"' _ "$backend" \
+   > "$tmp/out" 2> "$tmp/err") && rc=0 || rc=$?
+expect "B2: appending a comment event after a torn tail succeeds" '[ "$rc" = 0 ]'
+eq "B2: the torn line was terminated: the new event is its own, parseable last line" \
+  '"STALE-CLAIM-PING: torn-tail regression"' "$(tail -n 1 "$J/events.jsonl" | jq -c .body)"
+gl "$repo" STATE_DIR="$J" -- update hum-2 '{"title":"after"}'
+g "$repo" STATE_DIR="$J" -- list
+expect "B2: torn tail, then a valid STALE-CLAIM-PING comment event -> pinged_at set" \
+  '[ "$rc" = 0 ] && valid && [ "$(node hum-2 .pinged_at)" != null ]'
+expect "B2: the reader warns about, and skips, only the torn line (8)" \
+  'grep -q "warning: skipping unparsable journal 1 line(s): 8 " <<<"$err"'
+eq "B2: every other journal line parses" "$(( $(wc -l < "$J/events.jsonl") - 1 ))" \
+  "$(jq -R 'fromjson? // empty' "$J/events.jsonl" | jq -s length)"
+{ head -n 2 "$J/events.jsonl"; printf '{"torn mid-journal\n'; tail -n +3 "$J/events.jsonl"; } > "$tmp/x" && mv "$tmp/x" "$J/events.jsonl"
+gl "$repo" STATE_DIR="$J" -- show hum-2
+expect "B2: an unparsable line mid-journal hides none of the events after it" \
+  '[ "$rc" = 0 ] && [ "$(jq -r .pinged_at <<<"$out")" != null ] && grep -q "2 line(s): 3, 9 " <<<"$err"'
+
+# --- scratch dirs (review S1) and leftover tmp files (review N2) ---------------------
+T="$tmp/tmpdir"; mkdir -p "$T"
+K="$tmp/s-leak"; cp -R "$S" "$K"
+for i in 1 2 3; do
+  gl "$repo" STATE_DIR="$K" TMPDIR="$T" -- list
+  gl "$repo" STATE_DIR="$K" TMPDIR="$T" -- show auth-7
+  gl "$repo" STATE_DIR="$K" TMPDIR="$T" -- show nope
+  gl "$repo" STATE_DIR="$K" TMPDIR="$T" -- create "{\"kind\":\"task\",\"epic\":\"auth\",\"title\":\"leak $i\"}"
+  gl "$repo" STATE_DIR="$K" TMPDIR="$T" -- create '{"kind":"task","epic":"nope","title":"bad"}'
+  gl "$repo" STATE_DIR="$K" TMPDIR="$T" -- update auth-7 "{\"title\":\"leak $i\"}"
+  gl "$repo" STATE_DIR="$K" TMPDIR="$T" -- link auth-7 auth-1
+  gl "$repo" STATE_DIR="$K" TMPDIR="$T" -- flag auth-7 needs-human on
+  gl "$repo" STATE_DIR="$K" TMPDIR="$T" -- flag auth-7 needs-human off
+done
+g "$repo" STATE_DIR="$K" TMPDIR="$T" -- list
+eq "S1: 28 calls (ok and failing, backend and graph.sh) leave no dl-graph-local.* dir in TMPDIR" '' \
+  "$(find "$T" -maxdepth 1 -name 'dl-graph-local.*' | tr '\n' ' ')"
+
+L="$tmp/s-sweep"; fresh_state "$L"
+stale="$host $(dead_pid) dead-run $(( $(now) - 1000 ))"; plant "$L" "$stale"
+printf '{"schema":1,"ep' > "$L/epics/inbox.json.tmp.99999"; printf '{' > "$L/store.json.tmp.99998"
+gl "$repo" STATE_DIR="$L" LOCK_WAIT_SECONDS=5 -- update t '{"title":"swept"}'
+expect "N2: breaking a dead writer's lock sweeps its *.tmp.* files (GC23 holds after recovery)" \
+  '[ "$rc" = 0 ] && [ -z "$(find "$L" -name "*.tmp.*")" ] && [ "$(events "$L" ".op == \"lock-broken\"")" = 1 ]'
+L="$tmp/s-hint"; fresh_state "$L"; plant "$L" "$host $$ live-run $(now)"
+gl "$repo" STATE_DIR="$L" LOCK_WAIT_SECONDS=0 -- update t '{"title":"x"}'
+expect "N3: the exit-75 message points at unlock --force" '[ "$rc" = 75 ] && grep -q "unlock --force" <<<"$err"'
+
 # --- GC27: two worktrees, one STATE_DIR -------------------------------------------
 wt="$tmp/wt-b"
 git -C "$repo" worktree add -q --detach "$wt"
