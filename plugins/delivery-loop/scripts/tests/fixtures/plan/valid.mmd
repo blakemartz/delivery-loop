@@ -1,0 +1,17 @@
+flowchart TD
+  subgraph e_core["core: Core engine"]
+    t_store_schema["store-schema: Store schema [policy/S]"]
+    t_queue["queue: Ready queue [plan/M]"]
+  end
+  subgraph e_ui["ui: User interface"]
+    t_board_view["board-view: Board view [plan/S]"]
+    t_user_guide["user-guide: User guide [docs/S]"]
+  end
+  n_42["#35;42 (existing)"]
+  promote{{"promote: release/x → main"}}
+  t_store_schema -->|"lib/store.jq read_store"| t_queue
+  n_42 -->|"the existing config loader"| t_queue
+  t_queue -->|"queue.sh ready"| t_board_view
+  t_store_schema -->|"store shape"| t_board_view
+  e_core --> promote
+  e_ui --> promote
