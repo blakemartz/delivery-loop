@@ -355,12 +355,14 @@ has "51 blockers: says so" "$err" '`demo-promote`: 51 blockers exceed GitHub'"'"
 eq "51 blockers: no issue created" 0 "$(grep -c '^gh issue create' "$st/log" || true)"
 
 # --- github: plan text that the read path would parse as node metadata -----------
-# The github read path (backends/graph-github.jq) takes the FIRST
-# `Delivery-Plan:` / `Delivery-Target:` line and every `#N` on a line containing
-# `Depends-on:`, and create skips its own trailer when the body already has the
-# key. First reproduce each effect at the backend (a body carrying the line, as
-# apply wrote it before the fix), then show apply now refuses the plan text
-# before any write.
+# Before #77 the github read path (backends/graph-github.jq) took the FIRST
+# `Delivery-Plan:` / `Delivery-Target:` line of the body and every `#N` on any
+# line containing `Depends-on:`. It now reads machine keys from the trailer
+# block only and `Depends-on:` at line start only: the probes below show each
+# old effect is gone at the backend (a body carrying the line, as apply wrote
+# it before lint refused it), except a lone CR inside a line-start
+# `Depends-on:` line, which still reads as an edge. Apply still refuses the
+# plan text before any write (lint, then the composed-body check).
 fresh_repo release/x
 gh_board
 probe() {  # probe <body>: create one task with that body; $board = graph.sh list
@@ -371,16 +373,16 @@ probe() {  # probe <body>: create one task with that body; $board = graph.sh lis
   board_gh
 }
 probe $'Background.\nDelivery-Plan: other/zzz'
-eq "reproduce: a Delivery-Plan: line in the body steals the plan_ref (apply would duplicate on every run)" \
-  '"other/zzz"' "$(jq -c '[.[] | select(.title == "probe")][0].plan_ref' <<<"$board")"
+eq "fixed at the read (#77): a Delivery-Plan: line in the body no longer steals the plan_ref" \
+  '"demo/probe"' "$(jq -c '[.[] | select(.title == "probe")][0].plan_ref' <<<"$board")"
 gh_board
 probe 'Delivery-Target: main'
-eq "reproduce: a Delivery-Target: line in the body retargets the node" \
-  '"main"' "$(jq -c '[.[] | select(.title == "probe")][0].target_branch' <<<"$board")"
+eq "fixed at the read (#77): a Delivery-Target: line in the body no longer retargets the node" \
+  '"release/x"' "$(jq -c '[.[] | select(.title == "probe")][0].target_branch' <<<"$board")"
 gh_board
 probe $'## Acceptance criteria\n- [ ] README documents Depends-on: #42 lines'
-eq "reproduce: a criterion mentioning Depends-on: #N adds a phantom edge" \
-  '["42"]' "$(jq -c '[.[] | select(.title == "probe")][0] | [.deps[].id]' <<<"$board")"
+eq "fixed at the read (#77): a criterion mentioning Depends-on: #N adds no edge" \
+  '[]' "$(jq -c '[.[] | select(.title == "probe")][0] | [.deps[].id]' <<<"$board")"
 
 gh_board
 probe $'Depends-on: x\r#42'
@@ -422,8 +424,8 @@ for form in 'Depends-on: x\r#1' 'Depends-on:\r#1' 'Depends-on: \r\r#1'; do
 done
 
 # Drift no longer hides a marker line: a human inserting `Delivery-Target: main`
-# above the trailer block is body drift (and target_branch drift), not just the
-# latter.
+# above the trailer block is body drift. Since #77 it is prose to the reader, so
+# target_branch is unchanged (no target_branch drift).
 fresh_repo release/x
 gh_board
 apply_gh "$tmp/gh.plan.json"
@@ -435,7 +437,7 @@ jq --argjson n "$q" 'map(if .number == $n then .body = "Delivery-Target: main\n"
 : >"$st/log"
 apply_gh "$tmp/gh.plan.json"
 eq "marker drift: exit 0" 0 "$rc"
-eq "marker drift: body and target_branch both reported" $'drift: queue body\ndrift: queue target_branch' \
+eq "marker drift: body reported; target_branch unchanged (a key line above the trailer block is prose, #77)" 'drift: queue body' \
   "$(printf '%s\n' "$err" | grep '^drift:' || true)"
 eq "marker drift: nothing created" 0 "$(grep -c '^gh issue create' "$st/log" || true)"
 
