@@ -77,8 +77,9 @@ eq "GC5: graph.sh ready reproduces the captured v0.1.4 order and fields" \
   "$(cat "$here/fixtures/ready/gc5-v014.jsonl")" "$got"
 eq "GC5: ready lines carry target_branch = BASE_BRANCH by default" '["main"]' \
   "$(jq -sc 'map(.target_branch) | unique' <<<"$out")"
+# closedByPullRequestsReferences (B2, GC75) rides with the native relations.
 expect "GC5: one paginated list of all issues with the §6.2 field set and an explicit limit" \
-  'log_has "gh issue list --state all --json number,title,state,stateReason,labels,assignees,body,createdAt,updatedAt,comments,blockedBy,parent --limit 5000" && [ "$(log_count "gh issue list")" = 1 ]'
+  'log_has "gh issue list --state all --json number,title,state,stateReason,labels,assignees,body,createdAt,updatedAt,comments,blockedBy,parent,closedByPullRequestsReferences --limit 5000" && [ "$(log_count "gh issue list")" = 1 ]'
 
 run SHIM_BOARD=gc5-issues.json BASE_BRANCH=release/y -- ready
 eq "target_branch defaults to the configured BASE_BRANCH" '["release/y"]' \
@@ -259,7 +260,7 @@ expect "GC56: show warns once on an old gh too" \
 # --- show / export ----------------------------------------------------------------
 run -- show 34
 expect "show exits 0, reads one issue with the §6.2 field set" \
-  '[ "$rc" = 0 ] && log_has "gh issue view 34 --json number,title,state,stateReason,labels,assignees,body,createdAt,updatedAt,comments,blockedBy,parent" && ! log_has "issue list"'
+  '[ "$rc" = 0 ] && log_has "gh issue view 34 --json number,title,state,stateReason,labels,assignees,body,createdAt,updatedAt,comments,blockedBy,parent,closedByPullRequestsReferences" && ! log_has "issue list"'
 eq "show emits the same node list does" "$(run -- list; node 34 .)" "$(run -- show 34; jq -c . <<<"$out")"
 run -- show 5
 eq "show reads the full blockedBy connection from gh issue view" '["3","4","6"]' "$(jq -c '[.deps[].id]' <<<"$out")"
