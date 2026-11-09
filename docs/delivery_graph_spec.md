@@ -965,6 +965,12 @@ message:
 - `GRAPH_BACKEND=github` requires `FORGE=github` (GC40);
 - unknown backend or forge values are rejected, listing the valid ones (GC41);
 - a gitlab/gitea forge with an unset token is rejected (GC59).
+- the jq on `PATH` must be jq ≥ 1.7, excluding 1.8.2 (upstream jqlang/jq#3597,
+  which mis-links nested module includes). jq < 1.7 and exactly 1.8.2 (including
+  `1.8.2-dirty`) are rejected; the message names the bug and the remedy (1.8.1, or
+  1.8.3 or later). A version string that does not parse as a release is accepted
+  without a message. Alpine's jq 1.6 build reports `jq-master-…`, so it is not
+  caught. The gate's bash 3.2 container stage keeps its jq 1.7.1 pin.
 
 `graph.sh`, `forge.sh`, `tick-plan.sh`, `plan.sh` and `promote.sh` each run the
 check once at start-up, and exit 1 on an invalid combination before doing any I/O

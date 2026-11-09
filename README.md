@@ -105,6 +105,11 @@ call them; they never re-derive the mechanics.
 ## Prerequisites
 
 - `gh` (authenticated, repo scope), `git`, `jq`, `bash`.
+- jq ≥ 1.7, excluding 1.8.2 (upstream bug
+  [jqlang/jq#3597](https://github.com/jqlang/jq/issues/3597)); use 1.8.1, or 1.8.3
+  or later. `delivery-config.sh --check` refuses an unsupported jq. A version
+  string it cannot parse is accepted, so Alpine's jq 1.6 build, which reports
+  `jq-master-…`, is not caught: upgrade it yourself.
 - A GitHub repo with Issues enabled — don't have one yet? `init` checks both and
   walks you through creating or connecting one.
 
