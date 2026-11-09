@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Tests for lib/reconcile.jq (docs/delivery_graph_spec.md §5 `reconcile.jq`):
 # the reconcile assertions of golden cases GC2, GC4, GC6, GC7, GC24 (record),
-# GC25 (record), GC42 (record), GC43, GC44, GC45 (record), GC65 and GC69 (§12;
+# GC25 (record), GC42 (record), GC43, GC44, GC45 (record), GC65, GC68 (the
+# reconcile side of the `external` node kind, §4.1/§5) and GC69 (§12;
 # §17 row A5, hardened by issue #47), plus the amended §5 rows of
 # lib/transitions.jq that reconcile's records depend on (merged PR -> done from
 # every open status; epic ready -> done; ready/blocked drift -> in-review).
@@ -183,6 +184,27 @@ eq "GC69 the epic with an open PR still closes when its last child merges (rule 
   '["transition 9 in-review->done","transition 1 ready->done","transition 4 blocked->done","transition 5 ready->done"]' \
   "$(moves)"
 
+# --- GC68: external nodes get no record of any rule ------------------------------------------
+# Externals: a (done, child of epic e), b (open, child of epic f), d (cancelled),
+# x (open, with an open agent PR: rule 4), y (open, with a merged agent PR into
+# its target: rule 3). Only their dependents and epics move: t (dep a done)
+# unblocks, u (dep b open) blocks, v (dep d cancelled) stays blocked; epic e
+# (children: done external a + done task c) completes, epic f (open external
+# child b) does not.
+run_sparse gc68
+eq "GC68 externals get no record; their dependents and epics do" \
+  '["transition gc68-e ready->done","transition gc68-t blocked->ready","transition gc68-u ready->blocked"]' \
+  "$(moves)"
+eq "GC68 an open external with no deps gets no blocked -> ready record" '[]' \
+  "$(jq -c '[.[] | select(.id == "gc68-b" or .id == "gc68-x" or .id == "gc68-y")]' "$tmp/out")"
+stderr_has "GC68 a cancelled external dep warns like any cancelled dep (GC2)" \
+  "warn: gc68-v: blocked on cancelled dep gc68-d"
+eq "GC68 the only warning is the cancelled dep (no skipped record, no unknown dep)" \
+  'warn: gc68-v: blocked on cancelled dep gc68-d' "$(cat "$tmp/err")"
+# Every rule 1-7 trigger an external could match, on one board: none fires.
+run_sparse gc68 '.nodes = [.nodes[] | select(.kind == "external")]'
+eq "GC68 a board of externals only -> no records, no warnings" '[]|' "$(moves)|$(cat "$tmp/err")"
+
 # --- GC65: a record the table rejects is skipped; the rest stand ------------------------------
 run_sparse gc65
 eq "GC65 the done node's reclaim is skipped, the claimed node's is applied" \
@@ -221,6 +243,9 @@ task ready in-review human 0
 task approved in-review reconcile 0
 promote blocked in-review reconcile 1
 epic ready in-review reconcile 0
+external blocked in-review reconcile 0
+external blocked ready reconcile 0
+external blocked done reconcile 0
 epic blocked in-review reconcile 0
 task blocked done reconcile 1
 task ready done reconcile 1

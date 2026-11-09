@@ -27,7 +27,7 @@
 #   7. an open epic with >= 1 child (graph.jq children: backlinks + checklist),
 #      every child done or cancelled -> done (GC45). Repeated until no epic
 #      changes, so an epic of epics closes in the same pass.
-#   4. claimed, or ready/blocked on a non-epic node, + an open agent PR with
+#   4. claimed, or ready/blocked on a task/promote node, + an open agent PR with
 #      its task_id -> in-review (GC43; ready/blocked are status drift, GC69;
 #      an epic is left to rules 1/2/7). Runs before rules 1 and 2, so a
 #      drifted node is never shuffled between ready and blocked first: an open
@@ -41,6 +41,11 @@
 #      one ping; human claims are never released (GC44).
 #   8. warnings: `blocked on cancelled dep`, `unknown dep` (open nodes), and
 #      `cycle: a → … → a` (graph.jq cycles).
+# Rules 1-7 act on task, epic and promote nodes only (_subjects): an `external`
+# node (§4.1) gets no record of any rule, filtered here rather than left for the
+# transition table to reject, so a board with externals prints no "skipped"
+# warnings. Externals still count as deps (satisfied only when done) and as epic
+# children (rule 7), since both read the whole board.
 # A node gets at most one record per pass: the first rule that fires wins.
 # Every transition/reclaim record is validated with transitions.jq (actor
 # reconcile) before it is accepted; a rejected one becomes a warning and is
@@ -89,6 +94,12 @@ def _offer_all(f): reduce f as $rec (.; _offer($rec));
 # _nodes — the working copy as a node array, in input order.
 def _nodes: .idx as $idx | .order | map($idx[.]);
 
+# _is_subject — input: a node. Rules 1-7 act on it (§5: task, epic, promote).
+def _is_subject: .kind == "task" or .kind == "epic" or .kind == "promote";
+
+# _subjects — the working copy's rule 1-7 subjects, as a stream, in input order.
+def _subjects: _nodes[] | select(_is_subject);
+
 def _rec($op; $to; $reason): {op: $op, id, from: .status, to: $to, reason: $reason};
 
 # _rule3 — §5 rule 3 is existential: *an* agent PR merged into the node's merge
@@ -105,7 +116,7 @@ def _rule3($prs):
     | group_by(.task_id)[]
     | max_by(.number) as $pr
     | $idx[$pr.task_id]
-    | select(is_open)
+    | select(_is_subject and is_open)
     | _rec("transition"; "done"; "PR #\($pr.number) merged into \($pr.base)"));
 
 def _rule7:
@@ -128,7 +139,7 @@ def _rule7:
 def _rules12:
   _offer_all(
     .idx as $idx
-    | _nodes[]
+    | _subjects
     | if .status == "blocked" and deps_done($idx) and (.needs_human | not) then
         _rec("transition"; "ready"; "every dep is done")
       elif .status == "ready" and (deps_done($idx) | not) then
@@ -137,18 +148,19 @@ def _rules12:
 
 def _rule4($open):
   _offer_all(
-    _nodes[]
+    _subjects
     # ready/blocked drift is a task/promote repair only: an epic sent to
     # in-review could never be closed by rule 7 (epic rows allow ready -> done).
     | select(.status == "claimed"
-             or ((.status == "ready" or .status == "blocked") and .kind != "epic"))
+             or ((.status == "ready" or .status == "blocked")
+                 and (.kind == "task" or .kind == "promote")))
     | .id as $id
     | first($open[] | select(.agent and .task_id == $id)) as $pr
     | _rec("transition"; "in-review"; "open PR #\($pr.number)"));
 
 def _rule5($open; $now):
   _offer_all(
-    _nodes[]
+    _subjects
     | select(.claim != null and .claim.by == "agent" and (.needs_human | not)
              and ($now - (.updated_at | iso_epoch)) > stale_agent_seconds)
     | .id as $id
@@ -157,7 +169,7 @@ def _rule5($open; $now):
 
 def _rule6($now):
   _offer_all(
-    _nodes[]
+    _subjects
     | select(.claim != null and .claim.by == "human" and is_open
              and .pinged_at == null
              and ($now - (.updated_at | iso_epoch)) > stale_human_seconds)

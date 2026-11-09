@@ -1,0 +1,10 @@
+{"flags": {"parallel": 4, "auto_merge": true},
+ "nodes": [{"id": "t-free", "deps": ["x-done"]},
+           {"id": "t-wait", "status": "blocked", "deps": ["x-open"]},
+           {"id": "x-done", "kind": "external", "status": "done", "size": null},
+           {"id": "x-open", "kind": "external", "status": "blocked", "size": null},
+           {"id": "x-cancelled", "kind": "external", "status": "cancelled", "size": null},
+           {"id": "x-pr", "kind": "external", "status": "blocked", "size": null},
+           {"id": "x-flagged-pr", "kind": "external", "status": "blocked", "size": null}],
+ "prs": [{"number": 31, "task_id": "x-pr"},
+         {"number": 32, "task_id": "x-flagged-pr", "labels": ["agent-authored", "needs-human"]}]}
