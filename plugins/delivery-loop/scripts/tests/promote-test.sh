@@ -10,6 +10,18 @@
 # closes the node on a merge), releases its claim on SIGTERM during the gate,
 # and both scripts' gates resolve the gated tree's own .claude/delivery.conf,
 # not the caller's exported config.
+# Signal windows: TERM, INT and HUP, each sent to the script's PID alone and
+# to its whole process group (Ctrl-C, a hangup, `kill -- -pgid`), while
+# promote.sh's `graph claim` has landed (the claim is released, not leaked),
+# while its `gh pr create` has recorded the PR (the claim is kept for
+# reconcile, not released), and while tick-merge.sh's `gh pr merge` has landed
+# (the merge is still reconciled and reported). And a gate that ignores TERM
+# is KILLed after a bounded wait, so the caller still exits.
+# The claim window pauses a copy of the engine ($tmp/eng: graph.sh patched to
+# wait on $SHIM_STATE/pause-claim after the backend claim); the gh windows are
+# the shim's pause-create / pause-merge. Each signal run is a job of its own
+# (set -m: its own process group, and INT not ignored at entry) with a private
+# TMPDIR, since a group signal kills helpers before their own cleanup.
 #
 # Offline: a throwaway repo under ${TMPDIR:-/tmp} clones a bare local "origin".
 # The graph is GRAPH_BACKEND=local (a private STATE_DIR per case); the forge is
@@ -69,11 +81,13 @@ x_sha=$(sha task/x--ok); y_sha=$(sha task/y--red); z_sha=$(sha task/z--conf); c_
 
 # The gate: records where it ran, runs $tmp/gate-hook when present (a race
 # injected mid-gate), hangs while $tmp/gate-hang exists (its pid in
-# $tmp/gate-pid; 60 s cap), and is red when $tmp/gate-red exists or when both
+# $tmp/gate-pid; 60 s cap; ignoring TERM while $tmp/gate-trap-term exists),
+# and is red when $tmp/gate-red exists or when both
 # conflict-a (main's) and conflict-b (task y's) are in the tree.
 cat > "$tmp/gate.sh" <<EOF
 #!/usr/bin/env bash
 echo "\$(pwd) \$(git rev-parse HEAD) \$(git rev-parse --verify --quiet HEAD^2 || echo -)" >> "$tmp/gate-runs"
+[ ! -f "$tmp/gate-trap-term" ] || trap '' TERM
 [ ! -f "$tmp/gate-hook" ] || bash "$tmp/gate-hook"
 if [ -f "$tmp/gate-hang" ]; then
   echo \$\$ > "$tmp/gate-pid"; i=0
@@ -374,5 +388,113 @@ expect "the gate ran on origin/main merged with the head" \
 eq "stdout reports the merge" '{"pr":201,"result":"merged"}' "$(jq -c '{pr, result}' <<<"$out")"
 eq "reconciled: the task is done" '"done"' "$(field "$M" x .status)"
 eq "no gate worktree left behind" 1 "$(worktrees)"
+
+# --- signal windows ------------------------------------------------------------------
+# The engine copy whose graph.sh pauses after the backend claim has landed.
+eng="$tmp/eng"
+mkdir -p "$eng"
+cp "$scripts"/*.sh "$eng/"
+cp -R "$scripts/lib" "$scripts/backends" "$eng/"
+awk '{ print }
+  /^    bash "\$backend" claim "\$id" "\$actor"/ {
+    print "    if [ -f \"$SHIM_STATE/pause-claim\" ]; then echo $$ > \"$SHIM_STATE/pause-claim.at\"; i=0"
+    print "      while [ -f \"$SHIM_STATE/pause-claim\" ] && [ $i -lt 1200 ]; do command -p sleep 0.05; i=$((i + 1)); done; fi"
+  }' "$scripts/graph.sh" > "$eng/graph.sh"
+grep -q pause-claim "$eng/graph.sh" || { echo "FAIL - could not patch the claim pause into graph.sh" >&2; exit 1; }
+
+# sig_run <script> <state-dir> <pause> <SIG> <pid|group> <args…>: start the
+# script (from the engine copy) as its own job, wait until it sits at
+# $SHIM_STATE/pause-<pause>, send SIG to its PID or its process group, lift the
+# pause and wait. Sets $rc, $out, $err, $paused.
+sig_run() {
+  local script="$1" st="$2" pause="$3" sig="$4" to="$5" bg i=0; shift 5
+  : > "$tmp/shim/log"
+  rm -rf "$tmp/sigtmp" "$tmp/shim/pause-$pause.at"; mkdir -p "$tmp/sigtmp"
+  touch "$tmp/shim/pause-$pause"
+  set -m
+  # shellcheck disable=SC2086
+  ( cd "$repo" && exec env $ENV_CLEAR GRAPH_BACKEND=local FORGE=github STATE_DIR="$st" \
+      GATE_CMD="bash $tmp/gate.sh" PATH="$tmp/bin:$PATH" SHIM_STATE="$tmp/shim" TMPDIR="$tmp/sigtmp" \
+      bash "$eng/$script" "$@" > "$tmp/out" 2> "$tmp/err" < /dev/null ) &
+  bg=$!
+  set +m
+  while [ ! -s "$tmp/shim/pause-$pause.at" ] && [ "$i" -lt 300 ]; do command -p sleep 0.1; i=$((i + 1)); done
+  if [ -s "$tmp/shim/pause-$pause.at" ]; then paused=yes; else paused=no; fi
+  if [ "$to" = group ]; then kill "-$sig" -- "-$bg" 2>/dev/null || true
+  else kill "-$sig" "$bg" 2>/dev/null || true; fi
+  rm -f "$tmp/shim/pause-$pause"
+  wait "$bg" 2>/dev/null && rc=0 || rc=$?
+  out=$(cat "$tmp/out"); err=$(cat "$tmp/err")
+}
+signum() { case "$1" in INT) echo 2 ;; HUP) echo 1 ;; TERM) echo 15 ;; esac; }
+releases() { grep -c '"op":"release"' "$1/events.jsonl" || true; }
+
+for sig in TERM INT HUP; do
+  code=$((128 + $(signum "$sig")))
+  for to in pid group; do
+    c="$sig to the $to"
+
+    # B: promote.sh, the claim has landed when the signal comes.
+    S="$tmp/sc-$sig-$to"; board "$S"; echo '{}' > "$tmp/shim/prs.json"
+    sig_run promote.sh "$S" claim "$sig" "$to" rel-promote
+    eq "claim window, $c: paused after the backend claim" yes "$paused"
+    eq "claim window, $c: promote.sh exits $code" "$code" "$rc"
+    eq "claim window, $c: the claim is released, the node ready" 'null "ready"' \
+      "$(field "$S" rel-promote .claim) $(field "$S" rel-promote .status)"
+    expect "claim window, $c: no gate, no PR" '! log_has "pr create" && [ "$(jq length "$tmp/shim/prs.json")" = 0 ]'
+
+    # A: promote.sh, the PR is recorded when the signal comes.
+    S="$tmp/sp-$sig-$to"; board "$S"; echo '{}' > "$tmp/shim/prs.json"
+    sig_run promote.sh "$S" create "$sig" "$to" rel-promote
+    eq "create window, $c: paused inside gh pr create" yes "$paused"
+    eq "create window, $c: promote.sh exits $code" "$code" "$rc"
+    eq "create window, $c: the promotion PR exists" '"OPEN"' "$(jq -c '.["150"].state' "$tmp/shim/prs.json")"
+    eq "create window, $c: the claim is not released" 0 "$(releases "$S")"
+    st_now=$(field "$S" rel-promote .status)
+    expect "create window, $c: the node is claimed or in-review, not ready ($st_now)" \
+      '[ "$st_now" = "\"claimed\"" ] || [ "$st_now" = "\"in-review\"" ]'
+    if [ "$to" = pid ]; then
+      eq "create window, $c: the PR is still reported, the node in-review" '150 "in-review"' \
+        "$(jq -c .pr <<<"$out") $st_now"
+    fi
+
+    # tick-merge.sh, the merge has landed when the signal comes.
+    M="$tmp/sm-$sig-$to"
+    g "$M" create '{"id":"x","kind":"task","title":"task x","size":"S","status":"approved"}'
+    echo '{}' > "$tmp/shim/prs.json"; mkpr 201 task/x--ok "$x_sha" main SUCCESS x
+    sig_run tick-merge.sh "$M" merge "$sig" "$to" 201 "$x_sha"
+    eq "merge window, $c: paused inside gh pr merge" yes "$paused"
+    eq "merge window, $c: tick-merge.sh exits $code" "$code" "$rc"
+    eq "merge window, $c: the landed merge is reported on stdout" '{"pr":201,"result":"merged"}' \
+      "$(jq -c '{pr, result}' <<<"$out" 2>/dev/null)"
+    eq "merge window, $c: reconciled, the task done" '"done"' "$(field "$M" x .status)"
+  done
+done
+eq "signal windows: no gate worktree left behind" 1 "$(worktrees)"
+
+# --- dl_gate_cleanup: a gate that ignores TERM is KILLed after a bounded wait ---------
+S="$tmp/skill"; board "$S"; echo '{}' > "$tmp/shim/prs.json"
+rm -f "$tmp/gate-pid"; touch "$tmp/gate-hang" "$tmp/gate-trap-term"; : > "$tmp/shim/log"
+rm -rf "$tmp/sigtmp"; mkdir -p "$tmp/sigtmp"
+# shellcheck disable=SC2086
+( cd "$repo" && exec env $ENV_CLEAR GRAPH_BACKEND=local FORGE=github STATE_DIR="$S" \
+    GATE_CMD="bash $tmp/gate.sh" PATH="$tmp/bin:$PATH" SHIM_STATE="$tmp/shim" TMPDIR="$tmp/sigtmp" \
+    bash "$scripts/promote.sh" rel-promote > "$tmp/out" 2> "$tmp/err" ) &
+bg=$!
+i=0
+while [ ! -s "$tmp/gate-pid" ] && [ "$i" -lt 300 ]; do command -p sleep 0.1; i=$((i + 1)); done
+gate_pid=$(cat "$tmp/gate-pid" 2>/dev/null || echo none)
+expect "TERM-ignoring gate: the gate started" '[ "$gate_pid" != none ]'
+t0=$(date +%s)
+kill -TERM "$bg"
+wait "$bg" && rc=0 || rc=$?
+elapsed=$(( $(date +%s) - t0 ))
+rm -f "$tmp/gate-hang" "$tmp/gate-trap-term"
+out=$(cat "$tmp/out"); err=$(cat "$tmp/err")
+eq "TERM-ignoring gate: promote.sh exits 143" 143 "$rc"
+expect "TERM-ignoring gate: the exit is bounded (${elapsed}s, under 20s; the gate would hang 60s)" '[ "$elapsed" -lt 20 ]'
+expect "TERM-ignoring gate: the gate was KILLed" '! kill -0 "$gate_pid" 2>/dev/null && grep -q "sending KILL" <<<"$err"'
+eq "TERM-ignoring gate: the claim is released" 'null' "$(field "$S" rel-promote .claim)"
+eq "TERM-ignoring gate: the gate worktree is removed" 1 "$(worktrees)"
 
 exit "$fails"

@@ -32,7 +32,10 @@
 #      the head). The gate vouches for the merge onto the base it saw, not
 #      for the exact tree that lands; the next gate on that base catches it.
 #   5. `forge.sh pr-merge <pr> --method $TASK_MERGE_METHOD --sha <sha>` (the
-#      forge refuses a moved head), then a re-read must show `merged`.
+#      forge refuses a moved head), then a re-read must show `merged` (at
+#      <sha>). The re-read decides even when pr-merge fails: a merge that
+#      landed before the forge call died (a signal, a lost response) is
+#      reported as merged.
 #   6. `graph.sh reconcile --fix`, so the task goes done (rule 3); a failure
 #      there is a warning only, since the merge has landed.
 # Promotion PRs (PROMOTE_MERGE_METHOD) are a human's to merge (§9): refused.
@@ -47,6 +50,14 @@
 #
 # Exit codes: 0 merged · 1 refused / not merged / invalid config · 2 usage ·
 # 128+n killed by signal n (the running gate stopped, nothing merged).
+# Signals: one (INT, TERM, HUP) that arrives from the merge request on is held
+# until the merge is settled: a landed merge is reconciled and its `merged`
+# line printed, then the script exits 128+n. Before the merge request a
+# signal exits at once, stopping a running gate.
+# SIGINT cannot be trapped when a non-interactive shell without job control
+# starts this script in the background (`tick-merge.sh … &`): POSIX has such
+# a child ignore INT at entry, so INT is then a no-op. Use TERM, or start it
+# with job control (`set -m`).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/config.sh
@@ -66,18 +77,28 @@ cd "$(git rev-parse --show-toplevel)"
 
 graph() { bash "$SCRIPT_DIR/graph.sh" "$@"; }
 forge() { bash "$SCRIPT_DIR/forge.sh" "$@"; }
-refuse() { echo "tick-merge: refusing PR #$pr: $*" >&2; exit 1; }
+refuse() { echo "tick-merge: refusing PR #$pr: $*" >&2; exit "${pending_sig:-1}"; }
 
 POLLS=3        # extra re-reads past the adapter's own re-polls (§7.3)
 POLL_SLEEP=10
 PATCH_BUDGET=3 # tick-plan.jq patch_budget: rebases stop here (§5 rule 3)
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/dl-tick-merge.XXXXXX")"
-trap 'dl_gate_cleanup; rm -rf "$tmp"' EXIT
+defer=""       # set from the merge request on: a signal waits for the outcome
+pending_sig=""
 # A signal exits through the EXIT trap, which stops the gate and drops its tree.
-trap 'exit 130' INT
-trap 'exit 143' TERM
-trap 'exit 129' HUP
+on_exit() {
+  local st=$?
+  trap '' INT TERM HUP
+  dl_gate_cleanup
+  rm -rf "$tmp"
+  exit "$st"
+}
+on_signal() { if [ -n "$defer" ]; then pending_sig="$1"; else exit "$1"; fi; }
+trap on_exit EXIT
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+trap 'on_signal 129' HUP
 
 # 1. A fresh read, past a still-computing mergeability.
 forge pr-view "$pr" > "$tmp/pr.json" || refuse "cannot read it (forge.sh pr-view)"
@@ -172,13 +193,25 @@ now_base=$(git ls-remote origin "refs/heads/$base" | cut -f1) || now_base=""
 [ "$now_base" = "$gated_base" ] \
   || refuse "origin/$base moved from $gated_base to ${now_base:-?} while the gate ran; re-plan"
 
-# 5. Merge, pinned to the head, then verify.
-forge pr-merge "$pr" --method "$TASK_MERGE_METHOD" --sha "$sha" >&2 \
-  || refuse "forge.sh pr-merge failed (not merged)"
-forge pr-view "$pr" > "$tmp/after.json" || refuse "merged, but the re-read failed: verify it by hand"
+# 5. Merge, pinned to the head, then verify. From the request on, a signal is
+# held until the merge is reported (a landed merge is never left unreported).
+defer=1
+merge_rc=0
+forge pr-merge "$pr" --method "$TASK_MERGE_METHOD" --sha "$sha" >&2 || merge_rc=$?
+if ! forge pr-view "$pr" > "$tmp/after.json"; then
+  [ "$merge_rc" = 0 ] || refuse "forge.sh pr-merge failed (exit $merge_rc), and the re-read failed: verify it by hand"
+  refuse "merged, but the re-read failed: verify it by hand"
+fi
 after=$(jq -r .state "$tmp/after.json")
+if [ "$merge_rc" != 0 ]; then
+  [ "$after" = merged ] && [ "$(jq -r .head_sha "$tmp/after.json")" = "$sha" ] \
+    || refuse "forge.sh pr-merge failed (exit $merge_rc; not merged)"
+  echo "tick-merge: forge.sh pr-merge exited $merge_rc, but PR #$pr is merged at $sha" >&2
+fi
 [ "$after" = merged ] || refuse "the forge reports it $after after the merge, not merged"
 
 # 6. The task goes done (reconcile rule 3).
 graph reconcile --fix >&2 || echo "tick-merge: warn: reconcile --fix failed after merging PR #$pr; the next tick reconciles" >&2
 jq -cn --argjson pr "$pr" --arg sha "$sha" '{pr: $pr, result: "merged", sha: $sha}'
+defer=""
+[ -z "$pending_sig" ] || exit "$pending_sig"

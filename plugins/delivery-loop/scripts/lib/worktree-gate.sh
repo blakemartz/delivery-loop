@@ -26,10 +26,12 @@
 #       Sets DL_GATE_BASE to the commit <ref> resolved to.
 #
 #   dl_gate_cleanup
-#       Stops a gate still running (TERM to its process group, captured PID),
-#       then removes a worktree dl_gate_tree left registered (an interrupted
-#       run). Safe to call from an EXIT trap at any time; the caller traps
-#       INT/TERM/HUP to `exit`, so the EXIT trap runs on a signal.
+#       Stops a gate still running (TERM to its process group, captured PID;
+#       KILL to it if anything in it outlives DL_GATE_TERM_WAIT tenths of a
+#       second, so a gate that traps or ignores TERM cannot hold the caller's
+#       exit), then removes a worktree dl_gate_tree left registered (an
+#       interrupted run). Safe to call from an EXIT trap at any time; the
+#       caller traps INT/TERM/HUP to `exit`, so the EXIT trap runs on a signal.
 #
 # The worktree is registered with the caller's repo only while the gate runs;
 # a leftover registration is pruned. Do NOT `set -e` here: the functions run in
@@ -38,14 +40,28 @@
 DL_GATE_WT=""
 DL_GATE_BASE=""
 DL_GATE_PID=""
+DL_GATE_TERM_WAIT=50   # tenths of a second between TERM and KILL
 
 dl_gate_cleanup() {
-  if [ -n "$DL_GATE_PID" ]; then
+  local pid="$DL_GATE_PID" target i=0
+  if [ -n "$pid" ]; then
     # The whole group (the gate's own children too); the PID alone if the
-    # group was not created. `2>/dev/null` on wait: bash 3.2 prints a job
-    # notice ("Terminated") for the killed job.
-    kill -TERM -- "-$DL_GATE_PID" 2>/dev/null || kill -TERM "$DL_GATE_PID" 2>/dev/null || true
-    wait "$DL_GATE_PID" 2>/dev/null || true
+    # group was not created.
+    target="-$pid"
+    kill -TERM -- "$target" 2>/dev/null || { target="$pid"; kill -TERM "$pid" 2>/dev/null; } || true
+    # Bounded: poll until nothing in the target is left, then KILL it. The
+    # poll's own sleep lets bash reap the gate, so its zombie does not count.
+    # `command -p`: the system sleep, whatever PATH holds. `2>/dev/null` on
+    # the loop and the wait: bash 3.2 prints a job notice ("Terminated") for
+    # the killed job when it reaps it.
+    while kill -0 -- "$target" 2>/dev/null && [ "$i" -lt "$DL_GATE_TERM_WAIT" ]; do
+      command -p sleep 0.1; i=$((i + 1))
+    done 2>/dev/null
+    if kill -0 -- "$target" 2>/dev/null; then
+      echo "worktree-gate: the gate outlived TERM by $((DL_GATE_TERM_WAIT / 10))s; sending KILL" >&2
+      kill -KILL -- "$target" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
     DL_GATE_PID=""
   fi
   [ -n "$DL_GATE_WT" ] || return 0
