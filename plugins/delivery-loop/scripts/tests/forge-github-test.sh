@@ -272,6 +272,23 @@ expect "pr-create: gh created the PR but its label step failed -> exit 1 naming 
   '[ "$rc" = 1 ] && grep -qF "opened https://github.com/example/repo/pull/150 but failed to apply its labels" <<<"$err" && [ -z "$out" ]'
 run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label
 expect "pr-create --label without a name -> usage exit 2" '[ "$rc" = 2 ]'
+# Each --label value is exactly one label: gh CSV-splits it, so refuse first.
+reset
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label agent-authored --label "a,b"
+expect "pr-create --label a,b -> exit 1 before gh runs (gh would apply a and b)" \
+  '[ "$rc" = 1 ] && grep -qF "cannot contain" <<<"$err" && grep -qF "a,b" <<<"$err" && [ "$(log_count gh)" = 0 ] && [ -z "$out" ]'
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label 'q"x'
+expect "pr-create --label with a '\"' -> exit 1 before gh runs (gh's CSV split)" \
+  '[ "$rc" = 1 ] && grep -qF "cannot contain" <<<"$err" && [ "$(log_count gh)" = 0 ]'
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label $'a\nb'
+expect "pr-create --label \$'a\\nb' -> exit 1 before gh runs" \
+  '[ "$rc" = 1 ] && grep -qF "newline or CR" <<<"$err" && [ "$(log_count gh)" = 0 ] && [ -z "$out" ]'
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label $'a\rb'
+expect "pr-create --label \$'a\\rb' -> exit 1 before gh runs" \
+  '[ "$rc" = 1 ] && grep -qF "newline or CR" <<<"$err" && [ "$(log_count gh)" = 0 ]'
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label task --label agent-authored --label task
+expect "pr-create --label task x2 -> passed once, first-seen order kept" \
+  '[ "$rc" = 0 ] && log_line "gh pr create --head h --base b --title T --body-file $tmp/body.md --label task --label agent-authored"'
 reset
 run -- pr-find --head task/104-conflict
 expect "pr-find --head -> that open PR" '[ "$rc" = 0 ] && jq_true '\''.number == 104'\'''
