@@ -22,9 +22,10 @@
 # claims (72h) pinged once, fully delivered epics closed. Its `fix:` and `warn:`
 # lines go to stderr, as v0.1.4's did, so stdout stays the ready set. A pass that
 # stops because the board changed under it (exit 4) or the backend was busy
-# (exit 75) is re-run, up to $FIX_PASSES times; if it still stops, the ready set
-# is printed anyway (it is read fresh) with a warning. Any other reconcile failure
-# exits with its status, printing nothing on stdout.
+# (exit 75; after a $FIX_BACKOFF-second pause) is re-run, up to
+# $FIX_PASSES times; if it still stops, the ready set is printed anyway (it is
+# read fresh) with a warning. Any other reconcile failure exits with its status,
+# printing nothing on stdout.
 #
 # Exit codes: graph.sh's (0 ok · 1 failed / invalid config · 3 LIST_LIMIT
 # reached · 5 a backend node failed validation).
@@ -36,6 +37,7 @@ FIX=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GRAPH="$SCRIPT_DIR/graph.sh"
 FIX_PASSES=5
+FIX_BACKOFF=1   # seconds to wait before re-running a pass the backend lock refused (75)
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/dl-task-queue.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
@@ -52,6 +54,9 @@ if [ "$FIX" = 1 ]; then
           echo "warn: reconcile did not settle after $FIX_PASSES passes (exit $rc); the ready set below is read fresh" >&2
           break
         fi
+        # A busy lock (75) is held by another writer: give it a moment. A
+        # changed board (4) re-plans at once; there is nothing to wait for.
+        [ "$rc" != 75 ] || sleep "$FIX_BACKOFF"
         pass=$((pass + 1)) ;;
       *) exit "$rc" ;;
     esac

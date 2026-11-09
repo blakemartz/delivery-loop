@@ -217,12 +217,18 @@ load "$tmp/gc42.json"
 g GRAPH_BACKEND=local STATE_DIR="$sd" LOCK_WAIT_SECONDS=1 -- reconcile --fix
 eq "a busy backend lock (75) is preserved by graph.sh reconcile --fix, not mapped to 1" 75 "$rc"
 expect "exit 75 says busy, retry" 'grep -q "busy" <<<"$err"'
+t0=$(date +%s)
 run GRAPH_BACKEND=local STATE_DIR="$sd" LOCK_WAIT_SECONDS=1 -- "$scripts/task-queue.sh" --fix
+t1=$(date +%s)
 expect "task-queue.sh --fix retries 75, then warns and still prints the (fresh) ready set" \
   '[ "$rc" = 0 ] && grep -q "did not settle" <<<"$err" && [ "$(jq -r .number <<<"$out")" = x-1 ]'
+expect "… backing off between the busy passes (5 lock waits of 1s + 4 pauses of 1s)" '[ $((t1 - t0)) -ge 9 ]'
 rm -rf "$sd/lock"
 run GRAPH_BACKEND=local STATE_DIR="$sd" -- "$scripts/task-queue.sh" --fix
 expect "lock free: the wrapper applies it, exit 0" '[ "$rc" = 0 ] && grep -q "fix: transition x-1 blocked -> ready" <<<"$err"'
+g GRAPH_BACKEND=local STATE_DIR="$sd" -- transition x-1 cancelled --human ann
+expect "local: transition --human ann is journaled with ann as the actor" \
+  '[ "$rc" = 0 ] && [ "$(jq -c "select(.op == \"transition\") | [.actor, .from, .to]" "$sd/events.jsonl" | tail -n 1)" = "[\"ann\",\"ready\",\"cancelled\"]" ]'
 
 # --- GC68: unlabelled issues the graph references are external nodes ----------------
 board '[ i(1; "T"; ["task","status:ready","size:S"]; "Depends-on: #2"),
@@ -392,11 +398,15 @@ expect "GC8: nothing written" '! log_has "issue edit" && ! log_has "issue close"
 g -- transition 74 in-review
 eq "transition claimed -> in-review by agent: exit 0" 0 "$rc"
 eq "… is a status label swap" '["claim:agent","size:S","status:in-review","task"]' "$(labels 74)"
+expect "… and an agent transition posts no comment" '! log_has "issue comment 74"'
 g -- transition 74 cancelled --actor agent
 eq "GC47: transition cancelled --actor agent exits 2, unchanged" '[2,"OPEN"]' "[$rc,$(issue 74 .state)]"
 g -- transition 74 cancelled --human ann
 eq "GC47: transition cancelled --human ann closes the issue not planned" '[0,"CLOSED","NOT_PLANNED"]' \
   "[$rc,$(issue 74 '.state'),$(issue 74 '.stateReason')]"
+eq "… recording the human in the close call's comment" \
+  '"TRANSITIONED: in-review -> cancelled by ann (graph.sh transition)."' "$(issue 74 '.comments[-1].body')"
+expect "… one close call, no separate comment" '[ "$(log_count "gh issue close 74")" = 1 ] && ! log_has "issue comment 74"'
 g -- transition 74 ready --human ann
 eq "a closed node takes no further transition (exit 2)" 2 "$rc"
 

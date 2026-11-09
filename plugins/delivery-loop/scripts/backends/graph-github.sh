@@ -18,11 +18,17 @@
 #                                 (via: …)` line. Prints the new issue number.
 #                                 Never creates an `external` node, and refuses
 #                                 an `id` (GitHub numbers issues).
-#   update <id> <patch-json>|-    title, body, status, needs_human, module, size.
+#   update <id> <patch-json>|- [--actor <name>]
+#                                 title, body, status, needs_human, module, size.
 #                                 Open statuses are label edits; done/cancelled
 #                                 close the issue `completed` / `not planned`. A
 #                                 closed issue takes only title/body (reopening
 #                                 is a human's call). Any other key is refused.
+#                                 With --actor (graph.sh transition --human), a
+#                                 status change is recorded as the comment
+#                                 `TRANSITIONED: <from> -> <to> by <name>
+#                                 (graph.sh transition).` (in the close call when
+#                                 it closes).
 #   link <id> <dep-id> [via]      `gh issue edit --add-blocked-by`; a via (or a
 #                                 gh without native relations) is recorded as a
 #                                 `Depends-on: #<dep> (via: …)` body line.
@@ -291,8 +297,13 @@ comment_file() {
   gh issue comment "$1" --body-file "$tmp/comment.md" > /dev/null || die "gh issue comment #$1 failed"
 }
 
+# close_issue <n> <reason> [comment]: close, with the comment in the same call.
 close_issue() {
-  gh issue close "$1" --reason "$2" > /dev/null || die "gh issue close #$1 failed"
+  if [ $# -ge 3 ]; then
+    gh issue close "$1" --reason "$2" --comment "$3" > /dev/null || die "gh issue close #$1 failed"
+  else
+    gh issue close "$1" --reason "$2" > /dev/null || die "gh issue close #$1 failed"
+  fi
 }
 
 op_create() {
@@ -361,7 +372,9 @@ op_create() {
 }
 
 op_update() {
-  [ $# -eq 2 ] || usage "update <id> <patch-json>|-"
+  local who=""
+  if [ $# -eq 4 ] && [ "$3" = --actor ] && [ -n "$4" ]; then who="$4"; set -- "$1" "$2"; fi
+  [ $# -eq 2 ] || usage "update <id> <patch-json>|- [--actor <name>]"
   need_n "$1" "update <id> <patch-json>"
   local n="$1" p="$2"
   [ "$p" != - ] || p=$(cat)
@@ -410,8 +423,18 @@ op_update() {
   if [ "$closed" = true ] && [ -n "$close_reason" ]; then
     die "update: #$n is already closed ($cur); it cannot move to $to (nothing written)"
   fi
+  # A named actor (graph.sh transition --human <name>) is recorded on a status
+  # change: in the close call itself, else as a comment after the label edit.
+  local note=""
+  if [ -n "$who" ] && [ -n "$to" ] && [ "$to" != "$cur" ]; then
+    note="TRANSITIONED: $cur -> $to by $who (graph.sh transition)."
+  fi
   edit "$n" "$tmp/label.args"
-  [ -z "$close_reason" ] || close_issue "$n" "$close_reason"
+  if [ -n "$close_reason" ]; then
+    if [ -n "$note" ]; then close_issue "$n" "$close_reason" "$note"; else close_issue "$n" "$close_reason"; fi
+  elif [ -n "$note" ]; then
+    comment_file "$n" "$note"
+  fi
 }
 
 op_link() {

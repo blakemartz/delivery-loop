@@ -48,7 +48,9 @@
 #   transition <id> <to> [--actor agent|human|promote] [--human <name>]
 #                               validates (from, to, actor) with
 #                               lib/transitions.jq (actor default agent;
-#                               `--human <name>` is the human actor) and exits 2
+#                               `--human <name>` is the human actor, passed to
+#                               the backend's update as `--actor <name>` so the
+#                               write records who made it) and exits 2
 #                               on an illegal move without writing (GC8, GC47:
 #                               only a human cancels); an `external` node takes
 #                               no transition (exit 2). A legal move is the
@@ -204,14 +206,14 @@ case "$op" in
     bash "$backend" claim "$id" "$actor" "${run:--}" "$by" || rc=$?
     exit "$rc" ;;
   transition)
-    id="${1:-}" to="${2:-}" actor=agent
+    id="${1:-}" to="${2:-}" actor=agent name=""
     [ -n "$id" ] && [ "${id#-}" = "$id" ] && [ -n "$to" ] && [ "${to#-}" = "$to" ] || usage
     shift 2
     while [ $# -gt 0 ]; do
       case "$1" in
         --actor) [ $# -ge 2 ] || usage
                  case "$2" in agent|human|promote) actor="$2" ;; *) usage ;; esac; shift 2 ;;
-        --human) [ $# -ge 2 ] && [ -n "$2" ] || usage; actor=human; shift 2 ;;
+        --human) [ $# -ge 2 ] && [ -n "$2" ] || usage; actor=human name="$2"; shift 2 ;;
         *) usage ;;
       esac
     done
@@ -229,7 +231,11 @@ case "$op" in
     [ -z "$why" ] || { echo "graph.sh: transition refused: $why" >&2; exit 2; }
     rc=0
     jq -cn --arg to "$to" '{status: $to}' > "$tmp/patch.json"
-    bash "$backend" update "$id" "$(cat "$tmp/patch.json")" < /dev/null || rc=$?
+    # A named human is recorded as the write's actor (local: the journal;
+    # github: a TRANSITIONED comment).
+    set -- update "$id" "$(cat "$tmp/patch.json")"
+    [ -z "$name" ] || set -- "$@" --actor "$name"
+    bash "$backend" "$@" < /dev/null || rc=$?
     exit "$rc" ;;
   reconcile)
     load_all

@@ -138,10 +138,10 @@ case "$group $cmd" in
     jq -c --argjson n "$graphq_n" --arg r "$repo" '
       (map(select(.number == $n)) | first) as $i
       | {data: {repository: {nameWithOwner: $r, issue: (if $i == null then null else
-          {timelineItems: {nodes: [ ($i._closers // [])[]
+          {timelineItems: {nodes: ([ ($i._closers // [])[]
              | (if type == "object" then . else {number: ., repo: $r} end) as $c
              | {closer: {__typename: "PullRequest", number: $c.number, repository: {nameWithOwner: ($c.repo // $r)}}} ]
-             + [ {closer: null} ] }} end)}}}' "$board" ;;
+             + [ {closer: null} ]) }} end)}}}' "$board" ;;
   "issue list")
     out=$(jq -c --arg s "${state:-open}" --argjson lab "$labels" --argjson lim "${limit:-30}" '
       [ .[] | select($s == "all" or ($s == "open" and .state == "OPEN") or ($s == "closed" and .state == "CLOSED"))
