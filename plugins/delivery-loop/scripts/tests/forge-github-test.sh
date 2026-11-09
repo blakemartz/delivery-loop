@@ -155,6 +155,44 @@ expect "GC29: formal review was attempted first" 'log_has "gh pr review 101 --ap
 expect "GC29: comment body ends with Reviewed-Head: <sha>" '[ "$(tail -n 1 "$tmp/state/comment-body")" = "Reviewed-Head: $(sha 101)" ]'
 expect "GC29: comment body keeps the verdict text" 'grep -qF '\''verdict: APPROVE'\'' "$tmp/state/comment-body"'
 
+# D4 round trip: the comment-form verdict comes back from pr-reviews, with
+# `verdict` from its heading and `commit` from its Reviewed-Head: trailer.
+run -- pr-reviews 101
+expect "round trip: pr-reviews returns the comment-form approve, commit == head" \
+  '[ "$rc" = 0 ] && jq_true "map(select(.commit == \"$(sha 101)\" and .author == \"shim-user\")) | length == 1 and .[0].verdict == \"approve\" and (.[0].body | startswith(\"## Review — verdict: APPROVE\n\"))"'
+expect "round trip: the formal reviews are still returned first" \
+  '[ "$rc" = 0 ] && jq_true "length == 3 and (.[0:2] | map(.verdict)) == [\"request-changes\", \"approve\"] and .[0].author == \"reviewer\""'
+expect "round trip: pr-reviews reads reviews and comments" 'log_has "gh pr view 101 --json reviews,comments"'
+expect "round trip: the caller's own heading is kept, not re-headed" \
+  '[ "$(head -n 1 "$tmp/state/comment-body")" = "## Review — verdict: APPROVE" ] && [ "$(grep -c "^## " "$tmp/state/comment-body")" = 1 ]'
+# A plain comment and an h1 verdict-looking comment are not verdicts.
+printf 'Thanks, will look.\n\nReviewed-Head: %s\n' "$(sha 101)" > "$tmp/plain.md"
+printf '# Review — verdict: APPROVE\n\nReviewed-Head: %s\n' "$(sha 101)" > "$tmp/h1.md"
+run -- pr-comment 101 --body-file "$tmp/plain.md"
+run -- pr-comment 101 --body-file "$tmp/h1.md"
+run -- pr-reviews 101
+expect "pr-reviews: a plain comment and a '# …' heading are NOT returned" \
+  '[ "$rc" = 0 ] && jq_true "length == 3 and ([.[] | select(.body | startswith(\"Thanks\") or startswith(\"# \"))] | length == 0)"'
+# A heading-less body, and one whose heading names another verdict, get the
+# canonical heading on the comment fallback; pr-reviews reads that verdict.
+printf 'Looks right, no heading.\n' > "$tmp/bare.md"
+for c in "approve:$tmp/bare.md:APPROVE" "request-changes:$tmp/verdict.md:REQUEST_CHANGES"; do
+  v="${c%%:*}"; rest="${c#*:}"; f="${rest%:*}"; V="${rest##*:}"
+  reset
+  touch "$tmp/state/reject-self-review"
+  run -- pr-review 101 "$v" --sha "$(sha 101)" --body-file "$f"
+  expect "fallback $v ($(basename "$f")): comment headed '## Adversarial review — verdict: $V'" \
+    '[ "$rc" = 0 ] && jq_true ".form == \"comment\"" && [ "$(head -n 1 "$tmp/state/comment-body")" = "## Adversarial review — verdict: $V" ]'
+  run -- pr-reviews 101
+  expect "fallback $v: pr-reviews returns it as $v, commit == head" \
+    '[ "$rc" = 0 ] && jq_true "map(select(.author == \"shim-user\")) | length == 1 and .[0].verdict == \"$v\" and .[0].commit == \"$(sha 101)\""'
+done
+reset
+touch "$tmp/state/reject-self-review"
+run GH_REVIEW_TOKEN=rev-tok -- pr-review 101 approve --sha "$(sha 101)" --body-file "$tmp/bare.md"
+expect "formal review body is sent as given (no heading added)" \
+  '[ "$rc" = 0 ] && jq_true ".form == \"formal\"" && [ "$(head -n 1 "$tmp/state/review-body")" = "Looks right, no heading." ]'
+
 # A failed fallback comment is never reported as posted.
 reset
 touch "$tmp/state/reject-self-review" "$tmp/state/fail-comment"
@@ -229,6 +267,7 @@ touch "$tmp/state/fail-comment"
 run -- pr-comment 101 --body-file "$tmp/body.md"
 expect "pr-comment: gh pr comment fails -> exit 1, no posted JSON" '[ "$rc" = 1 ] && [ -z "$out" ]'
 rm -f "$tmp/state/fail-comment"
+reset
 run -- pr-comments 101
 expect "pr-comments -> 3 comments" '[ "$rc" = 0 ] && jq_true '\''length == 3 and .[0].author == "astra"'\'''
 run -- pr-set-base 101 main

@@ -12,6 +12,9 @@
 #                  `state` and `total_count` over the returned page only.
 #   reviews.json   {"<n>": [<PullReview>]}      comments.json {"<n>": [<Comment>]}
 #   files.json     {"<n>": [<ChangedFile>]}
+#                  An issue comment POSTed since the last reset is appended to the
+#                  GET of that PR's comments ($SHIM_STATE/posted-comments-<n>.json),
+#                  so a comment-form verdict can round-trip through pr-reviews.
 # Lists are sliced by `limit`/`page` like the server (limit clamped to
 # max_response_items = 2) and carry the headers the real servers send (src):
 #   X-Total-Count on every paged route; `Link: rel="next"` (while a next page
@@ -138,14 +141,18 @@ else
       respond 201 "$(jq -c --argjson d "$data" '.base.ref = $d.base' <<<"$obj")" ;;
     GET\ issues/*/comments)
       n="${route#issues/}"; n="${n%/comments}"
-      respond 200 "$(jq -c --arg n "$n" '.[$n] // []' "$SHIM_FX/comments.json")" ;;
+      posted="$SHIM_STATE/posted-comments-$n.json"; [ -f "$posted" ] || posted=/dev/null
+      respond 200 "$(jq -c --arg n "$n" --slurpfile p "$posted" '(.[$n] // []) + $p' "$SHIM_FX/comments.json")" ;;
     POST\ issues/*/comments)
       n="${route#issues/}"; n="${n%/comments}"
       if [ -f "$SHIM_STATE/fail-comment" ]; then
         err 403 "token does not have at least one of required scope(s): [write:issue]"
       else
         respond 201 "$(jq -c --arg u "$base" --arg n "$n" '{id: 9001, body: .body,
-                         html_url: "\($u)/example/repo/pulls/\($n)#issuecomment-9001"}' <<<"$data")"
+                         html_url: "\($u)/example/repo/pulls/\($n)#issuecomment-9001",
+                         user: {id: 7, login: "shim-user"}, created_at: "2026-11-08T15:00:00Z",
+                         updated_at: "2026-11-08T15:00:00Z"}' <<<"$data")"
+        printf '%s\n' "$body" >> "$SHIM_STATE/posted-comments-$n.json"
       fi ;;
     GET\ commits/*/status)
       sha="${route#commits/}"; sha="${sha%/status}"

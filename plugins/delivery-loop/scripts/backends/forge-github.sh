@@ -29,6 +29,14 @@
 #     merging, which the adapter disables again (`--disable-auto`) and exits 1.
 #   - the source branch of a squash merge is deleted through the API rather than
 #     `gh pr merge --delete-branch`, which also touches local branches/worktrees.
+#   - the comment-form verdict opens with a verdict heading, so `pr-reviews`
+#     finds it: a body without one is prefixed `## Adversarial review —
+#     verdict: <VERDICT>` unless its first non-blank line is already a heading
+#     `## … verdict: <VERDICT>` naming this verdict (forge-verdict.jq).
+#   - `pr-reviews` returns every formal review (`reviews`), then every comment
+#     whose first non-blank line is a verdict heading
+#     (`^## .*verdict: (APPROVE|REQUEST_CHANGES|COMMENT)`, any case), with
+#     `commit` from its `Reviewed-Head:` trailer (backends/forge-verdict.jq).
 #   - GH_REVIEW_TOKEN (environment only) posts `pr-review` as that identity.
 set -euo pipefail
 
@@ -215,6 +223,13 @@ op_pr_review() {
     *) { cat "$body"; printf '\n\nReviewed-Head: %s\n' "$sha"; } > "$tmp/verdict.md" ;;
   esac
 
+  # A comment-form verdict must read as one to `pr-reviews` (§7.3): the fallback
+  # comment is the same body, opening with a heading that names this verdict
+  # (forge-verdict.jq ensure_verdict_heading: the body's own when it does, else
+  # the canonical one prefixed).
+  fjq -jRs --arg v "$verdict" 'include "forge-verdict"; ensure_verdict_heading($v)' "$tmp/verdict.md" \
+    > "$tmp/verdict-comment.md"
+
   if [ -n "${GH_REVIEW_TOKEN:-}" ]; then
     rv() { GH_TOKEN="$GH_REVIEW_TOKEN" gh "$@"; }
   else
@@ -227,7 +242,7 @@ op_pr_review() {
     # GitHub rejects approve/request-changes on one's own PR (GC29): post the
     # same body as a comment; the graph status is the verdict of record.
     form=comment
-    out=$(post_comment "$n" "$tmp/verdict.md" rv) || exit 1
+    out=$(post_comment "$n" "$tmp/verdict-comment.md" rv) || exit 1
   else
     cat "$tmp/review.err" >&2
     die "gh pr review #$n failed"
@@ -237,7 +252,7 @@ op_pr_review() {
 
 op_pr_reviews() {
   need_n "${1:-}" "pr-reviews <n>"
-  gh pr view "$1" --json reviews | fjq -c 'include "forge-github"; gh_reviews'
+  gh pr view "$1" --json reviews,comments | fjq -c 'include "forge-github"; gh_reviews'
 }
 
 op_pr_comment() {

@@ -6,6 +6,9 @@
 # variable is set). Responses come from the fixtures in $SHIM_FX:
 #   prs.json    {"<n>": <gh pr view object>, "<n>.<k>": <object for the k-th view>}
 #   lists.json  {"open"|"merged": [[page 1 …], [page 2 …]]}
+# A comment posted (`pr comment`) since the last reset is appended to that PR's
+# `comments` ($SHIM_STATE/posted-comments-<n>.json), so a comment-form verdict
+# can round-trip through pr-reviews.
 # Like real gh, `--json a,b` keeps only the requested fields and `pr list`
 # concatenates pages up to `--limit`; a `--search` list is further capped at
 # 1000 results, as GitHub search is.
@@ -44,7 +47,8 @@ case "${1:-} ${2:-}" in
     k=$(( $(cat "$count_file" 2>/dev/null || echo 0) + 1 )); echo "$k" > "$count_file"
     obj=$(jq -c --arg a "$n.$k" --arg b "$n" '.[$a] // .[$b] // empty' "$SHIM_FX/prs.json")
     [ -n "$obj" ] || { echo "GraphQL: Could not resolve to a PullRequest with the number of $n." >&2; exit 1; }
-    pick "$fields" <<<"$obj" ;;
+    posted="$SHIM_STATE/posted-comments-$n.json"; [ -f "$posted" ] || posted=/dev/null
+    jq -c --slurpfile p "$posted" '.comments = ((.comments // []) + $p)' <<<"$obj" | pick "$fields" ;;
   "pr list")
     state=$(opt --state "$@"); limit=$(opt --limit "$@"); head=$(opt --head "$@"); fields=$(opt --json "$@")
     lim="${limit:-30}"
@@ -67,6 +71,10 @@ case "${1:-} ${2:-}" in
       exit 1
     fi
     cp "$(opt --body-file "$@")" "$SHIM_STATE/comment-body"
+    jq -cn --rawfile b "$SHIM_STATE/comment-body" --arg n "$3" \
+      '{id: "IC_posted", author: {login: "shim-user"}, authorAssociation: "OWNER", body: $b,
+        createdAt: "2026-11-08T15:00:00Z", url: "https://github.com/example/repo/pull/\($n)#issuecomment-9001"}' \
+      >> "$SHIM_STATE/posted-comments-$3.json"
     echo "https://github.com/example/repo/pull/$3#issuecomment-9001" ;;
   "pr merge") : ;;
   "pr edit")  echo "https://github.com/example/repo/pull/$3" ;;

@@ -62,7 +62,15 @@
 #   - self-review: approve/request-changes on one's own PR is a 422 "… your own
 #     pull is not allowed" (src); the verdict is then posted as an issue comment
 #     with the same body (form "comment"). GITEA_REVIEW_TOKEN (environment only)
-#     posts the review, and any fallback, as that identity.
+#     posts the review, and any fallback, as that identity. The fallback
+#     comment opens with a verdict heading, so `pr-reviews` finds it: a body
+#     without one is prefixed `## Adversarial review — verdict: <VERDICT>`; a
+#     body whose first non-blank line is already a heading `## … verdict:
+#     <VERDICT>` naming this verdict is sent as is (forge-verdict.jq).
+#   - `pr-reviews` returns every PullReview (GET /pulls/{n}/reviews, all pages),
+#     then every issue comment whose first non-blank line is a verdict heading
+#     (`^## .*verdict: (APPROVE|REQUEST_CHANGES|COMMENT)`, any case), with
+#     `commit` from its `Reviewed-Head:` trailer (backends/forge-verdict.jq).
 #   - a post (`pr-comment`, the comment-form `pr-review`) reports `posted:true`
 #     only on a 2xx; anything else exits 1 with no JSON.
 #   - the merge field is sent as `Do` (Forgejo's spelling; Gitea decodes it
@@ -417,6 +425,12 @@ op_pr_review() {
     Reviewed-Head:*) die "body ends with '$last', not head $sha; refusing" ;;
     *) { cat "$body"; printf '\n\nReviewed-Head: %s\n' "$sha"; } > "$tmp/verdict.md" ;;
   esac
+  # A comment-form verdict must read as one to `pr-reviews` (§7.3): the fallback
+  # comment is the same body, opening with a heading that names this verdict
+  # (forge-verdict.jq ensure_verdict_heading: the body's own when it does, else
+  # the canonical one prefixed).
+  fjq -jRs --arg v "$verdict" 'include "forge-verdict"; ensure_verdict_heading($v)' "$tmp/verdict.md" \
+    > "$tmp/verdict-comment.md"
   [ -z "${GITEA_REVIEW_TOKEN:-}" ] || tok="$GITEA_REVIEW_TOKEN"
   api POST "$RP/pulls/$n/reviews" \
     "$(jq -cn --arg e "$event" --arg c "$sha" --rawfile b "$tmp/verdict.md" '{event: $e, body: $b, commit_id: $c}')"
@@ -427,7 +441,7 @@ op_pr_review() {
     # Gitea rejects approve/reject on one's own PR (GC29): post the same body
     # as a comment; the graph status is the verdict of record.
     form=comment
-    post_comment "$n" "$tmp/verdict.md"
+    post_comment "$n" "$tmp/verdict-comment.md"
     url="$posted_url"
   else
     die_http "POST review on #$n"
@@ -438,7 +452,10 @@ op_pr_review() {
 op_pr_reviews() {
   need_n "${1:-}" "pr-reviews <n>"
   paged "$RP/pulls/$1/reviews" "$tmp/reviews.json"
-  fjq -c 'include "forge-gitea"; gt_reviews' "$tmp/reviews.json"
+  api GET "$RP/issues/$1/comments"
+  ok2xx || die_http "GET comments of #$1"
+  cp "$tmp/resp" "$tmp/comments.json"
+  fjq -c --slurpfile c "$tmp/comments.json" 'include "forge-gitea"; gt_reviews($c[0])' "$tmp/reviews.json"
 }
 
 op_pr_comment() {

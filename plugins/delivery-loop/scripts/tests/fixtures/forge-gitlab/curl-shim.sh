@@ -14,6 +14,8 @@
 #                  that MR's notes ($SHIM_STATE/posted-notes-<iid>.json), so a
 #                  verdict can round-trip through pr-reviews.
 #   diffs.json     {"<iid>": [<MR diff>]}    jobs.json {"<pipeline id>": [<Job>]}
+#   commits.json   {"<sha>": <Commit>}       (GET repository/commits/:sha; a
+#                  missing sha → 404)
 # Lists filter `state`, `source_branch` and `updated_after` (updated_at >= T)
 # like the server, are sliced by `per_page`/`page` (per_page clamped to 2, so
 # every fixture list spans pages) and carry pagination headers per SHIM_PAGING:
@@ -160,6 +162,10 @@ else
     PUT\ merge_requests/*)
       n="${route#merge_requests/}"; obj=$(mr_obj "$n")
       respond 200 "$(jq -c --argjson d "$data" '.target_branch = $d.target_branch' <<<"$obj")" ;;
+    GET\ repository/commits/*)
+      c="${route#repository/commits/}"
+      obj=$(jq -c --arg c "$c" '.[$c] // empty' "$SHIM_FX/commits.json")
+      if [ -n "$obj" ]; then respond 200 "$obj"; else err 404 "404 Commit Not Found"; fi ;;
     GET\ pipelines/*/jobs)
       p="${route#pipelines/}"; p="${p%/jobs}"
       page "$(jq -c --arg p "$p" --arg sc "$(urldecode "$q")" '(.[$p] // [])
