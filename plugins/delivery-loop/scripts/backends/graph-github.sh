@@ -7,6 +7,11 @@
 #               unlabelled issue the graph references (a dep target or an epic
 #               child) as an `external` node (§4.1, §6.2), as one JSON array.
 #   show <id>   one delivery node (the issue number), as one JSON object.
+#   migrate-plan
+#               the native edges `graph.sh migrate` adds (task B3, §6.2): one
+#               JSON array of {id, links, parent, blockers, warnings}, one entry
+#               per open task with legacy `Depends-on:` / `Part of epic #E` text
+#               not yet native (gh_migrate_plan). Needs native relations.
 #
 # Write primitives (task B2; ids are issue numbers):
 #   create <node-json>|-          `gh issue create` with the kind/status/module/
@@ -33,6 +38,10 @@
 #                                 gh without native relations) is recorded as a
 #                                 `Depends-on: #<dep> (via: …)` body line.
 #                                 Idempotent.
+#   parent <id> <epic-id>         `gh issue edit --parent` (task B3). Idempotent;
+#                                 refuses an issue that already has a different
+#                                 parent (re-parenting is a human's call) and a
+#                                 gh without native relations.
 #   flag <id> needs-human on|off  the `needs-human` label. Idempotent.
 #   claim <id> <actor> <run> [agent|human]
 #                                 agent: v0.1.4's comment-ordered Lamport lock,
@@ -201,8 +210,9 @@ add_closers() {
     "$1" > "$1.next" && mv "$1.next" "$1"
 }
 
-op_list() {
-  [ $# -eq 0 ] || usage "list"
+# read_all: every issue (complete blockedBy and comments, GC64/GC74) in
+# $tmp/issues.json, or exit 3 at LIST_LIMIT (GC10).
+read_all() {
   gh issue list --state all --json "$FIELDS" --limit "$LIST_LIMIT" > "$tmp/issues.json" \
     || die "gh issue list failed"
   local got
@@ -228,8 +238,23 @@ op_list() {
     'map(. + ($p[0][.number | tostring] // {}))' \
     "$tmp/issues.json" > "$tmp/issues.next" && mv "$tmp/issues.next" "$tmp/issues.json"
   [ "$native" = 0 ] || warn_short "$tmp/issues.json"
+}
+
+op_list() {
+  [ $# -eq 0 ] || usage "list"
+  read_all
   add_closers "$tmp/issues.json"
   gjq -c --arg base "$BASE_BRANCH" 'include "graph-github"; gh_nodes($base)' "$tmp/issues.json"
+}
+
+# migrate-plan: the native edges each open task lacks (gh_migrate_plan, §6.2,
+# GC48), as one JSON array. Native relations are the point, so an older gh is
+# refused rather than planned against.
+op_migrate_plan() {
+  [ $# -eq 0 ] || usage "migrate-plan"
+  [ "$native" = 1 ] || die "migrate-plan: needs gh >= $MIN_GH (native relations)"
+  read_all
+  gjq -c 'include "graph-github"; gh_migrate_plan' "$tmp/issues.json"
 }
 
 # read_issue <n>: the raw issue (every comment, the complete blockedBy, the
@@ -457,6 +482,21 @@ op_link() {
     fi
   fi
   edit "$n" "$tmp/link.args"
+}
+
+op_parent() {
+  [ $# -eq 2 ] || usage "parent <id> <epic-id>"
+  need_n "$1" "parent <id> <epic-id>"
+  need_n "$2" "parent <id> <epic-id>"
+  [ "$1" != "$2" ] || die "parent: an issue cannot be its own parent (#$1)"
+  [ "$native" = 1 ] || die "parent: needs gh >= $MIN_GH (native relations; nothing written)"
+  local n="$1" epic="$2" cur
+  read_node "$n"
+  cur=$(jq -r '.parent.number // empty' "$tmp/issue.json")
+  [ "$cur" != "$epic" ] || return 0
+  [ -z "$cur" ] || die "parent: #$n already has parent #$cur (not #$epic; nothing written)"
+  printf -- '--parent\n%s\n' "$epic" > "$tmp/parent.args"
+  edit "$n" "$tmp/parent.args"
 }
 
 op_flag() {
@@ -689,10 +729,12 @@ case "$op" in
   create) op_create "$@" ;;
   update) op_update "$@" ;;
   link) op_link "$@" ;;
+  parent) op_parent "$@" ;;
+  migrate-plan) op_migrate_plan "$@" ;;
   flag) op_flag "$@" ;;
   claim) op_claim "$@" ;;
   release) op_release "$@" ;;
   comment) op_comment "$@" ;;
   reconcile) op_reconcile "$@" ;;
-  *) usage "graph-github.sh list | show <id> | create <node-json> | update <id> <patch-json> | link <id> <dep-id> [via] | flag <id> needs-human on|off | claim <id> <actor> <run> [agent|human] | release <id> <reason> | comment <id> <text> | reconcile <record-json> (docs/delivery_graph_spec.md §6.1)" ;;
+  *) usage "graph-github.sh list | show <id> | create <node-json> | update <id> <patch-json> | link <id> <dep-id> [via] | parent <id> <epic-id> | migrate-plan | flag <id> needs-human on|off | claim <id> <actor> <run> [agent|human] | release <id> <reason> | comment <id> <text> | reconcile <record-json> (docs/delivery_graph_spec.md §6.1)" ;;
 esac
