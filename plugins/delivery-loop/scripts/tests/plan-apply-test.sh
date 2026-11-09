@@ -624,9 +624,10 @@ body_len() { jq -n -L "$scripts/lib" -L "$scripts/backends" --argjson n "$2" --a
 lim_base='{"kind": "task", "title": "t", "body": "", "status": "ready", "epic": "7",
   "deps": [{"id": "8", "via": "v"}, "9"], "target_branch": "release/x", "plan_ref": "demo/t"}'
 # The contract length at which the longer (gh < 2.94 text-edge) body is exactly
-# the limit, and at which only the native body still fits.
-pad_text=$(( 65536 - $(body_len 0 "$(jq -c '.body = "x"' <<<"$lim_base")") + 1 ))
-pad_native=$(( 65536 - $(body_len 1 "$(jq -c '.body = "x"' <<<"$lim_base")") + 1 ))
+# the limit, and at which only the native body still fits. The limit counts the
+# body file create writes: the composed body + its final newline.
+pad_text=$(( 65536 - 1 - $(body_len 0 "$(jq -c '.body = "x"' <<<"$lim_base")") + 1 ))
+pad_native=$(( 65536 - 1 - $(body_len 1 "$(jq -c '.body = "x"' <<<"$lim_base")") + 1 ))
 for ver in 2.96.0 2.93.0; do
   fresh_repo
   gh_board
@@ -644,17 +645,17 @@ for ver in 2.96.0 2.93.0; do
     has "limits (gh $ver) create [$name]: says why" "$err" "$want"
     eq "limits (gh $ver) create [$name]: no gh issue/api call" "" "$(grep -E '^gh (issue|api)' "$st/log" || true)"
   done
-  # At the limits exactly, create accepts (both bodies <= 65536, title 256).
+  # At the limits exactly, create accepts (both body files <= 65536, title 256).
   for case in "title 256 chars|.title = (\"t\" * 256)" \
-              "text-edge body exactly 65536|.body = (\"x\" * $pad_text)"; do
+              "text-edge body file exactly 65536|.body = (\"x\" * $pad_text)"; do
     name="${case%%|*}" edit="${case#*|}"
     jq -c "$lim_base | $edit" <<<'null' >"$tmp/l.node.json"
     run SHIM_GH_VERSION="$ver" -- "$graph" create - <"$tmp/l.node.json"
     eq "limits (gh $ver) create [$name]: accepted" 0 "$rc"
   done
-  eq "limits: the text-edge body at the boundary is exactly 65536" 65536 \
+  eq "limits: the text-edge body at the boundary is 65535 (65536 with the final newline)" 65535 \
     "$(body_len 0 "$(jq -c ".body = (\"x\" * $pad_text)" <<<"$lim_base")")"
-  eq "limits: the 'native fits' case: native body exactly 65536, text-edge body longer" "65536 1" \
+  eq "limits: the 'native fits' case: native body 65535 (+ newline: 65536), text-edge body longer" "65535 1" \
     "$(body_len 1 "$(jq -c ".body = (\"x\" * $pad_native)" <<<"$lim_base")") $(( pad_native > pad_text ))"
 
   # apply: board-view (created after both epics and two tasks) carries the
@@ -679,6 +680,45 @@ for ver in 2.96.0 2.93.0; do
     eq "$name: board unchanged" "$(cat "$tmp/board.before")" "$(cat "$st/board.json")"
     eq "$name: no push, ls-remote or fetch" "" "$(grep -E '^git (push|ls-remote|fetch)' "$tmp/git.log" || true)"
   done
+done
+
+# --- the body limit holds for the issue numbers GitHub really assigns (#84 review) --
+# Apply cannot know a new node's number before create, and GitHub's is often
+# wider than `graph.sh list`'s highest + 1 (PRs share the sequence; list omits
+# unlabelled issues). On gh_board, list's highest is #42, so a count made with
+# list-based numbers sees 43.., while the shim assigns 100.. (after #99). Pad
+# board-view (created 5th; 3 references to new nodes in the gh < 2.94 body:
+# its epic and two deps) so that its longer composed body with 2-digit numbers,
+# plus the body file's final newline, is exactly 65536: real 3-digit numbers
+# push it over at create. Apply must refuse it before any write (no half-apply).
+fresh_repo release/x
+gh_board
+jq '.tasks[2].context = "x"' "$here/fixtures/plan/valid.plan.json" >"$tmp/w.plan.json"
+run SHIM_GH_VERSION=2.93.0 -- "$plan" apply "$tmp/w.plan.json"
+eq "wide numbers: the probe apply succeeds" "0 7" "$rc $(created)"
+# The body create wrote (the shim stores the body file, final newline included).
+bvbody='[.[] | select(.title == "Board view")][0].body | rtrimstr("\n")'
+wide_refs=$(jq "$bvbody"' | [match("#1[0-9][0-9](?![0-9])"; "g")] | length' "$st/board.json")
+eq "wide numbers: board-view's text-edge body has 3 references to new (3-digit) issues" 3 "$wide_refs"
+# Its length with each of those references one digit narrower (43.. instead of
+# 100..); the pad makes that length + 1 (the final newline) exactly 65536.
+small_len=$(( $(jq "$bvbody | length" "$st/board.json") - wide_refs ))
+wpad=$(( 65536 - small_len ))
+for ver in 2.96.0 2.93.0; do
+  name="wide numbers (gh $ver)"
+  fresh_repo release/x
+  gh_board
+  cp "$st/board.json" "$tmp/board.before"
+  jq --argjson n "$wpad" '.tasks[2].context = ("x" * $n)' "$here/fixtures/plan/valid.plan.json" >"$tmp/w.plan.json"
+  : >"$st/log"
+  run SHIM_GH_VERSION="$ver" -- "$plan" apply "$tmp/w.plan.json"
+  eq "$name: exit 1" 1 "$rc"
+  eq "$name: 0 created" 0 "$(created)"
+  has "$name: names create's refusal" "$err" "the github backend's create would refuse this node ("
+  has "$name: refused before any write" "$err" "apply refused (nothing written)"
+  eq "$name: no gh write" "" "$(grep -E "$gwrite" "$st/log" || true)"
+  eq "$name: board unchanged" "$(cat "$tmp/board.before")" "$(cat "$st/board.json")"
+  eq "$name: no push, ls-remote or fetch" "" "$(grep -E '^git (push|ls-remote|fetch)' "$tmp/git.log" || true)"
 done
 
 # --- GitHub's sub-issue cap (#81): 100 per parent issue, before any write ---------

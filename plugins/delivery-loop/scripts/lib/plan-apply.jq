@@ -185,6 +185,10 @@ def plan_apply($ctx):
       # count: the epic's existing children (`graph.sh list` reads closed
       # issues too, and GitHub counts them) plus the plan tasks still to
       # create under it; an epic the plan adds nothing to is never refused.
+      # Not counted (known gaps, not fixed): sub-issues in another repo under
+      # a delivery epic (GitHub counts them; `graph.sh list` reads this repo
+      # only), and children a concurrent writer adds between this preflight
+      # and the creates (a race no preflight closes).
       (if $backend == "github" then
          $p.epics[] | .id as $eid
          | ([ $items[] | select(.kind == "task" and .node.epic == $eid and (.matches | length) == 0) ] | length) as $new

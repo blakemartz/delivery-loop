@@ -505,14 +505,21 @@ def gh_via_ok:
 #   - issue body: at most 65536 codepoints (_gh_body_max). The body checked is
 #     the one create writes (gh_create_body), in both forms (native relations,
 #     and gh < 2.94 text edges, which is longer), so a plan accepted under one
-#     gh version is accepted under the other.
+#     gh version is accepted under the other. Its length counts one more
+#     character: create writes the body file with `jq -r`, which ends it with a
+#     newline, and `gh issue create --body-file` sends the file as it is. That
+#     the newline is counted (rather than not written, `jq -j`) is the
+#     conservative choice: it holds whether or not gh or GitHub strips it, and
+#     leaves every body create writes, and so every read and drift compare,
+#     unchanged; it costs at most one character of headroom.
 # A NUL in the title is refused as well: create passes the title to `gh issue
 # create` as an argument, read line by line through bash, which cannot carry
 # NUL, so the issue would be created with a different title (#76 review).
 def _gh_title_max: 256;
 def _gh_body_max: 65536;
-# The longer of the two bodies create can write for this node.
-def _gh_body_len($base): [gh_create_body(1; $base), gh_create_body(0; $base) | length] | max;
+# The longer of the two bodies create can write for this node, as the body
+# file create writes (+ 1: `jq -r`'s final newline).
+def _gh_body_len($base): ([gh_create_body(1; $base), gh_create_body(0; $base) | length] | max) + 1;
 
 def gh_create_errors($base):
   def str: type == "string" and length > 0;
@@ -552,7 +559,7 @@ def gh_create_errors($base):
     elif .target_branch == null and ($base | tok | not) then
       "create: BASE_BRANCH (the default target_branch) must be one token (got \($base | tojson))"
     elif _gh_body_len($base) > _gh_body_max then
-      "create: the issue body create writes is \(_gh_body_len($base)) characters (contract + trailer block); GitHub's limit is \(_gh_body_max)"
+      "create: the issue body create writes is \(_gh_body_len($base)) characters (contract + trailer block + final newline); GitHub's limit is \(_gh_body_max)"
     else empty end ];
 
 # --- migrate (task B3) ------------------------------------------------------------
