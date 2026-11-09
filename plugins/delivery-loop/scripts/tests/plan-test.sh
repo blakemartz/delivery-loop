@@ -298,6 +298,51 @@ for envs in "FORGE=gitlab GRAPH_BACKEND=local" "GRAPH_BACKEND=github FORGE=gitla
   done
 done
 
+# --- plan text carrying a backend marker line: a lint error on both backends --------
+# (lib/plan-lint.jq plan_text_markers: the github read path would take it as
+# the node's plan_ref / target / edge, so apply must never write it.)
+jq '.tasks[1].deps |= map(select(.id != "#42"))' "$fx/valid.plan.json" >"$tmp/portable.plan.json"
+while IFS='|' read -r path text want; do
+  [ -n "$path" ] || continue
+  jq --arg t "$(printf '%b' "$text")" "$path = \$t" "$tmp/portable.plan.json" >"$tmp/marker.plan.json"
+  for backend in github local; do
+    run GRAPH_BACKEND=$backend -- lint "$tmp/marker.plan.json"
+    eq "marker $want in $path ($backend): exit 1" 1 "$rc"
+    has "marker $want in $path ($backend): names the field and marker" "$err" "$want"
+  done
+done <<'EOF2'
+.tasks[0].context|Some context.\nDelivery-Plan: other/zzz|task `store-schema`: context carries `Delivery-Plan:`
+.tasks[0].context|Delivery-Target: main|task `store-schema`: context carries `Delivery-Target:`
+.tasks[0].criteria[0]|README documents Depends-on: #1 lines|task `store-schema`: criteria[0] carries `Depends-on:`
+.tasks[0].scope[0]|  Delivery-Promote-To: main|task `store-schema`: scope[0] carries `Delivery-Promote-To:`
+.tasks[0].context|Follow-up to epic #11.|task `store-schema`: context carries `epic #11`
+.tasks[0].context|Part of epic #3|task `store-schema`: context carries `epic #3`
+.tasks[0].context|Delivery-Task: other|task `store-schema`: context carries `Delivery-Task:`
+.tasks[0].context|Reviewed-Head: abc123|task `store-schema`: context carries `Reviewed-Head:`
+.tasks[0].context|CLAIM agent-1 run-1 2026-01-01T00:00:00Z|task `store-schema`: context carries `CLAIM`
+.tasks[0].context|CLAIM-WITHDRAWN agent-1 run-1|task `store-schema`: context carries `CLAIM-WITHDRAWN`
+.tasks[0].context|RECLAIMED: idle|task `store-schema`: context carries `RECLAIMED`
+.tasks[0].context|STALE-CLAIM-PING: still on it?|task `store-schema`: context carries `STALE-CLAIM-PING`
+.tasks[0].context|TRANSITIONED: ready -> done by x|task `store-schema`: context carries `TRANSITIONED:`
+.tasks[0].context|AUTO-CLOSE: PR #5|task `store-schema`: context carries `AUTO-CLOSE:`
+.epics[0].goal|Store\n- [ ] #5|epic `core`: goal carries `- [ ] #N`
+.epics[0].spec_refs[0]|§2 Depends-on: #9|epic `core`: spec_refs[0] carries `Depends-on:`
+.spec[0]|docs/x.md\nDelivery-Target: main|plan: spec[0] carries `Delivery-Target:`
+.tasks[1].deps[0].via|read_store, see epic #4|task `queue`: dep `store-schema`: via carries `epic #4`
+EOF2
+# (`\n` in the table above is turned into a real newline.)
+jq '.tasks[0].context = "line one\nDelivery-Plan: other/zzz"' "$tmp/portable.plan.json" >"$tmp/marker.plan.json"
+run -- lint "$tmp/marker.plan.json"
+has "marker on the second line of a multi-line context is caught" "$err" 'context carries `Delivery-Plan:`'
+# Near misses that no reader matches stay legal.
+jq '.tasks[0].context = "CLAIMS are recorded as comments; dependencies are listed in deps; epics group tasks." |
+    .tasks[0].criteria = ["the README mentions Delivery-Target values", "#12 regression fixed"]' \
+  "$tmp/portable.plan.json" >"$tmp/marker.plan.json"
+run GRAPH_BACKEND=local -- lint "$tmp/marker.plan.json"
+eq "near-miss text (no marker line): lint ok" 0 "$rc"
+run -- lint "$fx/valid.plan.json"
+eq "the valid fixture carries no marker" 0 "$rc"
+
 if [ "$fails" -ne 0 ]; then
   echo "plan tests FAILED" >&2
   exit 1

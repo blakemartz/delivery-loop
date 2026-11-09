@@ -183,13 +183,27 @@ for case in 'release/x..y|target_branch `release/x..y` is not a valid branch nam
             '@{-1}|target_branch `@{-1}` is not a valid branch name' \
             '-x|target_branch `-x` is not a valid branch name' \
             'HEAD|target_branch `HEAD` is not a valid branch name' \
-            'a b|target_branch `a b` is not a valid branch name'; do
+            'a b|target_branch `a b` is not a valid branch name' \
+            '@|target_branch `@` is not a valid branch name' \
+            'refs/heads/x|target_branch `refs/heads/x` is not a valid branch name' \
+            'refs/remotes/origin/qa|target_branch `refs/remotes/origin/qa` is not a valid branch name' \
+            'origin/main|target_branch `origin/main` is not a valid branch name'; do
   b="${case%%|*}" want="${case#*|}"
   jq --arg b "$b" '.target_branch = $b' "$demo" >"$tmp/bad.plan.json"
   refused "branch name $b" "$tmp/bad.plan.json" "$want"
 done
 jq '.promote_to = "main.lock"' "$demo" >"$tmp/bad.plan.json"
 refused "promote_to name" "$tmp/bad.plan.json" 'promote_to `main.lock` is not a valid branch name'
+jq '.promote_to = "refs/heads/main"' "$demo" >"$tmp/bad.plan.json"
+refused "promote_to starting refs/" "$tmp/bad.plan.json" 'promote_to `refs/heads/main` is not a valid branch name'
+jq 'del(.promote_to)' "$demo" >"$tmp/bad.plan.json"
+refused "BASE_BRANCH @ (the source when promote_to is unset)" "$tmp/bad.plan.json" \
+  'BASE_BRANCH `@` is not a valid branch name' BASE_BRANCH=@
+jq '.tasks[2].deps[0].via = "lib/store.jq\nread_store"' "$demo" >"$tmp/bad.plan.json"
+refused "a multi-line via" "$tmp/bad.plan.json" 'the via of dep `store-schema` must be one line to apply'
+jq '.tasks[2].context = "Order it.\nDelivery-Plan: other/zzz"' "$demo" >"$tmp/bad.plan.json"
+refused "a marker line in plan text (local too: plans stay portable)" "$tmp/bad.plan.json" \
+  'task `queue`: context carries `Delivery-Plan:`'
 jq 'del(.promote_to)' "$demo" >"$tmp/bad.plan.json"
 refused "BASE_BRANCH name (the source when promote_to is unset)" "$tmp/bad.plan.json" \
   'BASE_BRANCH `bad..base` is not a valid branch name' BASE_BRANCH=bad..base
@@ -312,6 +326,79 @@ apply_gh "$tmp/gh51.plan.json"
 eq "51 epics: the promote issue would need 51 blockers: exit 1" 1 "$rc"
 has "51 blockers: says so" "$err" '`demo-promote`: 51 blockers exceed GitHub'"'"'s 50 per issue'
 eq "51 blockers: no issue created" 0 "$(grep -c '^gh issue create' "$st/log" || true)"
+
+# --- github: plan text that the read path would parse as node metadata -----------
+# The github read path (backends/graph-github.jq) takes the FIRST
+# `Delivery-Plan:` / `Delivery-Target:` line and every `#N` on a line containing
+# `Depends-on:`, and create skips its own trailer when the body already has the
+# key. First reproduce each effect at the backend (a body carrying the line, as
+# apply wrote it before the fix), then show apply now refuses the plan text
+# before any write.
+fresh_repo release/x
+gh_board
+probe() {  # probe <body>: create one task with that body; $board = graph.sh list
+  jq -n --arg b "$1" '{kind: "task", title: "probe", body: $b, status: "ready",
+    target_branch: "release/x", plan_ref: "demo/probe"}' >"$tmp/probe.json"
+  run -- "$graph" create - <"$tmp/probe.json"
+  eq "reproduce: probe created" 0 "$rc"
+  board_gh
+}
+probe $'Background.\nDelivery-Plan: other/zzz'
+eq "reproduce: a Delivery-Plan: line in the body steals the plan_ref (apply would duplicate on every run)" \
+  '"other/zzz"' "$(jq -c '[.[] | select(.title == "probe")][0].plan_ref' <<<"$board")"
+gh_board
+probe 'Delivery-Target: main'
+eq "reproduce: a Delivery-Target: line in the body retargets the node" \
+  '"main"' "$(jq -c '[.[] | select(.title == "probe")][0].target_branch' <<<"$board")"
+gh_board
+probe $'## Acceptance criteria\n- [ ] README documents Depends-on: #42 lines'
+eq "reproduce: a criterion mentioning Depends-on: #N adds a phantom edge" \
+  '["42"]' "$(jq -c '[.[] | select(.title == "probe")][0] | [.deps[].id]' <<<"$board")"
+
+# marker_refused <name> <jq edit of the plan> <expected error>: github apply
+# exits 1, says why, and writes nothing (no gh write, board byte-identical, no
+# git remote call at all).
+marker_refused() {
+  fresh_repo release/x
+  gh_board
+  cp "$st/board.json" "$tmp/board.before"
+  jq "$2" "$here/fixtures/plan/valid.plan.json" >"$tmp/marker.plan.json"
+  : >"$st/log"
+  apply_gh "$tmp/marker.plan.json"
+  eq "$1: exit 1" 1 "$rc"
+  has "$1: lint names the field and marker" "$err" "$3"
+  eq "$1: no gh write" "" "$(grep -E '^gh (issue (create|edit|close|comment|reopen)|label|api .*(mutation|--method|-X))' "$st/log" || true)"
+  eq "$1: board unchanged" "$(cat "$tmp/board.before")" "$(cat "$st/board.json")"
+  eq "$1: no push, ls-remote or fetch" "" "$(grep -E '^git (push|ls-remote|fetch)' "$tmp/git.log" || true)"
+  apply_gh "$tmp/marker.plan.json"
+  eq "$1: a re-run still creates nothing (no duplicates)" 0 "$(grep -c '^gh issue create' "$st/log" || true)"
+}
+marker_refused "context Delivery-Plan: other/zzz" '.tasks[0].context = "Define the store.\nDelivery-Plan: other/zzz"' \
+  'task `store-schema`: context carries `Delivery-Plan:`'
+marker_refused "context Delivery-Target: main" '.tasks[0].context = "Delivery-Target: main"' \
+  'task `store-schema`: context carries `Delivery-Target:`'
+marker_refused "criterion mentioning Depends-on: #1" '.tasks[3].criteria = ["README documents Depends-on: #1 lines"]' \
+  'task `user-guide`: criteria[0] carries `Depends-on:`'
+marker_refused "epic goal naming another epic" '.epics[1].goal = "Follows epic #42"' \
+  'epic `ui`: goal carries `epic #42`'
+
+# Drift no longer hides a marker line: a human inserting `Delivery-Target: main`
+# above the trailer block is body drift (and target_branch drift), not just the
+# latter.
+fresh_repo release/x
+gh_board
+apply_gh "$tmp/gh.plan.json"
+eq "drift setup: github apply exit 0" 0 "$rc"
+board_gh
+q=$(byref demo/queue .id | tr -d '"')
+jq --argjson n "$q" 'map(if .number == $n then .body = "Delivery-Target: main\n" + .body else . end)' \
+  "$st/board.json" >"$st/b" && mv "$st/b" "$st/board.json"
+: >"$st/log"
+apply_gh "$tmp/gh.plan.json"
+eq "marker drift: exit 0" 0 "$rc"
+eq "marker drift: body and target_branch both reported" $'drift: queue body\ndrift: queue target_branch' \
+  "$(printf '%s\n' "$err" | grep '^drift:' || true)"
+eq "marker drift: nothing created" 0 "$(grep -c '^gh issue create' "$st/log" || true)"
 
 # --- usage --------------------------------------------------------------------------
 run -- "$plan" apply

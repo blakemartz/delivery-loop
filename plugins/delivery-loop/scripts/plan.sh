@@ -13,10 +13,14 @@
 #                  deletes or overwrites anything. In order, and nothing is
 #                  written until every check has passed:
 #                    1. lint, against the full `graph.sh list` (so `#N` deps
-#                       resolve only against that list);
+#                       resolve only against that list); lint also refuses
+#                       plan text carrying a line a backend would read back
+#                       as a marker (`Delivery-Plan:`, `Depends-on:`, …), so
+#                       no plan text can rewrite a node's metadata;
 #                    2. `git check-ref-format --branch` on target_branch,
 #                       promote_to and the branch a missing target is cut from
-#                       (output must equal input, so `@{-1}` never expands);
+#                       (output must equal input, so `@{-1}` never expands),
+#                       and none of them `HEAD`, `@`, `refs/…` or `origin/…`;
 #                    3. lib/plan-apply.jq preflight: plan_ref collisions, local
 #                       id reuse across plans (GC35), the promote id, one-line
 #                       titles, the 50-blocker cap on github;
@@ -172,16 +176,19 @@ promote_to="$(jq -r '.promote_to // empty' "$tmp/norm.json")"
 source_branch="${promote_to:-$BASE_BRANCH}"
 
 # Branch names, before anything is created or pushed. `--branch` prints the
-# name it resolved; it must be the name itself (`@{-1}` would expand).
+# name it resolved; it must be the name itself (`@{-1}` would expand). Some
+# names it accepts are refused too: `@` (HEAD's shorthand, like HEAD), and a
+# name starting `refs/` or `origin/`, which would be pushed as
+# refs/heads/refs/… or refs/heads/origin/… and shadow other refs.
 bad_branches=0
 check_branch() {
   local what="$1" b="$2" norm=""
   case "$b" in
-    -*|HEAD|*@\{*) norm="" ;;
+    -*|HEAD|@|refs/*|origin/*|*@\{*) norm="" ;;
     *) norm="$(git check-ref-format --branch "$b" 2>/dev/null)" || norm="" ;;
   esac
   if [ "$norm" != "$b" ]; then
-    echo "plan.sh: $file: error: apply: $what \`$b\` is not a valid branch name (git check-ref-format --branch)" >&2
+    echo "plan.sh: $file: error: apply: $what \`$b\` is not a valid branch name (git check-ref-format --branch; not @, refs/…, origin/…)" >&2
     bad_branches=1
   fi
 }

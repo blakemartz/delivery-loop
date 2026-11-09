@@ -6,19 +6,24 @@
 # resolved, deduplicated and acyclic.
 #
 #   plan_promote_id      — the promote node's plan id: "<plan>-promote".
-#   plan_body_core       — a node body without the trailer lines a backend
-#                          appends (`Delivery-Target:`, `Delivery-Plan:`,
-#                          `Delivery-Promote-To:`, `Depends-on:`, `Part of epic
-#                          #N`) and without trailing whitespace: the part drift
-#                          compares, so a github body (contract + trailers)
-#                          equals the contract the plan renders.
+#   plan_body_core       — a github node body without its trailer block (the
+#                          trailing run of `Delivery-Target:`, `Delivery-Plan:`,
+#                          `Delivery-Promote-To:`, `Depends-on: #N …` and `Part
+#                          of epic #N` lines, and blank lines, that the backend
+#                          appends on create and link) and without trailing
+#                          whitespace: the part drift compares, so a github
+#                          body (contract + trailers) equals the contract the
+#                          plan renders. Only the trailing block is dropped: a
+#                          marker line above it (a human edit) is body drift.
+#                          Plan text never carries one (plan-lint refuses it).
 #   plan_apply($ctx)     — {errors, drift, steps}:
 #     errors  refusals found before anything is written (exit 1, nothing
 #             created): a plan_ref on more than one node, an existing node of
 #             another kind, (local) an id that already exists under another
 #             plan_ref (ids stay unique across plans, GC35), a promote id that
 #             collides or is not a valid local id, a multi-line title (github
-#             create refuses one, which would strand a half-applied plan), more
+#             create refuses one, which would strand a half-applied plan), a
+#             multi-line via (it would break its `Depends-on:` line), more
 #             than 50 blockers on one github issue (§6.2).
 #     drift   [{id, field}] for each existing node whose field differs from the
 #             plan (title, body, epic, module, size, deps, target_branch,
@@ -48,10 +53,15 @@ def plan_promote_id: "\(.plan)-promote";
 
 def _rtrim: if length > 0 and (.[-1:] | test("[ \t\r\n]")) then .[:-1] | _rtrim else . end;
 
+def _is_trailer_line:
+  test("^[ \t]*$")
+  or test("^(Delivery-Target|Delivery-Plan|Delivery-Promote-To):[ \t]*[^ \t]+[ \t]*$")
+  or test("^Depends-on:[ \t]*#[0-9]+([ \t]*[(]via:.*[)])?[ \t]*$")
+  or test("^Part of epic #[0-9]+[ \t]*$");
+
 def plan_body_core:
   (. // "") | split("\n") | map(rtrimstr("\r"))
-  | map(select((test("^(Delivery-Target|Delivery-Plan|Delivery-Promote-To|Depends-on):")
-                or test("^Part of epic #[0-9]+")) | not))
+  | until(length == 0 or (.[-1] | _is_trailer_line | not); .[:-1])
   | join("\n") | _rtrim;
 
 def _has_str($s): any(.[]; . == $s);
@@ -143,6 +153,8 @@ def plan_apply($ctx):
              | "`\($it.pid)`: id already exists with plan_ref \(.plan_ref | tojson) (ids are unique across plans; rename the plan's id)"
            else empty end),
           (if (.node.title | test("[\r\n]")) then "`\(.pid)`: title must be one line to apply" else empty end),
+          ((.node.deps // [])[] | select(.via != null and (.via | test("[\r\n]")))
+           | "`\($it.pid)`: the via of dep `\(.id)` must be one line to apply (github writes it into a `Depends-on:` line)"),
           (if $backend == "github" and ((.node.deps // []) | length) > 50 then
              "`\(.pid)`: \(.node.deps | length) blockers exceed GitHub's 50 per issue (§6.2): split the work"
            else empty end) ),
@@ -161,7 +173,8 @@ def plan_apply($ctx):
       | ($t | .epic |= (if . == null then null else $found[.] end)
             | if has("deps") then .deps |= map(if .ref == "plan" then $found[.id] else .id end) else . end) as $want
       | ( (if $n.title != $want.title then "title" else empty end),
-          (if ($n.body | plan_body_core) != ($want.body | plan_body_core) then "body" else empty end),
+          (if (if $backend == "github" then $n.body | plan_body_core else $n.body // "" | _rtrim end)
+              != ($want.body | _rtrim) then "body" else empty end),
           (if $t.kind == "task" and $n.epic != $want.epic then "epic" else empty end),
           (if $t.kind == "task" and $n.module != $want.module then "module" else empty end),
           (if $t.kind == "task" and $n.size != $want.size then "size" else empty end),
