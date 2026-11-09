@@ -150,7 +150,7 @@ prs '[ pr(120; "MERGED"; "release/x"; "Delivery-Task: 20"; "task/20--x") ]' "$tm
 load "$tmp/gc42.json" "$tmp/gc42-prs.json"
 g -- reconcile
 eq "GC42: reconcile record X -> done naming the PR (then its dependent -> ready)" \
-  '[{"op":"transition","id":"20","from":"approved","to":"done","reason":"PR #120 merged into release/x"},{"op":"transition","id":"21","from":"blocked","to":"ready","reason":"every dep is done"}]' \
+  '[{"op":"transition","id":"20","from":"approved","to":"done","reason":"PR #120 merged into release/x","pr":120},{"op":"transition","id":"21","from":"blocked","to":"ready","reason":"every dep is done"}]' \
   "$(jq -sc . <<<"$out")"
 expect "GC42: reconcile without --fix writes nothing" '! log_has "issue close" && ! log_has "issue edit" && ! log_has "issue comment"'
 g -- reconcile --fix
