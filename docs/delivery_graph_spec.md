@@ -549,6 +549,19 @@ between (GC22).
   `<file>.tmp.$$` in the same directory, then `mv` it over the target. A reader
   therefore always sees a whole file.
 
+**Derived fields.** Stored nodes carry neither `pinged_at` nor `applied_prs`; both
+are derived on read (`list`, `show`) from the node's journal `comment` events, and
+`create`/`update` refuse them as input:
+- `pinged_at`: the `ts` of the newest event whose body starts `STALE-CLAIM-PING`
+  (GC44).
+- `applied_prs`: the ascending, deduplicated PR numbers of every event whose body
+  starts `AUTO-CLOSE: PR #<n>`, parsed as on github (§4.1): the digits directly
+  after the prefix, kept only when > 0. C2 appends that event when it applies
+  rule 3 (GC72).
+- A journal line that does not parse as one JSON object, or holds a NUL byte (a
+  torn or NUL-padded line), is skipped on its own with a warning, so it never hides
+  the events beside it.
+
 **Journal.**
 - Every mutation appends `{ts, actor, run, op, id, from, to, body}` to `events.jsonl`
   inside the same lock. `op` is one of `create` | `claim` | `release` | `reclaim` |
@@ -875,9 +888,9 @@ the case assertions it owns.
 | GC65 | reconcile produces a fix record that the transition table rejects (fixture: a `done` node and a stale-claim rule match) | warning on stderr, record not applied, other records applied |
 | GC61 | `task-queue.sh` against the GC5 github fixture | stdout byte-identical to the captured v0.1.4 output |
 | GC68 | github fixture: task T with `Depends-on: #A`, A an unlabelled CLOSED (`COMPLETED`) issue; task U with `Depends-on: #B`, B an unlabelled OPEN issue; task V with `Depends-on: #D`, D an unlabelled CLOSED (`NOT_PLANNED`) issue; an unlabelled issue C that nothing references | A, B and D normalize to `kind:"external"` (`done` / `blocked` / `cancelled`) and C is not emitted; T is in `ready`; U and V are not ready (§2 exception 1); reconcile stderr `V: blocked on cancelled dep D` (GC2), and no `unknown dep` warning and no fix record for A, B or D |
-| GC72 | node X `ready` (a human reopened it) whose merged agent PR P into X's target is in `applied_prs`, and a dependent `blocked` on X; the same board with `applied_prs: []`; then a newer merged PR Q not in `applied_prs`; github: comments `AUTO-CLOSE: PR #12 …`, `AUTO-CLOSE: PR #9 …`, `AUTO-CLOSE: PR #12 …`, `AUTO-CLOSE: epic …` | no record for X or the dependent / X → `done` and the dependent → `ready` / X → `done` naming Q; github `applied_prs` `[9,12]` (`[]` with no such comment) |
-| GC73 | stale (> 4h) agent claims, no open PR, on `in-review` (its PR closed unmerged), `changes-requested`, `approved` and `ready` (a live `CLAIM`, no assignee) nodes; controls: an `in-review` node with an open PR, a fresh agent claim, a human claim | one `RECLAIMED` record each, `→ ready` with the claim cleared; no record for the controls; with `needs_human` set, none |
 | GC71 | github fixture (§2 exception 6): issue X labelled both `task` and `epic`, open, size S, no deps, unclaimed; ready task T (size S, `unblocks` 0) with body `Part of epic #X`, and a CLOSED (`COMPLETED`) task C with body `Part of epic #X`; ready task U (size S, `unblocks` 0, no epic) created before T; issue Y labelled both `task` and `epic` whose only child, a task with body `Part of epic #Y`, is CLOSED | X and Y normalize to `kind:"task"` with `checklist: []`; X is in `ready`; T has `started:false` and U precedes T (v0.1.4 put T first); reconcile emits no `→ done` record for X or Y (v0.1.4 auto-closed Y) |
+| GC72 | node X `ready` (a human reopened it) whose merged agent PR P into X's target is in `applied_prs`, and a dependent `blocked` on X; the same board with `applied_prs: []`; then a newer merged PR Q not in `applied_prs`; github: comments `AUTO-CLOSE: PR #12 …`, `AUTO-CLOSE: PR #9 …`, `AUTO-CLOSE: PR #12 …`, `AUTO-CLOSE: epic …` | no record for X or the dependent / X → `done` and the dependent → `ready` / X → `done` naming Q; github `applied_prs` `[9,12]` (`[]` with no such comment); local: the same from journal `comment` events (`AUTO-CLOSE: PR #12`, `… #7 merged`, `… #12`, `… #30`, with a torn line and a NUL line beside the markers, and non-markers `… #0`, `… #x9`, `re: AUTO-CLOSE: PR #99`, a `transition` event with that body) → `[7,12,30]`; `create`/`update` refuse `applied_prs` and stored nodes carry none |
+| GC73 | stale (> 4h) agent claims, no open PR, on `in-review` (its PR closed unmerged), `changes-requested`, `approved` and `ready` (a live `CLAIM`, no assignee) nodes; controls: an `in-review` node with an open PR, a fresh agent claim, a human claim | one `RECLAIMED` record each, `→ ready` with the claim cleared; no record for the controls; with `needs_human` set, none |
 
 **Tick plan:**
 
@@ -1095,7 +1108,7 @@ exception).
 | A3 shapes | policy | S | A1 (test glob) | `lib/node.jq`, `lib/pr.jq` (`validate_node`, `validate_pr`); `tests/shapes-test.sh` accepts the valid node and PR fixtures and rejects 5 malformed ones |
 | A4 ready-transitions | policy | M | A3 (`validate_node`) | `lib/graph.jq` (§5 helpers, including `cycles`), `lib/ready.jq`, `lib/transitions.jq`; `tests/ready-test.sh` passes GC1, GC3, GC5, GC8, GC47 and the "not ready" assertions of GC2, GC4, GC6, GC7 |
 | A5 reconcile | policy | M | A4 (`lib/graph.jq`, ready predicate) | `lib/reconcile.jq`; `tests/reconcile-test.sh` passes the reconcile assertions of GC2, GC4, GC6, GC7, GC24 (record), GC25 (record), GC42 (record), GC43, GC44, GC45 (record), GC65 |
-| A5b reconcile-parity | policy | S | A5 (`reconcile.jq`) | `applied_prs` in §4.1 and `validate_node` (fixtures updated; `backends/graph-github.jq` derives it from `AUTO-CLOSE: PR #<n>` comments); rule 3 skips applied PRs; the §5 stale-claim `reconcile` row from `in-review`/`changes-requested`/`approved`/`ready`; `tests/reconcile-test.sh` passes GC72 and GC73, `tests/graph-github-read-test.sh` passes GC72 (`applied_prs` derivation) and GC74, `tests/shapes-test.sh` rejects a node without `applied_prs` |
+| A5b reconcile-parity | policy | S | A5 (`reconcile.jq`) | `applied_prs` in §4.1 and `validate_node` (fixtures updated; `backends/graph-github.jq` derives it from `AUTO-CLOSE: PR #<n>` comments); rule 3 skips applied PRs; the §5 stale-claim `reconcile` row from `in-review`/`changes-requested`/`approved`/`ready`; `tests/reconcile-test.sh` passes GC72 and GC73, `tests/graph-github-read-test.sh` passes GC72 (`applied_prs` derivation) and GC74, `tests/graph-local-test.sh` passes GC72 (local `applied_prs` derivation, §6.3), `tests/shapes-test.sh` rejects a node without `applied_prs` |
 | A6 tick-plan | policy | M | A4 (ready order), A3 (PR shape) | `lib/tick-plan.jq`, `tick-plan.sh`; `tests/tick-plan-test.sh` passes GC12–GC20, GC39 (plan assertion), GC62, GC59 (`tick-plan.sh` part) |
 | D1 forge-github | forge | M | A3 (PR shape), A2 (`FORGE`, `LIST_LIMIT`) | `forge.sh` + `backends/forge-github.sh` (every §7.1 op); `tests/forge-github-test.sh` (gh shim) passes GC28 (github), GC29, GC30, GC32, GC33 (`task_id`), GC46, GC57, GC58, GC63, GC67 (github) |
 | B1 graph-github-read | graph | M | A4 (`ready.jq`), A2 (`GRAPH_BACKEND`, `LIST_LIMIT`, `--check`) | `graph.sh` (ready/list/show/export, config check at start) + `backends/graph-github.sh list/show`; `tests/graph-github-read-test.sh` (gh shim) passes GC5 (github fixture), GC9, GC10, GC11, GC44 (`pinged_at` derivation), GC45 (checklist normalization), GC56, GC64, GC59 (`graph.sh` part) |
