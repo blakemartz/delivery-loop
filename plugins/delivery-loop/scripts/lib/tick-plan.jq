@@ -18,7 +18,8 @@
 #             the agent actions (patch | rebase | review | start). A merge also
 #             carries `sha`, the head it was judged at, for
 #             `tick-merge.sh <pr> <sha>` (§10, GC52).
-#   board   — {<status>: count} over task and promote nodes, every status keyed.
+#   board   — {<status>: count} over task and promote nodes, every status keyed
+#             (epic and external nodes are not counted).
 #   waiting — [string]: why nothing more is happening (needs-human items,
 #             approved PRs awaiting a human, caps, module locks, deferrals).
 #
@@ -28,7 +29,8 @@
 # PRs never merge (GC39), and only task PRs are patched, rebased or reviewed:
 # §9 leaves a promotion PR to a human. Parity with v0.1.4's delivery-tick
 # ("needs-human items: never act on them"): a node with `needs_human`, or a PR
-# labeled needs-human, produces no action, only a `waiting` line.
+# labeled needs-human, produces no action, only a `waiting` line. An `external`
+# node (§4.1) is inert: no action, no `board` count, no `waiting` line (§5).
 #
 # Hardening (GC70): a merge needs the PR's base to equal the node's
 # target_branch, and a task gets at most one merge per tick (the lowest PR
@@ -54,6 +56,7 @@ def _pr_rule($n; $auto):
   _pr_ref($n) as $ref
   | "patch iteration \(.patch_iteration)/\(patch_budget)" as $iter
   | if ($n | is_open | not) then empty
+    elif $n.kind == "external" then empty         # inert (§5): no action, no wait
     elif $n.needs_human then empty               # listed once, per node
     elif any(.labels[]; . == needs_human_label) then {wait: "\($ref) is labeled needs-human"}
     elif $n.kind == "promote" then

@@ -9,6 +9,7 @@
 #   is_open         — the input node's status is neither done nor cancelled.
 #   children($epic) — the child nodes of epic id $epic: nodes whose `epic` is
 #                     $epic, plus the epic's own `checklist` ids that exist.
+#                     Every kind counts, `external` included (§5).
 #   unblocks($id)   — how many open nodes list $id in their `deps`.
 #   deps_done($idx) — every dep of the input node exists and is done (a
 #                     cancelled or unknown dep never counts, GC2/GC7).

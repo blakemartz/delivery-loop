@@ -56,6 +56,32 @@ reject node validate_node node-bad-timestamp.json         '`updated_at` must be 
 reject node validate_node node-bad-checklist-on-task.json '`checklist` is for epic nodes only'
 reject node validate_node node-bad-extra-field.json       'unexpected field `labels`'
 
+# `external` (§4.1): open -> blocked, closed -> done | cancelled; every
+# label-derived field is fixed, so a claimed external is malformed.
+accept node validate_node node-external-valid.json
+reject node validate_node node-bad-external-claim.json    '`claim` must be null for external nodes'
+# Each fixed external field, one at a time (the valid open external, edited).
+while IFS='|' read -r edit expect; do
+  [ -n "$edit" ] || continue
+  if got=$(jq -c -L "$lib" "include \"node\"; .[0] | $edit | validate_node" \
+             "$fx/node-external-valid.json" 2>&1); then
+    fail "external with $edit rejected" "accepted"
+  else
+    case "$got" in *"$expect"*) pass "external with $edit rejected ($expect)" ;;
+      *) fail "external with $edit rejected" "expected: $expect" "got: $got" ;; esac
+  fi
+done <<'EOF'
+.module = "policy"|`module` must be null for external nodes
+.size = "S"|`size` must be null for external nodes
+.pinged_at = "2026-11-08T10:00:00Z"|`pinged_at` must be null for external nodes
+.plan_ref = "v0-2/x"|`plan_ref` must be null for external nodes
+.deps = [{"id": "3", "via": null}]|`deps` must be [] for external nodes
+.needs_human = true|`needs_human` must be false for external nodes
+.status = "ready"|`status` must be one of blocked|done|cancelled for external nodes
+.checklist = ["3"]|`checklist` is for epic nodes only (kind "external")
+.promote_to = "main"|`promote_to` is for promote nodes only (kind "external")
+EOF
+
 # --- §4.2 pull request -------------------------------------------------------
 accept pr validate_pr pr-valid.json
 reject pr validate_pr pr-bad-number.json          '`number` must be a positive integer'

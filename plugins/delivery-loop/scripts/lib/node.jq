@@ -16,7 +16,7 @@ def node_fields:
    "deps", "status", "needs_human", "claim", "target_branch", "promote_to",
    "plan_ref", "body", "created_at", "updated_at"];
 
-def node_kinds: ["task", "epic", "promote"];
+def node_kinds: ["task", "epic", "promote", "external"];
 
 def node_sizes: ["S", "M", "L", null];
 
@@ -52,6 +52,25 @@ def _claim_errors:
     (check("by"; is_enum(["agent", "human"]); "must be \"agent\" or \"human\"") | "`claim`: \(.)")
   end;
 
+# `external` (§4.1): a non-delivery issue the graph references (a dep target or
+# an epic child). Its labels are ignored, so every label-derived field is fixed,
+# and its status comes only from the issue's own state: open -> blocked, closed
+# -> done | cancelled. (`checklist` and `promote_to` are already kind-scoped
+# below; `epic` is derived as for any node, so it is free.)
+def external_statuses: ["blocked", "done", "cancelled"];
+
+def _external_errors:
+  "for external nodes" as $why
+  | check("module"; . == null; "must be null \($why)"),
+    check("size"; . == null; "must be null \($why)"),
+    check("claim"; . == null; "must be null \($why)"),
+    check("pinged_at"; . == null; "must be null \($why)"),
+    check("plan_ref"; . == null; "must be null \($why)"),
+    check("deps"; . == []; "must be [] \($why)"),
+    check("needs_human"; . == false; "must be false \($why)"),
+    check("status"; is_enum(external_statuses);
+          "must be one of \(external_statuses | join("|")) \($why)");
+
 def node_errors:
   if type != "object" then ["node must be an object (got \(type))"]
   else [
@@ -84,7 +103,8 @@ def node_errors:
     (if .kind != "epic" and (.checklist | type) == "array" and (.checklist | length) > 0
      then "`checklist` is for epic nodes only (kind \(.kind | tojson))" else empty end),
     (if .kind != "promote" and .promote_to != null
-     then "`promote_to` is for promote nodes only (kind \(.kind | tojson))" else empty end)
+     then "`promote_to` is for promote nodes only (kind \(.kind | tojson))" else empty end),
+    (if .kind == "external" then _external_errors else empty end)
   ] end;
 
 def validate_node:

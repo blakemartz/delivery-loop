@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Unit tests for lib/ready.jq, lib/graph.jq and lib/transitions.jq: the ready
 # predicate and order, the shared graph helpers, and the transition table of
-# docs/delivery_graph_spec.md §5. Owns golden cases GC1, GC3, GC5, GC8, GC47 and
-# the "not ready" assertions of GC2, GC4, GC6, GC7 (§12, §17 row A4).
+# docs/delivery_graph_spec.md §5. Owns golden cases GC1, GC3, GC5, GC8, GC47,
+# the "not ready" assertions of GC2, GC4, GC6, GC7, and the policy side of the
+# `external` node kind (§4.1, §5; GC68's ready assertions) (§12, §17 row A4).
 #
 # Offline: the fixtures under fixtures/ready/ are the only input. Each ready-set
 # case asserts the exact ready id list, and every fixture carries a ready
@@ -45,6 +46,17 @@ eq "GC4 needs_human, deps done, status blocked -> not ready" \
 eq "GC6 deps A->B->A -> neither ready" '["gc6-control"]' "$(ready_ids gc6.json)"
 
 eq "GC7 dep on a nonexistent id -> not ready" '["gc7-control"]' "$(ready_ids gc7.json)"
+
+# GC68 (policy side): an external dep is satisfied only when done. gc68-t's
+# only dep is a done external -> ready; gc68-u's is open (blocked) and
+# gc68-v's cancelled -> not ready. The externals themselves (one open with no
+# deps, i.e. deps_done and unclaimed) are never ready. gc68-control is first:
+# its epic is started by the done external child gc68-a.
+eq "GC68 dep on a done external -> ready; open or cancelled external -> not; externals never" \
+  '["gc68-control","gc68-t"]' "$(ready_ids gc68.json)"
+eq "GC68 no external node is ready, whatever its status" '[false,false,false]' \
+  "$(jq -c -L "$lib" 'include "graph"; include "ready"; index_by_id as $idx
+      | [.[] | select(.kind == "external") | is_ready($idx)]' "$fx/gc68.json")"
 
 # --- GC5: v0.1.4-parity order ----------------------------------------------------
 # gc5-v014.jsonl is the stdout of the released v0.1.4 task-queue.sh, captured by
@@ -159,6 +171,21 @@ eq "children = epic backlinks plus existing checklist ids" '["10","13","15"]' \
 eq "children includes a checklist-only child (its epic stays null)" '["gc1-ready"]' \
   "$(jq -c -L "$lib" 'include "graph"; [children("gc1-epic")[].id]' "$fx/gc1.json")"
 
+# External children count toward children() (§5), so a closed external child
+# starts its epic, as v0.1.4 counted any CLOSED child.
+eq "children includes an external child" '["gc68-a","gc68-control"]' \
+  "$(jq -c -L "$lib" 'include "graph"; [children("gc68-epic")[].id] | sort' "$fx/gc68.json")"
+eq "a done external child starts its epic (and its sibling ranks as started)" '[true,true]' \
+  "$(jq -c -L "$lib" 'include "graph"; include "ready"; index_by_id as $idx
+      | [started_epic("gc68-epic"; $idx),
+         (ready_set[] | select(.id == "gc68-control") | .started)]' "$fx/gc68.json")"
+eq "control: with the external child open, the epic is not started" '[false,false]' \
+  "$(jq -c -L "$lib" 'include "graph"; include "ready";
+      map(if .id == "gc68-a" then .status = "blocked" else . end)
+      | index_by_id as $idx
+      | [started_epic("gc68-epic"; $idx),
+         (ready_set[] | select(.id == "gc68-control") | .started)]' "$fx/gc68.json")"
+
 eq "index_by_id looks nodes up by id" '"done"' \
   "$(jq -c -L "$lib" 'include "graph"; index_by_id["10"].status' "$fx/gc5-nodes.json")"
 
@@ -193,6 +220,30 @@ if cmp -s "$fx/gc47-store.json" "$tmp/gc47.json"; then pass "GC47 store unchange
 else fail "GC47 store unchanged after agent cancel" "store was rewritten"; fi
 eq "GC47 transition cancelled --human ann exits 0" 0 "$(transition "$tmp/gc47.json" cancelled human)"
 eq "GC47 node is cancelled after the human cancel" '"cancelled"' "$(jq -c '.[0].status' "$tmp/gc47.json")"
+
+# An external node takes no transition (§5): the write path exits 2 and leaves
+# the store unchanged, for every (from, to, actor) the table knows.
+jq --indent 2 '[.[] | select(.id == "gc68-b")]' "$fx/gc68.json" >"$tmp/ext.json"
+cp "$tmp/ext.json" "$tmp/ext-orig.json"
+eq "external blocked -> ready by reconcile exits 2" 2 "$(transition "$tmp/ext.json" ready reconcile)"
+eq "external blocked -> cancelled by human exits 2" 2 "$(transition "$tmp/ext.json" cancelled human)"
+if cmp -s "$tmp/ext-orig.json" "$tmp/ext.json"; then pass "external store unchanged"
+else fail "external store unchanged" "store was rewritten"; fi
+case "$(cat "$tmp/stderr")" in
+  *'illegal transition "gc68-b": blocked -> cancelled by human: an external node takes no transition'*)
+    pass "external transition stderr names the reason" ;;
+  *) fail "external transition stderr names the reason" "got: $(cat "$tmp/stderr")" ;;
+esac
+eq "every transition on an external node is illegal (all from x to x actor)" '[]' \
+  "$(jq -c -n -L "$lib" 'include "node"; include "transitions";
+      [node_statuses[] as $f | node_statuses[] as $t | transition_actors[] as $a
+       | {id: "x", kind: "external", status: $f}
+       | select(transition_error($t; $a) == null) | [$f, $t, $a]]')"
+eq "control: the same sweep on a task finds legal moves" true \
+  "$(jq -n -L "$lib" 'include "node"; include "transitions";
+      [node_statuses[] as $f | node_statuses[] as $t | transition_actors[] as $a
+       | {id: "x", kind: "task", status: $f}
+       | select(transition_error($t; $a) == null)] | length > 0')"
 
 # The whole table, row by row, plus the edges around it. Each line:
 # <kind> <from> <to> <actor> <legal: 0|1>.
@@ -241,6 +292,11 @@ task done ready reconcile 0
 task ready ready reconcile 0
 task ready claimed robot 0
 task ready open reconcile 0
+external blocked ready reconcile 0
+external blocked in-review reconcile 0
+external blocked done reconcile 0
+external done blocked reconcile 0
+external blocked cancelled human 0
 EOF
 
 if [ "$fails" -ne 0 ]; then
