@@ -10,8 +10,10 @@
 #                           decrements it and reports mergeStateStatus UNKNOWN.
 #   pr list --state S [--head H] --json F
 #                           every PR in state S (OPEN | MERGED), by number.
-#   pr create …             copies --body-file to $SHIM_STATE/create-body and
-#                           prints a new PR URL (#150).
+#   pr create …             copies --body-file to $SHIM_STATE/create-body,
+#                           records PR #150 (OPEN, the --head/--base/--title,
+#                           the body, one label per --label) in prs.json, and
+#                           prints its URL.
 #   pr merge <n> …          sets PR n MERGED (mergedAt now), unless
 #                           $SHIM_STATE/merge-noop exists (the merge silently
 #                           did not happen).
@@ -51,6 +53,19 @@ case "${1:-} ${2:-}" in
       | map(. as $o | reduce ($f | split(","))[] as $k ({}; .[$k] = $o[$k]))' "$prs" ;;
   "pr create")
     cp "$(opt --body-file "$@")" "$SHIM_STATE/create-body"
+    head=$(opt --head "$@"); base=$(opt --base "$@"); labels="[]"
+    while [ $# -gt 0 ]; do
+      if [ "$1" = --label ]; then labels=$(jq -c --arg l "${2:-}" '. + [{name: $l}]' <<<"$labels"); fi
+      shift
+    done
+    jq --arg head "$head" --arg base "$base" --argjson labels "$labels" \
+       --rawfile body "$SHIM_STATE/create-body" '
+      .["150"] = {number: 150, url: "https://github.com/example/repo/pull/150", state: "OPEN",
+        headRefName: $head, baseRefName: $base, headRefOid: "0000000", mergeable: "MERGEABLE",
+        mergeStateStatus: "CLEAN", statusCheckRollup: [], body: $body, labels: $labels,
+        comments: [], reviews: [], author: {login: "agent"}, closingIssuesReferences: [], mergedAt: null}' \
+      "$prs" > "$prs.new"
+    mv "$prs.new" "$prs"
     echo "https://github.com/example/repo/pull/150" ;;
   "pr merge")
     if [ ! -f "$SHIM_STATE/merge-noop" ]; then

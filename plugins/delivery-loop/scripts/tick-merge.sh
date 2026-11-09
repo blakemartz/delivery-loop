@@ -20,9 +20,17 @@
 #      removed. Two PRs green on their own can be red together, and a forge
 #      reports a behind PR as clean when nothing requires it to be up to date.
 #      A conflicting or red merged result prints a `rebase` action on stdout
-#      for the tick to dispatch (or, at the patch budget, asks for a human)
+#      for the tick to dispatch and exits 1. At the patch budget it escalates
+#      instead: flags the node needs-human, comments, runs
+#      NOTIFY_ESCALATE_CMD, prints {pr, id, result: "needs-human", reason}
 #      and exits 1.
+#      The gate runs with lib/config.sh's keys unset, so the merged tree's own
+#      .claude/delivery.conf governs it (lib/worktree-gate.sh).
 #   4. origin/<base> must not have moved since the gate ran.
+#      An inherent window remains: the base can still move between this check
+#      and the merge in step 5, and no forge merge API pins the base sha (only
+#      the head). The gate vouches for the merge onto the base it saw, not
+#      for the exact tree that lands; the next gate on that base catches it.
 #   5. `forge.sh pr-merge <pr> --method $TASK_MERGE_METHOD --sha <sha>` (the
 #      forge refuses a moved head), then a re-read must show `merged`.
 #   6. `graph.sh reconcile --fix`, so the task goes done (rule 3); a failure
@@ -33,10 +41,12 @@
 # config combination is validated once, before any I/O (§11).
 #
 # Stdout: one JSON line: {pr, result: "merged", sha}, or the rebase action
-# {action: "rebase", pr, id, reason} for a red or conflicting merged result.
+# {action: "rebase", pr, id, reason} for a red or conflicting merged result,
+# or {pr, id, result: "needs-human", reason} for one at the patch budget.
 # Reasons, gate output and progress go to stderr.
 #
-# Exit codes: 0 merged · 1 refused / not merged / invalid config · 2 usage.
+# Exit codes: 0 merged · 1 refused / not merged / invalid config · 2 usage ·
+# 128+n killed by signal n (the running gate stopped, nothing merged).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/config.sh
@@ -64,6 +74,10 @@ PATCH_BUDGET=3 # tick-plan.jq patch_budget: rebases stop here (§5 rule 3)
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/dl-tick-merge.XXXXXX")"
 trap 'dl_gate_cleanup; rm -rf "$tmp"' EXIT
+# A signal exits through the EXIT trap, which stops the gate and drops its tree.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 # 1. A fresh read, past a still-computing mergeability.
 forge pr-view "$pr" > "$tmp/pr.json" || refuse "cannot read it (forge.sh pr-view)"
@@ -112,15 +126,35 @@ git cat-file -e "$sha^{commit}" 2>/dev/null \
   || refuse "cannot fetch its head $(f .head)"
 git cat-file -e "$sha^{commit}" 2>/dev/null || refuse "its head $sha is not on origin/$(f .head)"
 
+# rebase_action <reason>: under the patch budget, a rebase action for the tick;
+# at it, a structural escalation (needs-human, comment, notify), as promote.sh
+# does on a red gate. Exits 1 either way.
 rebase_action() {
+  local it
   echo "tick-merge: PR #$pr: $1" >&2
-  if [ "$(f .patch_iteration)" -lt "$PATCH_BUDGET" ]; then
+  it=$(f .patch_iteration)
+  if [ "$it" -lt "$PATCH_BUDGET" ]; then
     jq -cn --argjson pr "$pr" --arg id "$task" --arg r "$1" \
       '{action: "rebase", pr: $pr, id: $id, reason: $r}'
-  else
-    echo "tick-merge: PR #$pr is at patch iteration $(f .patch_iteration)/$PATCH_BUDGET: needs a human update" >&2
+    refuse "$1"
   fi
-  refuse "$1"
+  {
+    echo "MERGE-NEEDS-HUMAN: PR #$pr is at patch iteration $it/$PATCH_BUDGET and still cannot merge: $1"
+    if [ -s "$tmp/gate.log" ]; then
+      echo
+      echo '```'
+      tail -n 60 "$tmp/gate.log"
+      echo '```'
+    fi
+  } > "$tmp/escalate.md"
+  graph flag "$task" needs-human on >&2 || echo "tick-merge: could not flag $task needs-human" >&2
+  graph comment "$task" - < "$tmp/escalate.md" >&2 || echo "tick-merge: could not comment on $task" >&2
+  if [ -n "${NOTIFY_ESCALATE_CMD:-}" ]; then
+    ( eval "$NOTIFY_ESCALATE_CMD" ) >&2 || echo "tick-merge: NOTIFY_ESCALATE_CMD failed" >&2
+  fi
+  jq -cn --argjson pr "$pr" --arg id "$task" --arg r "$1" \
+    '{pr: $pr, id: $id, result: "needs-human", reason: $r}'
+  refuse "$1 (patch budget $PATCH_BUDGET reached: $task flagged needs-human)"
 }
 
 rc=0

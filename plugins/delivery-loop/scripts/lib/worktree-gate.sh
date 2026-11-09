@@ -9,7 +9,16 @@
 #       merges <merge-sha> into it when given (a throwaway merge commit, never
 #       pushed), runs WORKTREE_SETUP_CMD (if set) and then <gate-cmd> inside it,
 #       and removes the worktree again, whatever happened. The setup and gate
-#       output goes to stderr and to <log>. Returns:
+#       output goes to stderr and to <log>.
+#       The setup and gate run with every lib/config.sh key (_DL_VARS) unset,
+#       so whatever in the tree sources config.sh resolves the TREE's own
+#       .claude/delivery.conf (a PR that changes it included), not the values
+#       the caller resolved and exported. The environment-only keys
+#       (_DL_ENV_ONLY: tokens, LOCK_WAIT_SECONDS) pass through: the
+#       environment is their only source.
+#       The gate runs as a background job in its own process group, and the
+#       caller waits on it, so a signal the caller traps is handled at once
+#       rather than after the gate ends. Returns:
 #         0 the gate passed
 #         1 the gate (or WORKTREE_SETUP_CMD) failed
 #         3 <merge-sha> does not merge cleanly into <ref> (no gate run)
@@ -17,8 +26,10 @@
 #       Sets DL_GATE_BASE to the commit <ref> resolved to.
 #
 #   dl_gate_cleanup
-#       Removes a worktree dl_gate_tree left registered (an interrupted run).
-#       Safe to call from an EXIT trap at any time.
+#       Stops a gate still running (TERM to its process group, captured PID),
+#       then removes a worktree dl_gate_tree left registered (an interrupted
+#       run). Safe to call from an EXIT trap at any time; the caller traps
+#       INT/TERM/HUP to `exit`, so the EXIT trap runs on a signal.
 #
 # The worktree is registered with the caller's repo only while the gate runs;
 # a leftover registration is pruned. Do NOT `set -e` here: the functions run in
@@ -26,8 +37,17 @@
 
 DL_GATE_WT=""
 DL_GATE_BASE=""
+DL_GATE_PID=""
 
 dl_gate_cleanup() {
+  if [ -n "$DL_GATE_PID" ]; then
+    # The whole group (the gate's own children too); the PID alone if the
+    # group was not created. `2>/dev/null` on wait: bash 3.2 prints a job
+    # notice ("Terminated") for the killed job.
+    kill -TERM -- "-$DL_GATE_PID" 2>/dev/null || kill -TERM "$DL_GATE_PID" 2>/dev/null || true
+    wait "$DL_GATE_PID" 2>/dev/null || true
+    DL_GATE_PID=""
+  fi
   [ -n "$DL_GATE_WT" ] || return 0
   git worktree remove --force "$DL_GATE_WT" >/dev/null 2>&1 || rm -rf "$DL_GATE_WT"
   git worktree prune >/dev/null 2>&1 || true
@@ -36,6 +56,7 @@ dl_gate_cleanup() {
 
 dl_gate_tree() {
   local dir="$1" ref="$2" gate="$3" log="$4" merge="${5:-}" rc=0
+  local setup="${WORKTREE_SETUP_CMD:-}" monitor=""
   : > "$log"
   DL_GATE_BASE="$(git rev-parse --verify --quiet "$ref^{commit}")" || {
     echo "worktree-gate: cannot resolve $ref" >&2; return 4; }
@@ -52,9 +73,19 @@ dl_gate_tree() {
       return 3
     fi
   fi
+  # set -m: the job gets its own process group, which dl_gate_cleanup can stop
+  # as a whole; restored straight after the launch.
+  case "$-" in *m*) monitor=1 ;; esac
+  set -m
   ( cd "$dir" || exit 1
-    if [ -n "${WORKTREE_SETUP_CMD:-}" ]; then eval "$WORKTREE_SETUP_CMD" || exit $?; fi
-    eval "$gate" ) >>"$log" 2>&1 < /dev/null || rc=1
+    # shellcheck disable=SC2086
+    unset ${_DL_VARS:-}
+    if [ -n "$setup" ]; then eval "$setup" || exit $?; fi
+    eval "$gate" ) >>"$log" 2>&1 < /dev/null &
+  DL_GATE_PID=$!
+  [ -n "$monitor" ] || set +m
+  wait "$DL_GATE_PID" || rc=1
+  DL_GATE_PID=""
   cat "$log" >&2
   dl_gate_cleanup
   return "$rc"
