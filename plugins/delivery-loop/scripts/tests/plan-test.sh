@@ -111,14 +111,16 @@ run -- lint plans/valid.plan.json
 eq "GC34 cross-plan: exit 1" 1 "$rc"
 has "GC34 cross-plan: names both promote_to values and the other file" "$err" \
   'plan: target_branch `release/x` has promote_to "main" here but "qa" in plans/other.plan.json'
-run -- lint "$fx/gc34-cross-plan.plan.json"
+# The same plan under another plan id (a shared plan id is its own error).
+jq '.plan = "fx-third"' "$fx/gc34-cross-plan.plan.json" >"$tmp/cross.plan.json"
+run -- lint "$tmp/cross.plan.json"
 has "GC34 cross-plan: a plan outside PLANS_DIR is still checked against it" "$err" \
   'promote_to "qa" here but "main" in plans/valid.plan.json'
 run PLANS_DIR=elsewhere -- lint plans/valid.plan.json
 eq "GC34 cross-plan: PLANS_DIR is honored (an empty dir: no conflict)" 0 "$rc"
-run BASE_BRANCH=release/x -- lint "$fx/gc34-cross-plan.plan.json"
+run BASE_BRANCH=release/x -- lint "$tmp/cross.plan.json"
 eq "cross-plan: still compared when target_branch is explicit and equals BASE_BRANCH" 1 "$rc"
-jq 'del(.target_branch)' "$fx/gc34-cross-plan.plan.json" >"$tmp/no-target.plan.json"
+jq 'del(.target_branch)' "$tmp/cross.plan.json" >"$tmp/no-target.plan.json"
 run BASE_BRANCH=release/x -- lint "$tmp/no-target.plan.json"
 has "cross-plan: an absent target_branch defaults to BASE_BRANCH" "$err" 'target_branch `release/x` has promote_to "qa"'
 run -- lint "$tmp/no-target.plan.json"
@@ -169,6 +171,40 @@ run -- lint "$tmp/two.plan.json"
 has "two JSON documents: refused" "$err" "expected one JSON document, found 2"
 run -- lint "$tmp/missing.plan.json"
 eq "missing file: exit 1" 1 "$rc"
+
+# Gaps closed for apply (it runs lint first): blank via/criteria/titles,
+# duplicate deps, duplicate JSON keys, two plan files sharing a plan id.
+for case in '.tasks[1].deps[0].via = " \t"|dep `store-schema` has no `via`' \
+            '.tasks[0].criteria = ["ok", "  "]|`criteria` must hold non-empty strings' \
+            '.tasks[0].title = "   "|task `store-schema`: `title` must be a non-empty string' \
+            '.epics[0].title = "\n"|epic `core`: `title` must be a non-empty string'; do
+  filter="${case%%|*}" want="${case#*|}"
+  jq "$filter" "$fx/valid.plan.json" >"$tmp/case.plan.json"
+  run -- lint "$tmp/case.plan.json"
+  if [ "$rc" = 1 ] && printf '%s\n' "$err" | grep -qF -- "$want"; then pass "blank text: $filter -> $want"
+  else fail "blank text: $filter -> $want" "rc=$rc" "err: $err"; fi
+done
+jq '.tasks[2].deps += [{"id": "queue", "via": "again"}, {"id": "#42", "via": "x"}]
+    | .tasks[1].deps += [{"id": "#42", "via": "again"}]' "$fx/valid.plan.json" >"$tmp/dup-deps.plan.json"
+run -- lint "$tmp/dup-deps.plan.json"
+eq "duplicate deps: still valid (exit 0)" 0 "$rc"
+has "duplicate deps: warned" "$err" 'warning: task `board-view`: duplicate dep `queue` (kept the first)'
+has "duplicate deps: #42 twice is a duplicate" "$err" 'warning: task `queue`: duplicate dep `42` (kept the first)'
+jq -L "$here/../lib" --argjson ctx '{"backend": "github", "base_branch": "main", "modules": ["policy", "plan"], "nodes": ["42"], "others": []}' \
+  -c 'include "plan-lint"; plan_lint($ctx) | .plan.tasks[] | select(.id == "queue") | [.deps[] | .via]' \
+  "$tmp/dup-deps.plan.json" >"$tmp/deps.json"
+eq "duplicate deps: normalized to the first of each" '["lib/store.jq read_store","the existing config loader"]' "$(cat "$tmp/deps.json")"
+sed 's/"plan": "demo",/"plan": "demo", "plan": "demo-two",/' "$fx/valid.plan.json" >"$tmp/dupkey.plan.json"
+run -- lint "$tmp/dupkey.plan.json"
+eq "duplicate JSON key: exit 1" 1 "$rc"
+has "duplicate JSON key: says so" "$err" "duplicate JSON object key"
+mkdir -p "$repo/plans"
+cp "$fx/valid.plan.json" "$repo/plans/a.plan.json"
+cp "$fx/valid.plan.json" "$repo/plans/b.plan.json"
+run -- lint plans/a.plan.json
+eq "shared plan id: exit 1" 1 "$rc"
+has "shared plan id: names the other file" "$err" 'plan: plan id `demo` is also the plan id of plans/b.plan.json'
+rm -rf "$repo/plans"
 
 # --- §8.1: existing-node deps ("#42" on github) -----------------------------------
 echo '[{"id": "7"}]' >"$tmp/nodes-no42.json"
@@ -246,7 +282,7 @@ eq "Mermaid safety: the epic title decodes" 'core: E "q" ]) | p nl' \
 # --- usage --------------------------------------------------------------------------
 run -- lint
 eq "usage: missing file -> exit 2" 2 "$rc"
-run -- apply "$fx/valid.plan.json"
+run -- frobnicate "$fx/valid.plan.json"
 eq "usage: unknown op -> exit 2" 2 "$rc"
 
 # --- GC59 (plan.sh part): an invalid config exits 1 before any I/O -----------------

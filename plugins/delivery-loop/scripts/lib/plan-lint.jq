@@ -21,12 +21,18 @@
 #   nodes        existing node ids (`graph.sh list`), or null to skip
 #                existing-node resolution (render needs structure only).
 #   others       the other plans in PLANS_DIR, as
-#                [{file, target_branch, promote_to}] (raw values).
+#                [{file, plan, target_branch, promote_to}] (raw values): a
+#                shared target_branch must agree on promote_to, and a shared
+#                plan id is an error (plan_ref keys would collide, §8.3).
+#
+# Beyond §8.2, whitespace-only titles, vias and criteria count as empty, and a
+# task's duplicate deps (same resolved id: "#42" and "42" on github) are a
+# warning; normalization keeps the first.
 #
 # Normalized plan: target_branch defaulted to base_branch, promote_to to null,
 # optional fields filled (goal "", spec_refs [], spec [], deps [], context "",
 # scope []), and each dep as {id, via, ref} where ref is "task" (a task of this
-# plan) or "node" (an existing node; "#42" → id "42").
+# plan) or "node" (an existing node; "#42" → id "42"), deduplicated.
 #
 # Usage: jq -L scripts/lib --argjson ctx "$ctx" 'include "plan-lint"; plan_lint($ctx)' plan.json
 
@@ -44,6 +50,11 @@ def plan_dep_id($backend):
 def _objs: if type == "array" then map(select(type == "object")) else [] end;
 
 def _has_str($s): any(.[]; . == $s);
+
+# A string with at least one non-whitespace character (a whitespace-only `via`,
+# criterion or title says nothing; `test("\\S")` avoids Oniguruma's per-line
+# `^`/`$`).
+def _is_text: type == "string" and test("\\S");
 
 def plan_external_deps($backend):
   (if type == "object" then . else {} end) as $p
@@ -77,7 +88,7 @@ def _epic_errors:
     else _where("epic"; $i) as $w
       | _field_errors($w; ["id", "title"]; ["goal", "spec_refs"]),
         _malformed($w; "id"),
-        _typed($w; "title"; is_nonempty_string; "must be a non-empty string"),
+        _typed($w; "title"; _is_text; "must be a non-empty string"),
         _typed($w; "goal"; type == "string"; "must be a string"),
         _typed($w; "spec_refs"; is_string_array; "must be an array of strings")
     end;
@@ -93,7 +104,8 @@ def _dep_errors($w; $backend; $tids; $eids; $nodes):
       | ($raw | plan_dep_id($backend)) as $id
       | "\($w): dep `\($raw)`" as $d
       | ((keys - ["id", "via"])[] | "\($d): unexpected field `\(.)`"),
-        (if (.via == null) or (.via == "") then "\($d) has no `via` (plan deps require one)"
+        (if (.via == null) or ((.via | type) == "string" and (.via | _is_text | not))
+         then "\($d) has no `via` (plan deps require one; a whitespace-only via counts as none)"
          elif (.via | type) != "string" then "\($d): `via` must be a string (got \(.via | tojson))"
          else empty end),
         (if ($id | is_node_id | not) then "\($d): malformed dep id (want \(_id_rule)\(if $backend == "github" then ", or #N" else "" end))"
@@ -113,7 +125,7 @@ def _task_errors($backend; $modules; $tids; $eids; $nodes):
       | _field_errors($w; ["id", "epic", "title", "module", "size", "criteria"];
                           ["deps", "context", "scope"]),
         _malformed($w; "id"),
-        _typed($w; "title"; is_nonempty_string; "must be a non-empty string"),
+        _typed($w; "title"; _is_text; "must be a non-empty string"),
         _typed($w; "context"; type == "string"; "must be a string"),
         _typed($w; "scope"; is_string_array; "must be an array of strings"),
         (if has("epic") then
@@ -132,7 +144,7 @@ def _task_errors($backend; $modules; $tids; $eids; $nodes):
         (if has("criteria") then
            if (.criteria | type) != "array" then "\($w): `criteria` must be an array of strings (got \(.criteria | tojson))"
            elif (.criteria | length) == 0 then "\($w): `criteria` is empty"
-           elif (.criteria | all(.[]; is_nonempty_string) | not) then "\($w): `criteria` must hold non-empty strings"
+           elif (.criteria | all(.[]; _is_text) | not) then "\($w): `criteria` must hold non-empty strings (not whitespace-only)"
            else empty end
          else empty end),
         (if has("deps") then
@@ -181,10 +193,19 @@ def plan_lint($ctx):
           ($ctx.others // [] | .[]
            | select((.target_branch // $ctx.base_branch) == $target
                     and (.promote_to // null) != $promote)
-           | "plan: target_branch `\($target)` has promote_to \($promote | tojson) here but \(.promote_to // null | tojson) in \(.file)")
+           | "plan: target_branch `\($target)` has promote_to \($promote | tojson) here but \(.promote_to // null | tojson) in \(.file)"),
+          ($ctx.others // [] | .[]
+           | select(.plan != null and .plan == $p.plan)
+           | "plan: plan id `\($p.plan)` is also the plan id of \(.file) (plan_ref idempotency keys would collide)")
         ] as $errors
-      | [ $tasks[] | select(.size == "L")
+      | ( [ $tasks[] | select(.size == "L")
           | "\(.id // "?" | if type == "string" then "task `\(.)`" else "task" end): size L is a placeholder: split it before it can be claimed" ]
+        + [ $tasks[] | select(.id | type == "string") | .id as $tid
+            | [.deps | _objs[] | .id | strings
+               | {id: plan_dep_id($backend),
+                  task: ((_is_existing_ref($backend) | not) and (plan_dep_id($backend) as $i | $tids | _has_str($i)))}]
+            | group_by(.)[] | select(length > 1)
+            | "task `\($tid)`: duplicate dep `\(.[0].id)` (kept the first)" ] )
         as $warnings
       | { errors: $errors,
           warnings: $warnings,
@@ -198,11 +219,12 @@ def plan_lint($ctx):
                    epics: [$epics[] | {id, title, goal: (.goal // ""), spec_refs: (.spec_refs // [])}],
                    tasks: [ $tasks[]
                      | {id, epic, title, module, size,
-                        deps: [ .deps // [] | .[]
+                        deps: ([ .deps // [] | .[]
                                 | (.id | _is_existing_ref($backend)) as $ext
                                 | (.id | plan_dep_id($backend)) as $id
                                 | {id: $id, via,
-                                   ref: (if ($ext | not) and ($tids | _has_str($id)) then "task" else "node" end)} ],
+                                   ref: (if ($ext | not) and ($tids | _has_str($id)) then "task" else "node" end)} ]
+                              | reduce .[] as $d ([]; if any(.[]; .id == $d.id and .ref == $d.ref) then . else . + [$d] end)),
                         context: (.context // ""),
                         criteria,
                         scope: (.scope // [])} ]
