@@ -25,6 +25,15 @@
 #                    3. lib/plan-apply.jq preflight: plan_ref collisions, local
 #                       id reuse across plans (GC35), the promote id, one-line
 #                       titles, the 50-blocker cap on github;
+#                    3b. composed-body validation (lib/plan-verify.jq):
+#                       each node to create is rendered as the backend's
+#                       create writes it (github: gh_create_body, native and
+#                       gh < 2.94 forms; local: its GL_CREATE normalizer) and
+#                       read back by the backend's own reader (gh_node,
+#                       gh_migrate_plan; local: the stored node); any
+#                       difference in deps, epic, checklist, target_branch,
+#                       plan_ref or promote_to (or a migrate plan) refuses the
+#                       plan, naming the node and field;
 #                    4. drift: an existing node (found by plan_ref) whose title,
 #                       body, epic, module, size, deps, target_branch or
 #                       promote_to differs from the plan prints `drift: <id>
@@ -208,6 +217,33 @@ jq -n --arg backend "$GRAPH_BACKEND" --slurpfile nodes "$tmp/nodes.json" \
 pjq --slurpfile ctx "$tmp/actx.json" 'include "plan-apply"; plan_apply($ctx[0])' "$tmp/norm.json" >"$tmp/apply.json"
 if [ "$(jq '.errors | length' "$tmp/apply.json")" -ne 0 ]; then
   jq -r --arg f "$file" '.errors[] | "plan.sh: \($f): error: apply: \(.)"' "$tmp/apply.json" >&2
+  echo "plan.sh: $file: apply refused (nothing written)" >&2
+  exit 1
+fi
+# Composed-body validation (lib/plan-verify.jq): every node to create, rendered
+# as the backend's create writes it and read back by the backend's own reader,
+# must carry exactly the plan's metadata.
+case "$GRAPH_BACKEND" in
+  github)
+    jq -n --arg base "$BASE_BRANCH" --slurpfile nodes "$tmp/nodes.json" '{base: $base, nodes: $nodes[0]}' >"$tmp/vctx.json"
+    pjq -L "$SCRIPT_DIR/backends" --slurpfile ctx "$tmp/vctx.json" \
+      'include "plan-verify"; plan_verify_github($ctx[0])' "$tmp/apply.json" >"$tmp/verify.json" \
+      || die "composed-body validation failed to run (nothing written)" ;;
+  local)
+    # The local backend's own create normalizer, GL_CREATE (sourcing the
+    # backend defines it and runs nothing).
+    gl_create="$(. "$SCRIPT_DIR/backends/graph-local.sh" && printf '%s' "$GL_CREATE")" \
+      || die "cannot load the local backend's create normalizer (nothing written)"
+    jq -n --arg base "$BASE_BRANCH" --slurpfile nodes "$tmp/nodes.json" '{base: $base, nodes: $nodes[0]}' >"$tmp/vctx.json"
+    pjq -L "$SCRIPT_DIR/backends" --slurpfile ctx "$tmp/vctx.json" --arg base "$BASE_BRANCH" \
+      "include \"plan-verify\"; def _gl_create(\$all; \$now; \$base): $gl_create;
+       plan_verify_local(\$ctx[0]; . as \$x | \$x.node | _gl_create([\$x.all]; \"1970-01-01T00:00:00Z\"; \$base))" \
+      "$tmp/apply.json" >"$tmp/verify.json" \
+      || die "composed-body validation failed to run (nothing written)" ;;
+  *) die "no composed-body validation for GRAPH_BACKEND=$GRAPH_BACKEND (nothing written)" ;;
+esac
+if [ "$(jq 'length' "$tmp/verify.json")" -ne 0 ]; then
+  jq -r --arg f "$file" '.[] | "plan.sh: \($f): error: apply: \(.)"' "$tmp/verify.json" >&2
   echo "plan.sh: $file: apply refused (nothing written)" >&2
   exit 1
 fi

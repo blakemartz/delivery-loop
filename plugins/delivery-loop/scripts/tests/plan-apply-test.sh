@@ -441,6 +441,102 @@ eq "marker drift: body reported; target_branch unchanged (a key line above the t
   "$(printf '%s\n' "$err" | grep '^drift:' || true)"
 eq "marker drift: nothing created" 0 "$(grep -c '^gh issue create' "$st/log" || true)"
 
+# --- composed-body validation (#29): what create writes, read back by the reader --
+# Lint checks each plan string on its own; apply joins some of them (`spec` +
+# `spec_refs` into one `Spec:` line, criteria and scope into list items), and
+# the reader accepts forms lint does not match (`**Depends-on**:`). So before
+# any write apply renders each node body exactly as the backend's create
+# writes it (gh_create_body, native and gh < 2.94 forms) and reads it back
+# with the backend's own reader (gh_node, gh_migrate_plan; local: its create
+# normalizer). The tests below check the outcome end to end: either refused
+# with zero writes, or created with exactly the plan's metadata.
+
+# meta: the created nodes' metadata, every id mapped to its plan_ref (an
+# existing issue stays #N), so boards with different issue numbers compare.
+meta() {
+  jq -c '(map({key: .id, value: (.plan_ref // ("#" + .id))}) | from_entries) as $r
+    | [ .[] | select(.plan_ref != null)
+        | {plan_ref, epic: (if .epic == null then null else $r[.epic] end),
+           deps: ([.deps[] | [$r[.id], .via]] | sort), checklist,
+           target_branch, promote_to} ] | sort_by(.plan_ref)' <<<"$board"
+}
+fresh_repo release/x
+gh_board
+apply_gh "$here/fixtures/plan/valid.plan.json"
+board_gh
+gh_meta=$(meta)
+jq '.tasks[1].deps |= map(select(.id != "#42"))' "$here/fixtures/plan/valid.plan.json" >"$tmp/lvalid.plan.json"
+fresh_repo release/x
+apply_local -- "$tmp/lvalid.plan.json"
+eq "composed baseline (local): exit 0" 0 "$rc"
+board_local
+local_meta=$(meta)
+
+# composed_refused <name> <jq edit of valid.plan.json> <expected error>: github
+# apply exits 1 naming the node and field, and writes nothing.
+composed_refused() {
+  fresh_repo release/x
+  gh_board
+  cp "$st/board.json" "$tmp/board.before"
+  jq "$2" "$here/fixtures/plan/valid.plan.json" >"$tmp/c.plan.json"
+  : >"$st/log"
+  run -- "$plan" lint "$tmp/c.plan.json"
+  eq "$1: lint alone passes it (the gap)" 0 "$rc"
+  apply_gh "$tmp/c.plan.json"
+  eq "$1: exit 1" 1 "$rc"
+  has "$1: names the node and field" "$err" "$3"
+  has "$1: refused before any write" "$err" "apply refused (nothing written)"
+  eq "$1: no gh write" "" "$(grep -E '^gh (issue (create|edit|close|comment|reopen)|label|api .*(mutation|--method|-X))' "$st/log" || true)"
+  eq "$1: board unchanged" "$(cat "$tmp/board.before")" "$(cat "$st/board.json")"
+  eq "$1: no push, ls-remote or fetch" "" "$(grep -E '^git (push|ls-remote|fetch)' "$tmp/git.log" || true)"
+}
+# composed_intact <name> <jq edit>: apply (github, then local) exits 0 and every
+# node reads back with the baseline's metadata (no edge, epic or key injected).
+composed_intact() {
+  fresh_repo release/x
+  gh_board
+  jq "$2" "$here/fixtures/plan/valid.plan.json" >"$tmp/c.plan.json"
+  apply_gh "$tmp/c.plan.json"
+  eq "$1 (github): exit 0" 0 "$rc"
+  board_gh
+  eq "$1 (github): metadata read back as planned" "$gh_meta" "$(meta)"
+  fresh_repo release/x
+  jq "$2"' | .tasks[1].deps |= map(select(.id != "#42"))' "$here/fixtures/plan/valid.plan.json" >"$tmp/c.plan.json"
+  apply_local -- "$tmp/c.plan.json"
+  eq "$1 (local): exit 0" 0 "$rc"
+  board_local
+  eq "$1 (local): metadata stored as planned" "$local_meta" "$(meta)"
+}
+gh_reads='the github issue body apply would write reads back'
+# The spec/spec_refs join: on one `Spec:` line (mid-line, prose to the reader
+# since #77) it is harmless; a line break inside a ref puts `Depends-on:` at a
+# line start, and the next ref's `#N` joins it.
+composed_intact 'spec_refs ["see Depends-on:", "#1"] on one Spec: line' \
+  '.epics[0].spec_refs = ["see Depends-on:", "#1"]'
+composed_refused 'spec_refs ["see\nDepends-on:", "#1"] (the join)' \
+  '.epics[0].spec_refs = ["see\nDepends-on:", "#1"]' "\`core\`: $gh_reads deps"
+composed_intact 'spec "docs/x Depends-on:" + spec_refs "#2" on one Spec: line' \
+  '.spec = ["docs/x Depends-on:"] | .epics[0].spec_refs = ["#2"]'
+composed_refused 'spec "docs/x\nDepends-on:" + spec_refs "#2": the epic would depend on its own task' \
+  '.spec = ["docs/x\nDepends-on:"] | .epics[0].spec_refs = ["#2"]' "\`core\`: $gh_reads deps"
+composed_intact 'spec_refs ["Depends-on:", "#3 (via: q)"] on one Spec: line' \
+  '.epics[0].spec_refs = ["Depends-on:", "#3 (via: q)"]'
+composed_refused 'spec_refs ["x\nDepends-on:", "#3 (via: q)"]' \
+  '.epics[0].spec_refs = ["x\nDepends-on:", "#3 (via: q)"]' "\`core\`: $gh_reads deps"
+# The bold forms #78's reader accepts and lint's `Depends-on[ \t]*:` misses.
+composed_refused 'context **Depends-on**: #2' '.tasks[0].context = "see\n**Depends-on**: #2"' \
+  "\`store-schema\`: $gh_reads deps"
+composed_refused 'context Depends-on**: #2' '.tasks[0].context = "Depends-on**: #2"' \
+  "\`store-schema\`: $gh_reads deps"
+composed_refused 'scope **Depends-on**: #2 (a list item)' '.tasks[0].scope = ["**Depends-on**: #2"]' \
+  "\`store-schema\`: $gh_reads deps"
+composed_refused 'goal **Depends-on**: #2' '.epics[0].goal = "**Depends-on**: #2"' \
+  "\`core\`: $gh_reads deps"
+composed_refused 'context **Part of epic** #4 (a migrate parent)' '.tasks[0].context = "**Part of epic** #4"' \
+  "\`store-schema\`: $gh_reads migrate"
+composed_intact 'a criterion **Depends-on**: #2 (a checklist item, not an edge)' \
+  '.tasks[0].criteria = ["**Depends-on**: #2"]'
+
 # --- usage --------------------------------------------------------------------------
 run -- "$plan" apply
 eq "usage: apply without a file -> exit 2" 2 "$rc"

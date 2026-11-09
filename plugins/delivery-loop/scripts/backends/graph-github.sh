@@ -392,18 +392,8 @@ op_create() {
   # is prose and never stands in for one here (#77). Delivery-Target is always
   # written (BASE_BRANCH when unset, as the local backend stores it), so the
   # block always has a key line and wins over any key paragraph in the contract.
-  jq -r --argjson native "$native" --arg base "$BASE_BRANCH" '
-    def rtrim_ws: if length > 0 and (.[-1:] | test("[ \t\r\n]")) then .[:-1] | rtrim_ws else . end;
-    ((.deps // []) | map(if type == "object" then {id: (.id | tostring), via: .via} else {id: tostring, via: null} end)) as $deps
-    | [ "Delivery-Target: \(.target_branch // $base)",
-        (if .plan_ref != null then "Delivery-Plan: \(.plan_ref)" else empty end),
-        (if .kind == "promote" and .promote_to != null then "Delivery-Promote-To: \(.promote_to)" else empty end),
-        (if $native == 0 and .epic != null then "Part of epic #\(.epic)" else empty end),
-        ($deps[] | select($native == 0 or .via != null)
-         | "Depends-on: #\(.id)\(if .via != null then " (via: \(.via))" else "" end)") ] as $trailer
-    | ((.body // "") | rtrim_ws) as $b
-    | if $b == "" then $trailer | join("\n")
-      else $b + "\n\n" + ($trailer | join("\n")) end' "$tmp/in.json" > "$tmp/body.md"
+  gjq -r --argjson native "$native" --arg base "$BASE_BRANCH" \
+    'include "graph-github"; gh_create_body($native; $base)' "$tmp/in.json" > "$tmp/body.md"
   jq -r --argjson native "$native" '
     "--title", .title, "--body-file", $ARGS.named.body,
     "--label", .kind, "--label", "status:\(.status // "ready")",

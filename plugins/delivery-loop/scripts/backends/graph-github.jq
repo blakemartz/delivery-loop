@@ -115,7 +115,8 @@
 # "graph-github"`, on an issue or any {body}): gh_trailer_block (its lines),
 # gh_trailer_keys ({target_branch, plan_ref, promote_to, task}, raw, null when
 # absent), gh_text_edges ([{id, via}]), gh_stray_key_lines (key lines outside
-# the block); and the writers' value checks gh_trailer_token / gh_via_ok.
+# the block); the writers' value checks gh_trailer_token / gh_via_ok; and
+# gh_create_body, the body create writes.
 #
 # Line-oriented matches split the body on "\n" first: jq's Oniguruma `^`/`$` do
 # not reliably anchor at line boundaries.
@@ -436,6 +437,30 @@ def gh_link_body($dep; $via):
   | if $at != null then $ls | .[$at] = $line | join("\n")
     else ($ls | until(length == 0 or (.[-1] | _is_blank | not); .[:-1]) | join("\n")) as $b
          | (if $b == "" then $line else $b + "\n" + $line end) end;
+
+# gh_create_body($native; $base) — input: a `create` node-json (already
+# validated by create). The issue body create writes: the contract (`.body`,
+# trailing whitespace dropped), a blank line, then the trailer block (§6.2),
+# always whole: `Delivery-Target:` (BASE_BRANCH when unset) first, then
+# `Delivery-Plan:`, `Delivery-Promote-To:` (promote nodes), and the text edges
+# — with $native == 0 (gh < 2.94, no native relations) `Part of epic #E` and a
+# `Depends-on: #N` line per dep; with $native == 1 only a dep with a via gets
+# its `Depends-on: #N (via: …)` line (the parent and blocked-by are native).
+# The only definition of that body: create writes it, and `plan.sh apply` reads
+# it back through gh_node before any write (composed-body validation).
+def _gh_rtrim_body: if length > 0 and (.[-1:] | test("[ \t\r\n]")) then .[:-1] | _gh_rtrim_body else . end;
+
+def gh_create_body($native; $base):
+  ((.deps // []) | map(if type == "object" then {id: (.id | tostring), via: .via} else {id: tostring, via: null} end)) as $deps
+  | [ "Delivery-Target: \(.target_branch // $base)",
+      (if .plan_ref != null then "Delivery-Plan: \(.plan_ref)" else empty end),
+      (if .kind == "promote" and .promote_to != null then "Delivery-Promote-To: \(.promote_to)" else empty end),
+      (if $native == 0 and .epic != null then "Part of epic #\(.epic)" else empty end),
+      ($deps[] | select($native == 0 or .via != null)
+       | "Depends-on: #\(.id)\(if .via != null then " (via: \(.via))" else "" end)") ] as $trailer
+  | ((.body // "") | _gh_rtrim_body) as $b
+  | if $b == "" then $trailer | join("\n")
+    else $b + "\n\n" + ($trailer | join("\n")) end;
 
 # gh_has_text_edge($dep; $via) — the body already records the edge to $dep
 # (with exactly $via, when $via is a string).
