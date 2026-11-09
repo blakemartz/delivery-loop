@@ -184,9 +184,9 @@ eq "show --events: a node with fewer events prints all of its own (and no other 
 g "$R" -- show auth-9 --format md --events
 expect "show --format md --events: the markdown, then the tail" \
   '[ "$rc" = 0 ] && [ "$(head -n 1 <<<"$out")" = "# from stdin" ] && [ "$(grep -c "^{" <<<"$out")" = 2 ]'
-g "$R" GRAPH_BACKEND=github FORGE_REPO=o/r -- show auth-9 --events
-expect "show --events on a backend with no journal exits 1 before any read" \
-  '[ "$rc" = 1 ] && case "$err" in *"has no journal"*) true ;; *) false ;; esac'
+eq "show --events: every line carries the §4.4 event field names, in order (github's comment events share them)" \
+  '[["ts","actor","run","op","id","from","to","body"]]' \
+  "$(g "$R" -- show auth-8 --events; tail -n +2 <<<"$out" | jq -sc 'map(keys_unsorted) | unique')"
 printf '{"torn' >> "$R/events.jsonl"
 g "$R" -- show auth-8 --events
 expect "show --events over a torn journal tail: succeeds, warns once" \

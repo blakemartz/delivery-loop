@@ -8,6 +8,12 @@
 #               child) as an `external` node (§4.1, §6.2), as one JSON array.
 #   show <id>   one delivery node (the issue number), as one JSON object; warns on
 #               stderr for each key line outside its trailer block (§6.2).
+#   events <id> the issue's whole comment thread (task B4, #92), oldest first,
+#               one event per line in the local journal's field names (§6.3):
+#               {ts, actor, run: null, op: "comment", id, from: null, to: null,
+#               body}. `graph.sh show <id> --events` prints them after the
+#               node. Paginated (`gh api --paginate`, 100 per page); a thread
+#               of LIST_LIMIT or more comments exits 3.
 #   migrate-plan
 #               the native edges `graph.sh migrate` adds (task B3, §6.2): one
 #               JSON array of {id, links, parent, blockers, warnings}, one entry
@@ -101,8 +107,9 @@
 # (LIST_LIMIT, BASE_BRANCH, FORGE_URL, FORGE_REPO, CLAIM_GRACE_SECONDS).
 #
 # Exit codes: 0 ok · 1 failed (claim: lost or not claimable) · 2 usage · 3 the
-# list reached LIST_LIMIT (never a silent truncation, GC10) · 4 reconcile: stale
-# record (the issue changed since the plan; nothing written).
+# list (or an events thread) reached LIST_LIMIT (never a silent truncation,
+# GC10) · 4 reconcile: stale record (the issue changed since the plan; nothing
+# written).
 #
 # Notes (§6.2):
 #   - one `gh issue list --state all` with an explicit `--limit $LIST_LIMIT`;
@@ -293,6 +300,28 @@ op_show() {
   gjq -r --arg id "$1" 'include "graph-github"; gh_stray_key_lines[]
       | "graph-github: warning: #\($id): key line outside the trailer block, read as prose: \(.)"' \
     "$tmp/issue.json" >&2
+}
+
+# events <id>: the issue's whole comment thread as §6.3-shaped events, oldest
+# first, one JSON object per line (gh_comment_events). REST pages of 100,
+# every page followed (`--paginate` prints one array per page); a thread of
+# LIST_LIMIT or more comments exits 3, as `list` does (GC10). Nothing is
+# printed unless the whole thread was read.
+op_events() {
+  [ $# -eq 1 ] || usage "events <id>"
+  need_n "$1" "events <id>"
+  gh api --paginate "repos/{owner}/{repo}/issues/$1/comments?per_page=100" > "$tmp/pages.json" \
+    || die "gh api (issue #$1 comments) failed"
+  gjq -s -c --arg id "$1" 'include "graph-github"; gh_comment_events($id)' \
+    "$tmp/pages.json" > "$tmp/events.json" 2> "$tmp/err" \
+    || { sed 's/^jq: error (at [^)]*): //' "$tmp/err" >&2; die "issue #$1: unexpected comments page shape"; }
+  local got
+  got=$(jq 'length' "$tmp/events.json")
+  if [ "$got" -ge "$LIST_LIMIT" ]; then
+    echo "graph-github: issue #$1 has $got comments >= LIST_LIMIT ($LIST_LIMIT); refusing to truncate (raise LIST_LIMIT)" >&2
+    exit 3
+  fi
+  jq -c '.[]' "$tmp/events.json"
 }
 
 # --- writes -----------------------------------------------------------------------
@@ -715,6 +744,7 @@ op="${1:-}"
 case "$op" in
   list) op_list "$@" ;;
   show) op_show "$@" ;;
+  events) op_events "$@" ;;
   create) op_create "$@" ;;
   update) op_update "$@" ;;
   link) op_link "$@" ;;
@@ -725,5 +755,5 @@ case "$op" in
   release) op_release "$@" ;;
   comment) op_comment "$@" ;;
   reconcile) op_reconcile "$@" ;;
-  *) usage "graph-github.sh list | show <id> | create <node-json> | update <id> <patch-json> | link <id> <dep-id> [via] | parent <id> <epic-id> | migrate-plan | flag <id> needs-human on|off | claim <id> <actor> <run> [agent|human] | release <id> <reason> | comment <id> <text> | reconcile <record-json> (docs/delivery_graph_spec.md §6.1)" ;;
+  *) usage "graph-github.sh list | show <id> | events <id> | create <node-json> | update <id> <patch-json> | link <id> <dep-id> [via] | parent <id> <epic-id> | migrate-plan | flag <id> needs-human on|off | claim <id> <actor> <run> [agent|human] | release <id> <reason> | comment <id> <text> | reconcile <record-json> (docs/delivery_graph_spec.md §6.1)" ;;
 esac
