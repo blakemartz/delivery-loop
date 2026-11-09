@@ -1,0 +1,95 @@
+{
+  "300": {
+    "number": 300,
+    "url": "https://github.com/example/repo/pull/300",
+    "state": "MERGED",
+    "headRefName": "task/w--old-pr",
+    "baseRefName": "main",
+    "headRefOid": "3000000000000000000000000000000000000000",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "UNKNOWN",
+    "statusCheckRollup": [],
+    "body": "Summary.\n\nDelivery-Task: w",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": "2025-12-01T00:00:00Z"
+  },
+  "301": {
+    "number": 301,
+    "url": "https://github.com/example/repo/pull/301",
+    "state": "MERGED",
+    "headRefName": "task/x--shipped",
+    "baseRefName": "main",
+    "headRefOid": "3010000000000000000000000000000000000000",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "UNKNOWN",
+    "statusCheckRollup": [],
+    "body": "Summary.\n\nDelivery-Task: x",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": "2026-01-05T00:00:00Z"
+  },
+  "302": {
+    "number": 302,
+    "url": "https://github.com/example/repo/pull/302",
+    "state": "OPEN",
+    "headRefName": "task/z--claim-with-a-pr",
+    "baseRefName": "main",
+    "headRefOid": "3020000000000000000000000000000000000000",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "body": "Summary.\n\nDelivery-Task: z",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  }
+}

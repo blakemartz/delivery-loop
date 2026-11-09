@@ -3,7 +3,7 @@
 # JSON files on this machine, no issue tracker (docs/delivery_graph_spec.md §6.1,
 # §6.3). Behind graph.sh.
 #
-# Primitives (task C1; claim/release/comment/reconcile are task C2):
+# Primitives (C1: list … unlock; C2: claim, release, comment, reconcile, journal):
 #   list                          every node (open and closed), one JSON array
 #                                 of §4.1 nodes.
 #   show <id>                     one node, one JSON object.
@@ -16,6 +16,34 @@
 #   update <id> <patch-json>|-    shallow-merge the patch into the node.
 #   link <id> <dep-id> [via]      add the blocking edge {id: dep-id, via}.
 #   flag <id> needs-human on|off  set or clear needs_human.
+#   claim <id> <actor> <run> [agent|human]
+#                                 atomic test-and-set under the lock (GC21):
+#                                 re-reads the node, requires status ready and
+#                                 no claim, then sets claim {actor, run, at, by}
+#                                 and status claimed, and journals `claim`.
+#                                 run `-` = null (a human claim has no run; an
+#                                 agent claim needs one). Exit 1 = lost or not
+#                                 claimable.
+#   release <id> <reason>         clear the claim; a claimed node returns to
+#                                 ready, any other status (and needs_human) is
+#                                 kept. Journals `release`. A node with no claim
+#                                 and not claimed is a no-op (exit 0).
+#   comment <id> <text>|-         a durable note: a `comment` journal event
+#                                 (the node file is not touched).
+#   reconcile <record-json>|-     apply one reconcile fix record {op, id, from,
+#                                 to, reason, updated_at} (lib/reconcile.jq, §5)
+#                                 as a compare-and-set: only if the node still
+#                                 has status `from` and the `updated_at` it had
+#                                 when the plan was computed, else exit 4.
+#                                 transition: status := to (journal
+#                                 `transition`); reclaim: an agent claim is
+#                                 cleared, status := to (journal `reclaim`,
+#                                 GC24); ping: a human claim not yet pinged gets
+#                                 a `comment` event whose body is the reason
+#                                 (STALE-CLAIM-PING…, so pinged_at derives).
+#   journal <id> [n]              the node's last n (default 10) journal events,
+#                                 one JSON object per line (graph.sh show prints
+#                                 them, §6.3). A reader: no lock.
 #   unlock --force                operator cleanup: remove lock, lock.break and
 #                                 lock.break.reap whatever their owners.
 # Mutating primitives accept trailing `--actor <name>` / `--run <run>`, recorded
@@ -47,6 +75,9 @@
 # default 30, then exit 75), with the serialized stale-lock break of §6.3 (GC22).
 # The journal has no `update` op, so update and flag journal as `transition`
 # (from/to = the node's status before/after; body = the patch).
+# claim, release and reconcile decide nothing: the policy pre-check (the
+# transition table, needs_human) is graph.sh's, the records are reconcile.jq's;
+# under the lock they only re-check what they are about to overwrite.
 #
 # Input: every node-json and patch-json must be exactly one JSON object
 # (`{…}{…}` or `[…]` is refused before the lock, nothing written). Every id
@@ -58,7 +89,9 @@
 # Requires jq >= 1.6 (`--rawfile`; `--slurpfile` is 1.5): checked at startup.
 #
 # Exit codes: 0 ok · 1 failed (unknown node, invalid input or node, schema
-# mismatch, jq too old) · 2 usage · 75 lock not acquired within LOCK_WAIT_SECONDS.
+# mismatch, jq too old; claim: lost or not claimable) · 2 usage · 4 reconcile:
+# stale record (the node changed since the plan; nothing written) · 75 lock not
+# acquired within LOCK_WAIT_SECONDS.
 #
 # Sourcing this file (tests) defines the gl_* functions without running a primitive.
 set -euo pipefail
@@ -662,6 +695,141 @@ op_flag() {
   esac
 }
 
+# --- claim / release / comment / reconcile (task C2) --------------------------
+
+gl_do_claim() {
+  local old new
+  gl_ensure_store
+  old=$(gl_get "$1")
+  if ! jq -e '.status == "ready" and .claim == null' <<<"$old" > /dev/null; then
+    echo "graph-local: not claimable: '$1' is $(jq -r '.status + (if .claim != null then ", claimed by \(.claim.actor)" else "" end)' <<<"$old")" >&2
+    exit 1
+  fi
+  new=$(jq -c --arg actor "$2" --arg run "$3" --arg by "$4" --arg now "$(gl_now)" '
+    .claim = {actor: $actor, run: (if $run == "" then null else $run end), at: $now, by: $by}
+    | .status = "claimed" | .updated_at = $now' <<<"$old")
+  gl_validate "$new"
+  gl_event_build claim "$1" ready claimed "$4"
+  gl_put_node "$new"
+  gl_event_append
+}
+
+op_claim() {
+  gl_is_id "$1" || gl_die "claim: not a node id: '$1'"
+  local by="${4:-agent}" run="$3"
+  case "$by" in agent|human) : ;; *) gl_usage "claim <id> <actor> <run> [agent|human]" ;; esac
+  [ -n "$2" ] || gl_usage "claim <id> <actor> <run> [agent|human]: empty actor"
+  [ "$run" != - ] || run=""
+  [ "$by" = human ] || [ -n "$run" ] || gl_usage "claim <id> <actor> <run>: an agent claim needs a run"
+  # The claimant is the journal actor; the run is in the lock owner line too,
+  # which is space-separated (as gl_main sanitizes --run).
+  GL_ACTOR="$2"
+  GL_RUN=$(printf '%s' "$run" | tr -s ' \t\n' '___')
+  gl_with_lock gl_do_claim "$1" "$2" "$GL_RUN" "$by"
+}
+
+gl_do_release() {
+  local old new
+  gl_ensure_store
+  old=$(gl_get "$1")
+  ! jq -e '.claim == null and .status != "claimed"' <<<"$old" > /dev/null || return 0
+  new=$(jq -c --arg now "$(gl_now)" '
+    .claim = null | (if .status == "claimed" then .status = "ready" else . end)
+    | .updated_at = $now' <<<"$old")
+  gl_validate "$new"
+  gl_event_build release "$1" "$(jq -r .status <<<"$old")" "$(jq -r .status <<<"$new")" "$2"
+  gl_put_node "$new"
+  gl_event_append
+}
+
+op_release() {
+  gl_is_id "$1" || gl_die "release: not a node id: '$1'"
+  [ -n "$2" ] || gl_usage "release <id> <reason>: empty reason"
+  gl_with_lock gl_do_release "$1" "$2"
+}
+
+gl_do_comment() {
+  gl_ensure_store
+  gl_get "$1" > /dev/null
+  gl_event comment "$1" "" "" "$2"
+}
+
+op_comment() {
+  [ "$2" != - ] || set -- "$1" "$(cat)"
+  gl_is_id "$1" || gl_die "comment: not a node id: '$1'"
+  [ -n "$2" ] || gl_usage "comment <id> <text>: empty text"
+  gl_with_lock gl_do_comment "$1" "$2"
+}
+
+# The record checks that need no store: shape, op, a ping moves nothing.
+GL_RECORD='
+  def str: type == "string" and length > 0;
+  if (keys - ["op", "id", "from", "to", "reason", "updated_at"] | length) > 0
+  then error("record: unexpected field(s) \(keys - ["op", "id", "from", "to", "reason", "updated_at"] | join(", "))")
+  elif ([.op, .id, .from, .to, .reason, .updated_at] | all(str) | not)
+  then error("record: op, id, from, to, reason and updated_at must be non-empty strings")
+  elif (.op as $op | ["transition", "reclaim", "ping"] | index($op)) == null
+  then error("record: unknown op \(.op | tojson) (transition|reclaim|ping)")
+  elif .op == "ping" and .from != .to then error("record: a ping moves nothing (from must equal to)")
+  else . end'
+
+gl_do_reconcile() {
+  local rf id op from to reason old new
+  rf="$1"
+  gl_ensure_store
+  id=$(jq -r .id "$rf"); op=$(jq -r .op "$rf"); from=$(jq -r .from "$rf")
+  to=$(jq -r .to "$rf"); reason=$(jq -r .reason "$rf")
+  old=$(gl_get "$id")
+  # Compare-and-set: the node is as the plan saw it, and the record's op still
+  # fits its claim. Anything else is a stale record: exit 4, nothing written.
+  if ! jq -e --slurpfile r "$rf" '$r[0] as $r
+       | .status == $r.from and .updated_at == $r.updated_at
+         and (if $r.op == "reclaim" then (.claim // {}).by == "agent"
+              elif $r.op == "ping" then (.claim // {}).by == "human"
+              else true end)' <<<"$old" > /dev/null; then
+    echo "graph-local: stale record: '$id' is no longer $from at $(jq -r .updated_at "$rf") with the claim the plan saw (now $(jq -r '"\(.status) at \(.updated_at)"' <<<"$old")); nothing written" >&2
+    exit 4
+  fi
+  case "$op" in
+    ping)
+      gl_journal "$GL_TMP/events.json"
+      if jq -e --arg id "$id" 'any(.[]; .op == "comment" and .id == $id and (.body | type) == "string"
+                                     and (.body | startswith("STALE-CLAIM-PING")))' "$GL_TMP/events.json" > /dev/null; then
+        echo "graph-local: stale record: '$id' was already pinged; nothing written" >&2
+        exit 4
+      fi
+      gl_event comment "$id" "" "" "$reason"
+      return 0 ;;
+    reclaim)
+      new=$(jq -c --arg to "$to" --arg now "$(gl_now)" '.claim = null | .status = $to | .updated_at = $now' <<<"$old") ;;
+    transition)
+      new=$(jq -c --arg to "$to" --arg now "$(gl_now)" '.status = $to | .updated_at = $now' <<<"$old") ;;
+  esac
+  gl_validate "$new"
+  gl_event_build "$op" "$id" "$from" "$to" "$reason"
+  gl_put_node "$new"
+  gl_event_append
+}
+
+op_reconcile() {
+  [ "$1" != - ] || set -- "$(cat)"
+  gl_one_object "reconcile: record-json" "$1"
+  local rf
+  rf=$(gl_json_file record "$1")
+  jq -e "$GL_RECORD" "$rf" > /dev/null 2> "$GL_TMP/err" \
+    || { sed 's/^jq: error (at [^)]*): //' "$GL_TMP/err" >&2; gl_die "reconcile: invalid record (nothing written)"; }
+  gl_is_id "$(jq -r .id "$rf")" || gl_die "reconcile: not a node id: $(jq -c .id "$rf")"
+  gl_with_lock gl_do_reconcile "$rf"
+}
+
+op_journal() {
+  gl_is_id "$1" || gl_usage "journal <id> [n] (a slug: ^[a-z0-9]+(-[a-z0-9]+)*\$, at most 40 chars)"
+  local n="${2:-10}"
+  case "$n" in ''|*[!0-9]*|0) gl_usage "journal <id> [n]: n must be a positive integer (got '$n')" ;; esac
+  gl_journal "$GL_TMP/events.json"
+  jq -c --arg id "$1" --argjson n "$n" '[.[] | select(.id == $id)] | .[-$n:][]' "$GL_TMP/events.json"
+}
+
 op_unlock() {
   [ "${1:-}" = --force ] || gl_usage "unlock --force"
   local d had=""
@@ -701,8 +869,13 @@ gl_main() {
     update) [ $# -eq 2 ] || gl_usage "update <id> <patch-json>"; op_update "$1" "$2" ;;
     link)   { [ $# -eq 2 ] || [ $# -eq 3 ]; } || gl_usage "link <id> <dep-id> [via]"; op_link "$@" ;;
     flag)   [ $# -eq 3 ] || gl_usage "flag <id> needs-human on|off"; op_flag "$@" ;;
+    claim)  { [ $# -eq 3 ] || [ $# -eq 4 ]; } || gl_usage "claim <id> <actor> <run> [agent|human]"; op_claim "$@" ;;
+    release) [ $# -eq 2 ] || gl_usage "release <id> <reason>"; op_release "$@" ;;
+    comment) [ $# -eq 2 ] || gl_usage "comment <id> <text>"; op_comment "$@" ;;
+    reconcile) [ $# -eq 1 ] || gl_usage "reconcile <record-json>"; op_reconcile "$1" ;;
+    journal) { [ $# -eq 1 ] || [ $# -eq 2 ]; } || gl_usage "journal <id> [n]"; op_journal "$@" ;;
     unlock) op_unlock "$@" ;;
-    *) gl_usage "graph-local.sh list | show <id> | create <node-json> | update <id> <patch-json> | link <id> <dep-id> [via] | flag <id> needs-human on|off | unlock --force (docs/delivery_graph_spec.md §6.1, §6.3)" ;;
+    *) gl_usage "graph-local.sh list | show <id> | create <node-json> | update <id> <patch-json> | link <id> <dep-id> [via] | flag <id> needs-human on|off | claim <id> <actor> <run> [agent|human] | release <id> <reason> | comment <id> <text> | reconcile <record-json> | journal <id> [n] | unlock --force (docs/delivery_graph_spec.md §6.1, §6.3)" ;;
   esac
 }
 

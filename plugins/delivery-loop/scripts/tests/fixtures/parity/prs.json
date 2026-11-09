@@ -1,0 +1,179 @@
+{
+  "202": {
+    "number": 202,
+    "url": "https://github.com/example/repo/pull/202",
+    "state": "OPEN",
+    "headRefName": "spike-11",
+    "baseRefName": "main",
+    "headRefOid": "2020000000000000000000000000000000000000",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "gate",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-01-08T10:00:00Z",
+        "completedAt": "2026-01-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "body": "A human spike.\n\nDelivery-Task: 11",
+    "labels": [],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "203": {
+    "number": 203,
+    "url": "https://github.com/example/repo/pull/203",
+    "state": "MERGED",
+    "headRefName": "task/17--medium-oldest",
+    "baseRefName": "main",
+    "headRefOid": "2030000000000000000000000000000000000000",
+    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "UNKNOWN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "gate",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-01-08T10:00:00Z",
+        "completedAt": "2026-01-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "body": "Medium.\n\nDelivery-Task: 17",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": "2026-01-08T12:00:00Z"
+  },
+  "204": {
+    "number": 204,
+    "url": "https://github.com/example/repo/pull/204",
+    "state": "OPEN",
+    "headRefName": "task/12--unblocks-two",
+    "baseRefName": "main",
+    "headRefOid": "2040000000000000000000000000000000000000",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "gate",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-01-08T10:00:00Z",
+        "completedAt": "2026-01-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "body": "Unblocks two.\n\nDelivery-Task: 12",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  },
+  "205": {
+    "number": 205,
+    "url": "https://github.com/example/repo/pull/205",
+    "state": "OPEN",
+    "headRefName": "task/15--in-the-started-epic",
+    "baseRefName": "main",
+    "headRefOid": "2050000000000000000000000000000000000000",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "name": "gate",
+        "workflowName": "ci",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-01-08T10:00:00Z",
+        "completedAt": "2026-01-08T10:05:00Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/1/job/2"
+      }
+    ],
+    "body": "Started epic.\n\nDelivery-Task: 15",
+    "labels": [
+      {
+        "id": "LA_agent-authored",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [
+      {
+        "id": "IC_v",
+        "author": {
+          "login": "astra"
+        },
+        "authorAssociation": "OWNER",
+        "body": "## Review — verdict: APPROVE\n\nLooks right.\n\nReviewed-Head: 2050000000000000000000000000000000000000",
+        "createdAt": "2026-01-08T11:00:00Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/example/repo/pull/205#issuecomment-1",
+        "viewerDidAuthor": true
+      }
+    ],
+    "reviews": [],
+    "author": {
+      "id": "U_x",
+      "is_bot": false,
+      "login": "astra",
+      "name": "Astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  }
+}
