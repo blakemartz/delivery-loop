@@ -11,7 +11,9 @@
 # passes, the manifests validate and agree on the version, and no consumer-specific
 # string has leaked into the shipped plugin. Requires the `claude` CLI on PATH.
 set -euo pipefail
+invoked_from="$PWD"   # a relative DL_BASH32 is resolved against this, not the toplevel
 cd "$(git rev-parse --show-toplevel)"
+. scripts/lib/bash32.sh
 
 echo '==> bash -n: every script parses'
 for f in $(find plugins scripts -name '*.sh'); do bash -n "$f"; done
@@ -26,12 +28,78 @@ if grep -rnE "$bash4_re" plugins/delivery-loop/scripts/ | grep -vE '^[^:]+:[0-9]
   exit 1
 fi
 
+run_tests() {
+  for t in plugins/delivery-loop/scripts/tests/*-test.sh; do
+    [ -e "$t" ] || continue
+    echo "--> $t"
+    bash "$t"
+  done
+}
+
 echo '==> unit tests (every plugins/delivery-loop/scripts/tests/*-test.sh)'
-for t in plugins/delivery-loop/scripts/tests/*-test.sh; do
-  [ -e "$t" ] || continue
-  echo "--> $t"
-  bash "$t"
-done
+run_tests
+
+# The same suite under a real bash 3.2 (the macOS default the engine targets),
+# so 3.2-only regressions can't hide behind the host's bash 5. Optional, never
+# silent: it runs in the first environment available, else prints a SKIPPED
+# notice and the gate continues.
+#   DL_BASH32=/path/to/bash-3.2  run with that binary first on PATH (so the
+#                                tests' own `bash …` calls are 3.2 too), using
+#                                the host's jq and git. A bare name resolves via
+#                                PATH, a relative path from the invoking cwd; it
+#                                is linked by absolute path and re-verified as
+#                                3.2 THROUGH the shim, else the gate FAILS
+#                                (scripts/lib/bash32.sh; self-tested below).
+#   DL_BASH32=off                skip explicitly.
+#   unset                        use the local docker image DL_BASH32_IMAGE
+#                                (default bash:3.2; never pulled). The repo is
+#                                mounted read-only; git and jq < 1.8 (1.8.2
+#                                breaks, see #62) are apk-installed in the
+#                                container unless the image already has them —
+#                                stock bash:3.2 has neither, so this needs
+#                                network on every run. A prebuilt local image
+#                                with git + jq<1.8 (DL_BASH32_IMAGE=…) avoids
+#                                that. No network / no image -> SKIPPED.
+echo '==> bash 3.2 shim self-test (scripts/tests/bash32-shim-test.sh)'
+bash scripts/tests/bash32-shim-test.sh
+
+echo '==> unit tests under bash 3.2 (optional; DL_BASH32 or docker image)'
+bash32_skip() { echo "!!! SKIPPED bash 3.2 test run: $1" >&2; }
+if [ "${DL_BASH32:-}" = off ]; then
+  bash32_skip "DL_BASH32=off"
+elif [ -n "${DL_BASH32:-}" ]; then
+  shim="$(mktemp -d)"
+  trap 'rm -rf "$shim"' EXIT
+  v="$(bash32_shim "$DL_BASH32" "$invoked_from" "$shim")" || exit 1
+  echo "    bash $v via DL_BASH32 ($(readlink "$shim/bash")), $(jq --version)"
+  (PATH="$shim:$PATH"; export PATH; run_tests)
+elif command -v docker >/dev/null 2>&1 \
+     && docker image inspect "${DL_BASH32_IMAGE:-bash:3.2}" >/dev/null 2>&1; then
+  top="$(pwd -P)"
+  common="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"   # worktrees point here
+  # Exit 77 = the container couldn't be provisioned (environment, not a failure).
+  inner='
+    command -v git >/dev/null 2>&1 || apk add --no-cache git >/dev/null 2>&1 || exit 77
+    case "$(jq --version 2>/dev/null)" in jq-1.[67]*|jq-1.8.[01]) ;; *)
+      apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/v3.21/main "jq<1.8" \
+        >/dev/null 2>&1 || exit 77 ;;
+    esac
+    git config --global safe.directory "*"
+    echo "    bash $BASH_VERSION in container, $(jq --version), $(git --version)"
+    for t in plugins/delivery-loop/scripts/tests/*-test.sh; do
+      echo "--> $t"; bash "$t" || exit 1
+    done'
+  rc=0
+  docker run --rm --pull=never -v "$top:$top:ro" -v "$common:$common:ro" -w "$top" \
+    "${DL_BASH32_IMAGE:-bash:3.2}" bash -c "$inner" || rc=$?
+  case "$rc" in
+    0) ;;
+    77) bash32_skip "could not install git/jq in ${DL_BASH32_IMAGE:-bash:3.2} (no network?)" ;;
+    *) echo "FAIL: unit tests under bash 3.2 (above)" >&2; exit 1 ;;
+  esac
+else
+  bash32_skip "set DL_BASH32 to a bash 3.2 binary, or provide docker image ${DL_BASH32_IMAGE:-bash:3.2}"
+fi
 
 echo '==> plugin manifest validates'
 claude plugin validate ./plugins/delivery-loop
