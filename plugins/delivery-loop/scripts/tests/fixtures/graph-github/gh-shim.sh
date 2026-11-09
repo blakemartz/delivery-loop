@@ -12,6 +12,12 @@
 #     merged over it (e.g. a complete `blockedBy` connection where the list
 #     returned a truncated one, GC64), keeping only the fields in F. Its
 #     `comments` are complete.
+#   - `api [--paginate] repos/{owner}/{repo}/issues/N/comments?per_page=P`
+#     returns issue N's complete `comments` in the REST shape ({id, user:
+#     {login} | null, body, created_at}), cut into pages of P (default 30, at
+#     most 100, as the API does). Like real gh, `--paginate` prints every page
+#     as its own JSON array, one after the other; without it, only the first.
+#     An issue with no comments is one empty page.
 #   - `--version` prints `gh version $SHIM_GH_VERSION` (default 2.96.0).
 set -euo pipefail
 
@@ -44,5 +50,26 @@ case "${1:-} ${2:-}" in
     obj=$(jq -c --argjson n "$n" '.[] | select(.number == $n) | (. + (._view // {})) | del(._view)' "$board")
     [ -n "$obj" ] || { echo "GraphQL: Could not resolve to an issue or pull request with the number of $n. (repository.issue)" >&2; exit 1; }
     pick "$fields" <<<"$obj" ;;
+  "api "*)
+    paginate=""; path=""
+    shift
+    for a in "$@"; do case "$a" in --paginate) paginate=1 ;; -*) echo "gh-shim: unhandled api flag: $a" >&2; exit 64 ;; *) path="$a" ;; esac; done
+    case "$path" in
+      'repos/{owner}/{repo}/issues/'*/comments*) : ;;
+      *) echo "gh-shim: unhandled call: gh api $*" >&2; exit 64 ;;
+    esac
+    n="${path#repos/\{owner\}/\{repo\}/issues/}"; n="${n%%/*}"
+    per=$(sed -n 's/.*[?&]per_page=\([0-9][0-9]*\).*/\1/p' <<<"$path"); per="${per:-30}"
+    [ "$per" -le 100 ] || per=100
+    jq -e --argjson n "$n" 'any(.[]; .number == $n)' "$board" > /dev/null \
+      || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+    jq -c --argjson n "$n" --argjson per "$per" --arg all "$paginate" '
+      [ .[] | select(.number == $n) | (. + (._view // {})) | (.comments // [])[]
+        | {id: .id, user: (if .author == null then null else {login: .author.login} end),
+           body: .body, created_at: .createdAt} ] as $c
+      | if $c == [] then [] else
+          [ range(0; $c | length; $per) as $i | $c[$i:$i + $per] ]
+          | if $all == "" then .[0] else .[] end
+        end' "$board" ;;
   *) echo "gh-shim: unhandled call: gh $*" >&2; exit 64 ;;
 esac

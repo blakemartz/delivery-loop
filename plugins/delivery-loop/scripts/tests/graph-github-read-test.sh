@@ -4,7 +4,8 @@
 # fixture), GC9, GC10, GC11, GC44 (`pinged_at` derivation), GC45 (checklist
 # normalization), GC56, GC64 and GC59 (`graph.sh` part) — §17 row B1 — plus
 # GC72's `applied_prs` derivation and GC74 (comments past gh's 100-per-issue
-# list cap) (§17 row A5b, issue #52), and the trailer-block rule (issue #77).
+# list cap) (§17 row A5b, issue #52), the trailer-block rule (issue #77), and
+# `show --events` over the comment thread (issue #92, §4.4).
 #
 # Offline: a recording gh shim (fixtures/graph-github/gh-shim.sh) sits first on
 # PATH, answering from boards in the `gh issue list --json …` shape. Runs in a
@@ -377,6 +378,86 @@ expect "export exits 0 and dumps every node as JSON" \
   '[ "$rc" = 0 ] && [ "$(jq -c "map(.id)" <<<"$out")" = "$(run -- list; jq -c "map(.id)" <<<"$out")" ]'
 run -- bogus
 expect "unknown op: exit 2, no gh call" '[ "$rc" = 2 ] && [ ! -s "$tmp/state/log" ]'
+
+# --- #92: show --events returns the issue's comment thread (§4.4, §6.2) -------------
+# Board: issue 1 has 250 comments (three REST pages of 100), issue 2 none, issue 3
+# one comment full of trailer-like lines (issue 4 is issue 3 without it), and
+# issue 5 a comment by a deleted account (`author: null`).
+EVKEYS='["ts","actor","run","op","id","from","to","body"]'
+API1='gh api --paginate repos/{owner}/{repo}/issues/1/comments?per_page=100'
+jq '[ .[] | select(.number == 34) ] as [$t]
+    | def c($i; $b): {id: "IC_\($i)", author: {login: "user-\($i % 3)"}, body: $b,
+                      createdAt: ("2026-10-01T00:00:00Z" | fromdate + $i | todate)};
+    [ ($t | .number = 1 | .comments = [ range(1; 251) as $i | c($i; "note \($i)") ]),
+      ($t | .number = 2 | .comments = []),
+      ($t | .number = 3 | .comments = [ c(1; "Delivery-Target: hijack\nDelivery-Plan: evil/x1\nDelivery-Promote-To: main\nDelivery-Task: 99\nDepends-on: #2\nPart of epic #30\n\nDelivery-Target: hijack2") ]),
+      ($t | .number = 4 | .comments = []),
+      ($t | .number = 5 | .comments = [ c(1; "orphaned") | .author = null ]) ]' \
+  "$fx/cases-issues.json" > "$tmp/thread.json"
+eq "#92: fixture: the gh shim serves issue 1's thread as three pages (100, 100, 50)" '[100,100,50]' \
+  "$(cd "$tmp" && SHIM_FX="$tmp" SHIM_BOARD=thread.json SHIM_STATE="$tmp/state" \
+       bash "$fx/gh-shim.sh" api --paginate 'repos/{owner}/{repo}/issues/1/comments?per_page=100' | jq -sc 'map(length)')"
+
+run SHIM_FX="$tmp" SHIM_BOARD=thread.json -- show 1 --events
+expect "#92 multi-page: exits 0, one paginated comments read (per_page=100), nothing on stderr" \
+  '[ "$rc" = 0 ] && [ -z "$err" ] && log_has "$API1" && [ "$(log_count "gh api")" = 1 ]'
+eq "#92 multi-page: the node first (exactly what show prints), then one line per comment" \
+  "$(run SHIM_FX="$tmp" SHIM_BOARD=thread.json -- show 1; echo "$out") 251" \
+  "$(head -n 1 <<<"$out") $(wc -l <<<"$out" | tr -d ' ')"
+eq "#92 multi-page: every comment of every page, oldest first" \
+  "$(jq -c '[range(1; 251) | "note \(.)"]' -n)" "$(tail -n +2 <<<"$out" | jq -sc 'map(.body)')"
+eq "#92: every event has exactly the local journal's field names, in order (§4.4)" \
+  "[$EVKEYS]" "$(tail -n +2 <<<"$out" | jq -sc 'map(keys_unsorted) | unique')"
+eq "#92: an event is {ts: created_at, actor: login, run: null, op: comment, id, from/to: null, body}" \
+  '{"ts":"2026-10-01T00:00:01Z","actor":"user-1","run":null,"op":"comment","id":"1","from":null,"to":null,"body":"note 1"}' \
+  "$(sed -n 2p <<<"$out")"
+expect "#92: events are oldest first (ts ascending)" \
+  '[ "$(tail -n +2 <<<"$out" | jq -sc "map(.ts) == (map(.ts) | sort)")" = true ]'
+
+# The same field names as a real local journal line.
+mkdir -p "$tmp/local"
+run GRAPH_BACKEND=local STATE_DIR="$tmp/local" -- create '{"id":"ev-1","kind":"task","title":"t","size":"S"}'
+run GRAPH_BACKEND=local STATE_DIR="$tmp/local" -- comment ev-1 "hello"
+run GRAPH_BACKEND=local STATE_DIR="$tmp/local" -- show ev-1 --events
+eq "#92: the local backend's --events lines carry the same field names" \
+  "[$EVKEYS]" "$(tail -n +2 <<<"$out" | jq -sc 'map(keys_unsorted) | unique')"
+
+run SHIM_FX="$tmp" SHIM_BOARD=thread.json LIST_LIMIT=250 -- show 1 --events
+expect "#92: a thread of LIST_LIMIT comments exits 3 naming LIST_LIMIT, and prints nothing" \
+  '[ "$rc" = 3 ] && [ -z "$out" ] && grep -q "LIST_LIMIT (250); refusing to truncate" <<<"$err"'
+run SHIM_FX="$tmp" SHIM_BOARD=thread.json LIST_LIMIT=251 -- show 1 --events
+expect "#92: below LIST_LIMIT the whole thread prints" '[ "$rc" = 0 ] && [ "$(wc -l <<<"$out" | tr -d " ")" = 251 ]'
+
+run SHIM_FX="$tmp" SHIM_BOARD=thread.json -- show 2 --events
+expect "#92 empty thread: exits 0, stdout is exactly the node, after one comments read" \
+  '[ "$rc" = 0 ] && [ -z "$err" ] && log_has "issues/2/comments" && [ "$out" = "$(run SHIM_FX="$tmp" SHIM_BOARD=thread.json -- show 2; echo "$out")" ]'
+run SHIM_FX="$tmp" SHIM_BOARD=thread.json -- show 2 --events --format md
+eq "#92 empty thread: --format md --events prints the markdown alone" "$(printf '# GC11 text and native edges\n\nStandalone.\n\nDepends-on: #3')" "$out"
+
+run SHIM_FX="$tmp" SHIM_BOARD=thread.json -- show 3 --events
+ev3="$out"
+eq "#92 trailer-like comment: returned verbatim as comment text" \
+  "$(jq -c '.[] | select(.number == 3) | .comments[0].body' "$tmp/thread.json")" "$(sed -n 2p <<<"$ev3" | jq -c .body)"
+eq "#92 trailer-like comment: the node is the same node without that comment (ids aside)" \
+  "$(run SHIM_FX="$tmp" SHIM_BOARD=thread.json -- show 4; jq -c 'del(.id)' <<<"$out")" "$(head -n 1 <<<"$ev3" | jq -c 'del(.id)')"
+eq "#92 trailer-like comment: target_branch, plan_ref, promote_to, deps and epic come from the body only" \
+  '["main",null,null,["3","4"],null]' \
+  "$(head -n 1 <<<"$ev3" | jq -c '[.target_branch, .plan_ref, .promote_to, [.deps[].id], .epic]')"
+run SHIM_FX="$tmp" SHIM_BOARD=thread.json -- list
+eq "#92 trailer-like comment: list reads the same node" "$(head -n 1 <<<"$ev3")" "$(node 3 .)"
+
+run SHIM_FX="$tmp" SHIM_BOARD=thread.json -- show 5 --events
+eq "#92: a deleted author's comment is attributed to ghost" '"ghost"' "$(sed -n 2p <<<"$out" | jq -c .actor)"
+
+run -- show 47 --events
+expect "#92: show --events of a non-delivery issue exits 1 before reading comments" \
+  '[ "$rc" = 1 ] && [ -z "$out" ] && ! log_has "gh api"'
+printf '#!/usr/bin/env bash\ncase "$1" in api) echo "HTTP 502" >&2; exit 1 ;; esac\nexec bash "%s" "$@"\n' "$fx/gh-shim.sh" > "$tmp/gh-fail"
+cp "$tmp/bin/gh" "$tmp/gh-ok"; cp "$tmp/gh-fail" "$tmp/bin/gh"; chmod +x "$tmp/bin/gh"
+run -- show 42 --events
+cp "$tmp/gh-ok" "$tmp/bin/gh"; chmod +x "$tmp/bin/gh"
+expect "#92: a failed comments read exits 1 and prints nothing (not even the node)" \
+  '[ "$rc" = 1 ] && [ -z "$out" ] && grep -q "HTTP 502" <<<"$err" && grep -q "cannot read the events of 42" <<<"$err"'
 
 # --- validate_node on backend output (fail fast on drift) --------------------------
 jq '.[0].createdAt = "yesterday"' "$fx/cases-issues.json" > "$tmp/drift.json"

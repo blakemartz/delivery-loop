@@ -310,6 +310,23 @@ def gh_applied_prs:
     | select(. > 0) ]
   | unique;
 
+# The comment thread as events (task B4, #92), over the slurped pages of
+# `gh api --paginate repos/{owner}/{repo}/issues/<n>/comments` (REST: one array
+# per page). The field names are the local journal's (§6.3), so a reader takes
+# either backend's `graph.sh show --events` lines unchanged; a comment is
+# never a transition, so run/from/to are null. Oldest first: REST returns a
+# thread ascending, and the stable sort on created_at keeps that order on ties.
+# A comment whose author was deleted has `user: null` (GitHub shows "ghost").
+def gh_comment_events($id):
+  if type != "array" or any(.[]; type != "array") then error("comment pages must be JSON arrays")
+  else add // [] end
+  | if any(.[]; type != "object" or (.created_at | type) != "string") then
+      error("every comment must be an object with a created_at string")
+    else . end
+  | sort_by(.created_at)
+  | map({ts: .created_at, actor: (.user.login // "ghost"), run: null, op: "comment",
+         id: $id, from: null, to: null, body: (.body // "")});
+
 # Several size:* labels: L wins (v0.1.4 excluded any size:L issue — L means
 # "split me", never claimable), then S, then M (v0.1.4 ranked S only on size:S).
 def gh_size:

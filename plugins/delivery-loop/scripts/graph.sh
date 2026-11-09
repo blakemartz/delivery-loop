@@ -22,12 +22,18 @@
 #                               is exactly that one node, the §6.1 contract
 #                               callers parse (task-worktree.sh does), and
 #                               nothing else is printed.
-#                               --events (local backend, §6.3): the node's last
-#                               10 journal events follow it on stdout, one JSON
-#                               object per line. Opt-in, so the hot read stays
-#                               quiet; an unreadable journal is then an error
-#                               (exit 1), and a backend with no journal refuses
-#                               it (exit 1).
+#                               --events: the node's events follow it on
+#                               stdout, one JSON object per line, in the local
+#                               journal's field names {ts, actor, run, op, id,
+#                               from, to, body} (§4.4): local, its last 10
+#                               journal events (§6.3); github, its whole issue
+#                               comment thread, oldest first, as `comment`
+#                               events (§6.2; paginated, a thread of LIST_LIMIT
+#                               or more comments exits 3). Opt-in, so the hot
+#                               read stays quiet. The events are read before
+#                               anything is printed: an unreadable journal or
+#                               thread prints nothing and exits 1 (3 at
+#                               LIST_LIMIT).
 #   export                      every node as pretty-printed JSON, for backup
 #                               and debugging.
 #   create <node-json>|-  ·  update <id> <patch-json>|-  ·  link <id> <dep-id> [via]
@@ -102,10 +108,10 @@
 #                               goes to stderr.
 #
 # Exit codes: 0 ok · 1 failed / invalid config / not claimable · 2 usage · 3
-# the backend list reached LIST_LIMIT · 4 reconcile --fix: the board changed
-# since the plan (stopped; re-run reconcile) · 5 a backend emitted a node that
-# fails validate_node · 75 the backend's lock was busy (reconcile --fix, claim;
-# retry). A routed write op exits with its backend's status; transition exits 2
+# the backend list (or a show --events thread) reached LIST_LIMIT · 4
+# reconcile --fix: the board changed since the plan (stopped; re-run
+# reconcile) · 5 a backend emitted a node that fails validate_node · 75 the
+# backend's lock was busy (reconcile --fix, claim; retry). A routed write op exits with its backend's status; transition exits 2
 # on an illegal move.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -186,26 +192,34 @@ case "$op" in
     done
     [ -n "$id" ] || usage
     case "$format" in json|md) : ;; *) usage ;; esac
-    # The journal is the local store's audit trail (§6.3); github's history is
-    # the issue timeline, which no primitive reads yet.
-    [ -z "$events" ] || [ "$GRAPH_BACKEND" = local ] || {
-      echo "graph.sh: show --events: backend $GRAPH_BACKEND has no journal" >&2; exit 1; }
     bash "$backend" show "$id" > "$tmp/node.json" || exit $?
     if [ "$format" = md ]; then
-      pjq 'include "node"; validate_node | "# \(.title)\n\n\(.body)"' "$tmp/node.json" -r
+      pjq 'include "node"; validate_node | "# \(.title)\n\n\(.body)"' "$tmp/node.json" -r > "$tmp/shown"
     else
-      pjq 'include "node"; validate_node' "$tmp/node.json" -c
+      pjq 'include "node"; validate_node' "$tmp/node.json" -c > "$tmp/shown"
     fi
-    # The backend's show already read this journal (pinged_at derives from it)
-    # and warned about anything unparsable, so the journal read's own copy of
-    # that warning is kept only if the read fails.
+    # The events (§4.4): local, the journal's last 10 (§6.3); github, the whole
+    # comment thread (§6.2). Read before anything is printed, so a failed read
+    # never leaves a node without its events on stdout. local: the backend's
+    # show already read this journal (pinged_at derives from it) and warned
+    # about anything unparsable, so the events read's own copy of that warning
+    # is kept only if the read fails.
     if [ -n "$events" ]; then
-      bash "$backend" journal "$id" 10 2> "$tmp/journal.err" || {
-        cat "$tmp/journal.err" >&2
-        echo "graph.sh: show --events: cannot read the journal of $id" >&2
+      case "$GRAPH_BACKEND" in
+        local) set -- journal "$id" 10 ;;
+        *) set -- events "$id" ;;
+      esac
+      rc=0
+      bash "$backend" "$@" > "$tmp/events.jsonl" 2> "$tmp/events.err" < /dev/null || rc=$?
+      if [ "$rc" -ne 0 ]; then
+        cat "$tmp/events.err" >&2
+        echo "graph.sh: show --events: cannot read the events of $id" >&2
+        [ "$rc" = 3 ] && exit 3
         exit 1
-      }
-    fi ;;
+      fi
+    fi
+    cat "$tmp/shown"
+    [ -z "$events" ] || cat "$tmp/events.jsonl" ;;
   claim)
     id="${1:-}" actor="" run="" by=agent
     [ -n "$id" ] && [ "${id#-}" = "$id" ] || usage

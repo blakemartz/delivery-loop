@@ -216,6 +216,37 @@ Every forge adapter's `pr-view`/`pr-list` emits PRs of exactly this shape
 - The trailer replaces v0.1.4's `#N\b` body/title regex, which falsely matched any PR
   that merely mentioned the issue (GC33).
 
+### 4.4 Event
+
+`graph.sh show <id> --events` prints the node, then its events, one JSON object per
+line, oldest first. Every backend emits exactly these field names, in this order.
+They are the local journal's (§6.3), unchanged: `ts` is the event's time and `op`
+its kind, so github adds no new names and local output keeps its shape.
+
+| Field | Type | Notes |
+|---|---|---|
+| `ts` | ISO-8601 | when it happened. github: the comment's `created_at`. |
+| `actor` | string | who did it. github: the comment author's login (`ghost` for a deleted account). |
+| `run` | string \| null | the agent run, when one was recorded. github: always null. |
+| `op` | string | the event kind. github: always `comment`. local: one of the journal ops (§6.3), so it may carry kinds other than `comment`. |
+| `id` | string \| null | the node id (github: the issue number as a string). |
+| `from`, `to` | string \| null | a status change's before/after. github: always null (a comment is not a transition). |
+| `body` | string \| null | the comment text, verbatim, or the event's payload. |
+
+What each backend returns:
+- **local**: the node's last 10 journal events (§6.3).
+- **github**: the issue's whole comment thread, as `comment` events (§6.2). It is
+  paginated and never silently truncated: a thread of `LIST_LIMIT` or more comments
+  exits 3, as `list` does (GC10).
+
+Events are a read-only view. A comment's text, `Delivery-*:` and `Depends-on:` lines
+included, never changes the node's parsed metadata: the trailer block is read from
+the body only (§6.2). The only comments that feed node fields are the documented
+markers (`CLAIM`, `STALE-CLAIM-PING`, `AUTO-CLOSE: PR #<n>`, …; §4.1).
+
+The events are read before anything is printed, so a failed read prints nothing
+(exit 1, or 3 at `LIST_LIMIT`).
+
 ## 5. Policy core (`scripts/lib/`)
 
 All of it is pure `jq`. Wall-clock time arrives as an argument (`--argjson now`), so
@@ -431,6 +462,7 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
 |---|---|
 | `list` | **All** nodes (open and closed) as a JSON array of §4.1 nodes. Done and cancelled children are needed for started-epic ordering and epic completion, and closed deps are needed for readiness. The ceiling is `LIST_LIMIT` (github; GC10). |
 | `show <id>` | One node. `--format md` renders title + body for agent prompts. |
+| `journal <id> [n]` (local) · `events <id>` (github) | The node's events, one §4.4 object per line, oldest first: local's last `n` journal events (`graph.sh` asks for 10); github's whole comment thread (exit 3 at `LIST_LIMIT`). `graph.sh show <id> --events` prints them after the node. |
 | `create <node-json>` | Creates a node, returns its `id`. |
 | `update <id> <patch-json>` | Merges the patch fields (status, claim, needs_human, …). Used by `transition`/`reconcile`. |
 | `claim <id> <actor> <run>` | **Atomic** test-and-set: succeeds only if the node is still `ready` with no claim. Exit 0 = owned, 1 = lost or not claimable. |
@@ -561,6 +593,13 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
   from outside the backend on any `{body}`: `gh_trailer_block`,
   `gh_trailer_keys`, `gh_text_edges`, `gh_stray_key_lines`, `gh_trailer_token`
   and `gh_via_ok`.
+- **Events.** `graph.sh show <id> --events` (§4.4) reads the comment thread with
+  `gh api --paginate repos/{owner}/{repo}/issues/<n>/comments?per_page=100` and
+  follows every page. Each comment becomes `{ts: created_at, actor: user.login,
+  run: null, op: "comment", id: "<n>", from: null, to: null, body}`, oldest first
+  (the backend's `events <id>` primitive, `gh_comment_events`). A thread of
+  `LIST_LIMIT` or more comments exits 3 (GC10). The issue timeline (label edits,
+  closes) is not read.
 - **Claims are unchanged.** The comment-ordered Lamport lock (`lib/claim-winner.jq`,
   `lib/orphan-claims.jq`) is reused as is; GitHub offers no compare-and-set on
   assignment.
@@ -680,7 +719,9 @@ are derived on read (`list`, `show`) from the node's journal `comment` events, a
   `transition` | `comment` | `link` | `apply` | `lock-broken`.
 - The epic files are the source of truth. The journal is the audit trail, and in
   v0.3 the metrics input. `graph.sh show <id> --events` prints the node's last 10
-  events after the node (opt-in, so a plain `show` stays exactly one node).
+  events after the node (opt-in, so a plain `show` stays exactly one node). Its
+  lines are the journal lines as stored: the §4.4 event shape, which github's
+  comment events share.
 
 **Claim.**
 - `with_lock`: re-read the node, require `status=="ready"` and `claim==null`, then
