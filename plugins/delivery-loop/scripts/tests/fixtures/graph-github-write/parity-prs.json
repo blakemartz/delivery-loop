@@ -1,0 +1,64 @@
+[
+  {
+    "number": 101,
+    "url": "https://github.com/example/repo/pull/101",
+    "state": "MERGED",
+    "headRefName": "task/3-merged",
+    "baseRefName": "release/x",
+    "headRefOid": "1010000000000000000000000000000000000000",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "body": "Closes #3\n\nDelivery-Task: 3",
+    "labels": [
+      {
+        "id": "LA_aa",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_1",
+      "is_bot": false,
+      "login": "shim-user",
+      "name": "Shim"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": "2026-06-01T00:00:00Z"
+  },
+  {
+    "number": 102,
+    "url": "https://github.com/example/repo/pull/102",
+    "state": "OPEN",
+    "headRefName": "task/9-x",
+    "baseRefName": "release/x",
+    "headRefOid": "1020000000000000000000000000000000000000",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "body": "Closes #9\n\nDelivery-Task: 9",
+    "labels": [
+      {
+        "id": "LA_aa",
+        "name": "agent-authored",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "comments": [],
+    "reviews": [],
+    "author": {
+      "id": "U_1",
+      "is_bot": false,
+      "login": "shim-user",
+      "name": "Shim"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
+  }
+]

@@ -1,0 +1,446 @@
+[
+  {
+    "number": 1,
+    "title": "Epic one",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_epic",
+        "name": "epic",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "- [ ] #2\n- [ ] #3",
+    "createdAt": "2026-01-01T00:00:01Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 2,
+    "title": "done child",
+    "state": "CLOSED",
+    "stateReason": "COMPLETED",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size:S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Part of epic #1",
+    "createdAt": "2026-01-01T00:00:02Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 3,
+    "title": "merged child",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:in-review",
+        "name": "status:in-review",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size:S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_module:a",
+        "name": "module:a",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Part of epic #1",
+    "createdAt": "2026-01-01T00:00:03Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 4,
+    "title": "blocked, dep done",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:blocked",
+        "name": "status:blocked",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size:S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Depends-on: #2",
+    "createdAt": "2026-01-01T00:00:04Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 5,
+    "title": "ready, dep open",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:ready",
+        "name": "status:ready",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size:S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Depends-on: #6",
+    "createdAt": "2026-01-01T00:00:05Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 6,
+    "title": "open dep",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:ready",
+        "name": "status:ready",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size:M",
+        "name": "size:M",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_module:b",
+        "name": "module:b",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "x",
+    "createdAt": "2026-01-01T00:00:06Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 7,
+    "title": "stale agent claim",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_claim:agent",
+        "name": "claim:agent",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size:S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [
+      {
+        "login": "shim-user"
+      }
+    ],
+    "body": "x",
+    "createdAt": "2026-01-01T00:00:07Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [
+      {
+        "author": {
+          "login": "x"
+        },
+        "authorAssociation": "OWNER",
+        "body": "CLAIM agent-1 h-1-1 2026-01-02T00:00:00Z",
+        "createdAt": "2026-01-02T00:00:00Z"
+      }
+    ],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 8,
+    "title": "stale human claim",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size:S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [
+      {
+        "login": "ann"
+      }
+    ],
+    "body": "x",
+    "createdAt": "2026-01-01T00:00:08Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 9,
+    "title": "stale claim with PR",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_claim:agent",
+        "name": "claim:agent",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size:S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [
+      {
+        "login": "shim-user"
+      }
+    ],
+    "body": "x",
+    "createdAt": "2026-01-01T00:00:09Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 10,
+    "title": "fresh agent claim",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_claim:agent",
+        "name": "claim:agent",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size:S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [
+      {
+        "login": "shim-user"
+      }
+    ],
+    "body": "x",
+    "createdAt": "2026-01-01T00:00:10Z",
+    "updatedAt": "2099-01-01T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 11,
+    "title": "plain ready",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:ready",
+        "name": "status:ready",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size:S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "y",
+    "createdAt": "2026-01-01T00:00:11Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  }
+]

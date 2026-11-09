@@ -9,15 +9,25 @@
 #                      for an issue that is not a delivery node (no type label).
 #   gh_node($base)   — one issue → one §4.1 node; $base is BASE_BRANCH, the
 #                      target when the body has no `Delivery-Target:` line.
-#   gh_nodes($base)  — an issue array → the node array, non-delivery issues
-#                      dropped, input order kept.
+#   gh_external($base) — one unlabelled issue → its §4.1 `external` node.
+#   gh_nodes($base)  — an issue array → the node array, input order kept: every
+#                      delivery issue, plus every unlabelled issue the graph
+#                      references (§6.2) as an `external` node; any other
+#                      unlabelled issue is dropped.
 #   gh_short_blocked — the input issue's `blockedBy` returned fewer `nodes` than
 #                      its `totalCount` (it needs a `gh issue view` re-read, GC64).
 #   gh_short_comments — the input issue's `comments` may be truncated: `gh issue
 #                      list` returns at most the first 100 per issue and exposes no
 #                      total, so exactly 100 (or more) needs a re-read (GC74).
 #   gh_reread_fields — the comma-joined `gh issue view --json` fields the input
-#                      issue must re-read ("" when it is complete).
+#                      issue must re-read ("" when it is complete). Only
+#                      delivery issues are re-read: an external's deps and
+#                      comment-derived fields are fixed (§4.1).
+#   gh_needs_closers — the input issue is an open delivery issue that some PR
+#                      has a closing reference to: graph-github.sh reads its
+#                      timeline's ClosedEvent closers (GC75) into `_closed_by_prs`.
+#   gh_timeline_closers($repo) — a `gh api graphql` timeline response → the
+#                      numbers of the PRs of repo $repo that closed the issue.
 #
 # Field derivation (github column of §4.1):
 #   kind        `task` label, else `epic`, else `promote` (v0.1.4 listed every
@@ -39,13 +49,30 @@
 #               a node validate_node must reject. No `claim:agent` but an
 #               assignee: a human claim {actor: login, run: null, at: null}.
 #   pinged_at   the newest `STALE-CLAIM-PING` comment's createdAt, else null.
-#   applied_prs the PR numbers of every `AUTO-CLOSE: PR #<n>` comment, ascending,
-#               deduplicated (reconcile rule 3 skips them, so a human reopen
-#               sticks). v0.1.4's epic `AUTO-CLOSE: epic …` comment names no PR.
-#               A PR that closed the issue by GitHub closing keyword (no comment)
-#               is not derived yet: that is task B2's (spec §4.1, GC75).
+#   applied_prs the PR numbers of every `AUTO-CLOSE: PR #<n>` comment, plus every
+#               PR that closed the issue through a GitHub closing keyword
+#               (`_closed_by_prs`, which graph-github.sh patches in from the
+#               timeline), ascending, deduplicated (reconcile rule 3 skips them,
+#               so a human reopen sticks, GC72/GC75). v0.1.4's epic `AUTO-CLOSE:
+#               epic …` comment names no PR. Evidence (verified 2026-11-09
+#               against live issues reopened after a keyword close, gh 2.96.0):
+#               `closedByPullRequestsReferences` survives the reopen but also
+#               lists still-open linked PRs, and never a PR into a non-default
+#               branch; the timeline's `ClosedEvent.closer` names exactly the PR
+#               that closed it (null for a `gh issue close`). So the reference
+#               list selects which open issues to look up, and the closer is
+#               the evidence.
 #   (comments)  pinged_at, applied_prs and claim need every comment; graph-github.sh
 #               re-reads an issue whose list read may be truncated (GC74).
+#   external    an issue with no task/epic/promote label that a delivery node
+#               references: a dep target (native blockedBy or `Depends-on:`), an
+#               entry of an epic's checklist, or an issue whose epic derivation
+#               names an epic node (§6.2). Its fixed fields are forced (§4.1:
+#               claim/pinged_at/module/size/plan_ref/promote_to null, deps and
+#               checklist [], needs_human false, applied_prs []): its labels,
+#               assignees, comments and edges are never read. status: open ->
+#               blocked; closed -> done | cancelled; epic as for any node;
+#               target_branch is BASE_BRANCH.
 #   target_branch / plan_ref / promote_to
 #               the `Delivery-Target:` / `Delivery-Plan:` / `Delivery-Promote-To:`
 #               body lines (promote_to on promote nodes only).
@@ -113,8 +140,21 @@ def gh_short_comments:
   ((.comments // []) | length) >= _gh_list_comment_cap;
 
 def gh_reread_fields:
-  [ (if gh_short_blocked then "blockedBy" else empty end),
-    (if gh_short_comments then "comments" else empty end) ] | join(",");
+  if gh_kind == null then ""
+  else
+    [ (if gh_short_blocked then "blockedBy" else empty end),
+      (if gh_short_comments then "comments" else empty end) ] | join(",")
+  end;
+
+def gh_needs_closers:
+  gh_kind != null and .state == "OPEN"
+  and ((.closedByPullRequestsReferences // []) | length) > 0;
+
+def gh_timeline_closers($repo):
+  [ (.data.repository.issue.timelineItems.nodes // [])[]
+    | .closer | select(type == "object" and .__typename == "PullRequest")
+    | select((.repository.nameWithOwner // "") | ascii_downcase == ($repo | ascii_downcase))
+    | .number | select(type == "number" and . > 0) ] | unique;
 
 # Most advanced first, so a label edit caught half-way still reads forward.
 def _status_labels:
@@ -152,9 +192,10 @@ def gh_pinged_at:
 # The number must follow the prefix directly (offset 0), so a body like
 # "AUTO-CLOSE: PR #x\n5" names no PR; #0 is not a PR number.
 def gh_applied_prs:
-  [ (.comments // [])[] | (.body // "")
-    | select(startswith("AUTO-CLOSE: PR #")) | ltrimstr("AUTO-CLOSE: PR #")
-    | first(match("[0-9]+")) | select(.offset == 0) | .string | tonumber
+  [ ( (.comments // [])[] | (.body // "")
+      | select(startswith("AUTO-CLOSE: PR #")) | ltrimstr("AUTO-CLOSE: PR #")
+      | first(match("[0-9]+")) | select(.offset == 0) | .string | tonumber ),
+    ( (._closed_by_prs // [])[] | select(type == "number") )
     | select(. > 0) ]
   | unique;
 
@@ -189,4 +230,103 @@ def gh_node($base):
       created_at: .createdAt,
       updated_at: .updatedAt };
 
-def gh_nodes($base): map(select(gh_kind != null) | gh_node($base));
+def _gh_closed_status:
+  if .stateReason == "NOT_PLANNED" or .stateReason == "DUPLICATE" then "cancelled" else "done" end;
+
+def gh_external($base):
+  { id: (.number | tostring),
+    kind: "external",
+    title: (.title // ""),
+    epic: gh_epic,
+    checklist: [],
+    pinged_at: null,
+    applied_prs: [],
+    module: null,
+    size: null,
+    deps: [],
+    status: (if .state == "CLOSED" then _gh_closed_status else "blocked" end),
+    needs_human: false,
+    claim: null,
+    target_branch: $base,
+    promote_to: null,
+    plan_ref: null,
+    body: (.body // ""),
+    created_at: .createdAt,
+    updated_at: .updatedAt };
+
+# The ids a delivery node references (§6.2): dep targets and epic checklist
+# entries, as a set; plus the epic node ids, which an issue's epic derivation
+# may name.
+def _gh_refs:
+  map(select(gh_kind != null)) as $del
+  | { ids: (reduce ( ($del[] | gh_deps[].id),
+                     ($del[] | select(gh_kind == "epic") | gh_checklist[]) ) as $i
+              ({}; .[$i] = true)),
+      epics: (reduce ($del[] | select(gh_kind == "epic") | .number | tostring) as $e
+              ({}; .[$e] = true)) };
+
+def gh_nodes($base):
+  _gh_refs as $r
+  | map( if gh_kind != null then gh_node($base)
+         elif $r.ids[.number | tostring]
+              or (gh_epic as $e | $e != null and $r.epics[$e]) then gh_external($base)
+         else empty end );
+
+# --- write helpers (task B2) ------------------------------------------------------
+
+# The status labels graph-github writes (§6.2: open statuses are labels).
+def gh_status_label_names: _status_labels | map("status:" + .);
+
+# gh_label_plan($p) — input: a raw issue. The label edit that applies patch $p
+# (any of status / module / size / needs_human / claim_agent; an absent key
+# changes nothing) as {add: [name], remove: [name]}: only labels the issue lacks
+# are added and only labels it carries are removed, so gh never resolves an
+# absent label. A new module or size replaces every other `module:*` / `size:*`
+# label, so the read's precedence (first module; size L > S > M) can never mask
+# the write; null removes them all.
+def _gh_add_if_absent($have; $l): if any($have[]; . == $l) then [] else [$l] end;
+
+def _gh_family($have; $prefix; $want):
+  { add: (if $want == null then [] else _gh_add_if_absent($have; $want) end),
+    remove: [ $have[] | select(startswith($prefix) and . != $want) ] };
+
+def gh_label_plan($p):
+  _labels as $have
+  | [ (if $p | has("status") then
+         ("status:" + $p.status) as $w
+         | { add: _gh_add_if_absent($have; $w),
+             remove: [ $have[] | select(. as $l | any(gh_status_label_names[]; . == $l) and . != $w) ] }
+       else empty end),
+      (if $p | has("module") then
+         _gh_family($have; "module:"; (if $p.module == null then null else "module:" + $p.module end))
+       else empty end),
+      (if $p | has("size") then
+         _gh_family($have; "size:"; (if $p.size == null then null else "size:" + $p.size end))
+       else empty end),
+      (if $p | has("needs_human") then
+         if $p.needs_human then {add: _gh_add_if_absent($have; "needs-human"), remove: []}
+         else {add: [], remove: [ $have[] | select(. == "needs-human") ]} end
+       else empty end),
+      (if ($p | has("claim_agent")) and ($p.claim_agent | not) then
+         {add: [], remove: [ $have[] | select(. == "claim:agent") ]}
+       else empty end) ]
+  | {add: (map(.add[]) | _uniq), remove: (map(.remove[]) | _uniq)};
+
+# gh_link_body($dep; $via) — input: a raw issue. Its body with the text edge
+# `Depends-on: #<dep> (via: <via>)` recorded: a single-dep `Depends-on: #<dep>`
+# line is rewritten in place (its via replaced), else the line is appended.
+# Line endings are normalized to "\n".
+def gh_link_body($dep; $via):
+  ("Depends-on: #" + $dep + (if $via == null then "" else " (via: " + $via + ")" end)) as $line
+  | _lines as $ls
+  | ([ $ls | to_entries[]
+       | select(.value | test("^Depends-on:[ \t]*#" + $dep + "[ \t]*([(]via:.*[)])?[ \t]*$"))
+       | .key ] | first // null) as $at
+  | if $at != null then $ls | .[$at] = $line | join("\n")
+    else ($ls | join("\n") | rtrimstr("\n")) as $b
+         | (if $b == "" then $line else $b + "\n" + $line end) end;
+
+# gh_has_text_edge($dep; $via) — the body already records the edge to $dep
+# (with exactly $via, when $via is a string).
+def gh_has_text_edge($dep; $via):
+  any(_text_edges[]; .id == $dep and ($via == null or .via == $via));
