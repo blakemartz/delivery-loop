@@ -26,7 +26,9 @@
 #                       id reuse across plans (GC35), the promote id, one-line
 #                       titles, the 50-blocker cap on github;
 #                    3b. composed-body validation (lib/plan-verify.jq):
-#                       each node to create is rendered as the backend's
+#                       each node to create must pass the backend's own
+#                       create input check (github: gh_create_errors; local:
+#                       GL_CREATE + validate_node), and is rendered as the backend's
 #                       create writes it (github: gh_create_body, native and
 #                       gh < 2.94 forms; local: its GL_CREATE normalizer) and
 #                       read back by the backend's own reader (gh_node,

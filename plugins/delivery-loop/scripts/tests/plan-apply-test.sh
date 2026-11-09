@@ -537,6 +537,76 @@ composed_refused 'context **Part of epic** #4 (a migrate parent)' '.tasks[0].con
 composed_intact 'a criterion **Depends-on**: #2 (a checklist item, not an edge)' \
   '.tasks[0].criteria = ["**Depends-on**: #2"]'
 
+# --- create's own input check, before any write (#76 A1) --------------------------
+# github create refuses a via gh_via_ok rejects (a form feed, VT, U+0085,
+# U+2028, U+2029: no line break to the reader, so lint, preflight and the
+# body read-back all pass it). apply runs create's own check
+# (gh_create_errors) on every node first: refused with zero writes, never a
+# plan half-applied with earlier nodes created. board-view's via is set, so
+# without the check the epics and two tasks would be created first.
+for v in 'x\fy' 'x\u000by' 'x\u0085y' 'x y' 'x y'; do
+  for ver in 2.96.0 2.93.0; do
+    name="via \"$v\" (gh $ver)"
+    fresh_repo release/x
+    gh_board
+    cp "$st/board.json" "$tmp/board.before"
+    jq ".tasks[2].deps[0].via = \"$v\"" "$here/fixtures/plan/valid.plan.json" >"$tmp/c.plan.json"
+    : >"$st/log"
+    run SHIM_GH_VERSION="$ver" -- "$plan" apply "$tmp/c.plan.json"
+    eq "$name: exit 1" 1 "$rc"
+    has "$name: names create's refusal" "$err" \
+      "\`board-view\`: the github backend's create would refuse this node (create: a dep via must be"
+    has "$name: refused before any write" "$err" "apply refused (nothing written)"
+    eq "$name: no gh write" "" "$(grep -E '^gh (issue (create|edit|close|comment|reopen)|label|api .*(mutation|--method|-X))' "$st/log" || true)"
+    eq "$name: board unchanged" "$(cat "$tmp/board.before")" "$(cat "$st/board.json")"
+    eq "$name: no push, ls-remote or fetch" "" "$(grep -E '^git (push|ls-remote|fetch)' "$tmp/git.log" || true)"
+  done
+  # The local backend's create stores any string via, so its apply accepts the
+  # plan whole (the via kept as written) and is never half-applied.
+  name="via \"$v\" (local)"
+  fresh_repo release/x
+  jq ".tasks[2].deps[0].via = \"$v\" | .tasks[1].deps |= map(select(.id != \"#42\"))" \
+    "$here/fixtures/plan/valid.plan.json" >"$tmp/c.plan.json"
+  apply_local -- "$tmp/c.plan.json"
+  eq "$name: exit 0, every node created" "0 7" "$rc $(created)"
+  board_local
+  eq "$name: the via stored as written" "$(jq -c -n "\"$v\"")" "$(byref demo/board-view '.deps[] | select(.id == "queue") | .via')"
+done
+
+# Generic guard: for a sample of nodes github create refuses, the composed
+# check refuses them too (whatever create's check becomes, apply runs it).
+# Each sample is a node as apply hands it to create (deps resolved to issue
+# numbers); create runs against the shim and must refuse before any gh call.
+fresh_repo
+gh_board
+guard_base='{"kind": "task", "title": "t", "body": "b", "status": "ready", "epic": "7",
+  "deps": [{"id": "8", "via": "v"}], "module": "plan", "size": "S",
+  "target_branch": "release/x", "plan_ref": "demo/t"}'
+for edit in '.deps[0].via = "x\fy"' '.deps[0].via = "x\u000by"' '.deps[0].via = "x\u0085y"' \
+            '.deps[0].via = "x y"' '.deps[0].via = "x y"' '.deps[0].via = " v"' \
+            '.deps[0].via = "v "' '.deps[0].via = ""' '.deps[0].via = 5' \
+            '.target_branch = "a b"' '.target_branch = "a b"' '.target_branch = "a​b"' \
+            '.plan_ref = "demo/t x"' '.plan_ref = "demo/t/u"' '.plan_ref = "demo /t"' \
+            '.kind = "promote" | .promote_to = "a　b"' '.kind = "promote" | .promote_to = null' \
+            '.promote_to = "main"' '.kind = "external"' '.title = "a\nb"' '.title = ""' \
+            '.status = "claimed"' '.size = "XL"' '.module = "module:plan"' '.module = ""' \
+            '.body = 5' '.id = "3"' '.claim = null' '.deps[0].id = "x"' '.deps[0].id = "0"' \
+            'del(.target_branch) | .base = "a\u00a0b"'; do
+  jq -c "$guard_base | $edit" <<<'null' >"$tmp/g.json"
+  base=$(jq -r '.base // "main"' "$tmp/g.json")
+  jq -c 'del(.base)' "$tmp/g.json" >"$tmp/g.node.json"
+  : >"$st/log"
+  run BASE_BRANCH="$base" -- "$graph" create - <"$tmp/g.node.json"
+  eq "guard [$edit]: create refuses it" 1 "$rc"
+  eq "guard [$edit]: create makes no gh write" "" "$(grep -E '^gh issue create' "$st/log" || true)"
+  got=$(jq -c -L "$scripts/lib" -L "$scripts/backends" --arg base "$base" --slurpfile n "$tmp/g.node.json" -n \
+    'include "plan-verify";
+     {steps: [{pid: "7", kind: "epic", exists: true, id: "7"}, {pid: "8", kind: "task", exists: true, id: "8"},
+              {pid: "t", kind: $n[0].kind, exists: false, node: $n[0]}]}
+     | plan_verify_github({base: $base, nodes: [{id: "7"}, {id: "8"}]}) | length > 0' 2>&1 || true)
+  eq "guard [$edit]: the composed check refuses it too" true "$got"
+done
+
 # --- usage --------------------------------------------------------------------------
 run -- "$plan" apply
 eq "usage: apply without a file -> exit 2" 2 "$rc"

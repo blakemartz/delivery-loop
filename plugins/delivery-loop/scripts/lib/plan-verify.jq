@@ -23,7 +23,11 @@
 #       create, so the nodes to create get synthetic numbers, under two
 #       disjoint numberings: a literal `#N` in plan text can equal a planned
 #       node's number under at most one of them, so no injected edge can pass
-#       as a planned one. Output: [error strings], one per node and field.
+#       as a planned one. Each node to create must also pass create's own
+#       input check, gh_create_errors (the function create runs), so a node
+#       create would refuse is refused here, before any write (those errors
+#       alone when any, as the read-back needs well-formed nodes). Output: [error
+#       strings], one per node and field.
 #   plan_verify_local($ctx; create) — the same for the local backend: create
 #       is the backend's own create normalizer (graph-local.sh GL_CREATE),
 #       called as `{node, all} | create` with all = the nodes stored so far;
@@ -80,7 +84,16 @@ def plan_verify_github($ctx):
   | ([ $steps[] | select(.exists) | {key: .pid, value: .id} ] | from_entries) as $found
   | [ $steps[] | select(.exists | not) | .pid ] as $new
   | ([ ($ctx.nodes // [])[] | .id | select(test("^[0-9]+$")) | tonumber ] | max // 0) as $hi
-  | [ ($hi + 1000000, $hi + 2000000 + ($new | length)) as $off
+  | ($found + ($new | to_entries | map({key: .value, value: ($hi + 1 + .key | tostring)}) | from_entries)) as $map0
+  # create's own input check first (gh_create_errors, the function create
+  # runs; any issue number passes it): a node create would refuse is an error
+  # here, before any write, instead of a half-applied plan. The read-back
+  # below runs only on nodes create accepts (well-formed by then).
+  | [ $steps[] | select(.exists | not) | .pid as $pid
+      | (.node | plan_apply_resolve($map0)) | gh_create_errors($ctx.base)[]
+      | "`\($pid)`: the github backend's create would refuse this node (\(.)): nothing written" ]
+  | if . != [] then .
+    else [ ($hi + 1000000, $hi + 2000000 + ($new | length)) as $off
       | ($found + ($new | to_entries | map({key: .value, value: ($off + .key | tostring)}) | from_entries)) as $map
       | ($new | map({key: $map[.], value: .}) | from_entries) as $back
       | $steps[] | select(.exists | not) | .pid as $pid
@@ -102,7 +115,8 @@ def plan_verify_github($ctx):
       | {pid: $pid, field: $f,
          form: (if $native == 1 then "native relations" else "gh < 2.94 text edges" end),
          got: ($have[$f] | _pv_show($f; $back)), want: ($want[$f] | _pv_show($f; $back))} ]
-  | _pv_messages("the github issue body apply would write");
+  | _pv_messages("the github issue body apply would write")
+  end;
 
 def plan_verify_local($ctx; create):
   .steps as $steps

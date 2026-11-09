@@ -350,42 +350,12 @@ op_create() {
   [ "$in" != - ] || in=$(cat)
   one_object "create: node-json" "$in"
   printf '%s' "$in" > "$tmp/in.json"
-  gjq -e --arg base "$BASE_BRANCH" 'include "graph-github";
-    def str: type == "string" and length > 0;
-    # A trailer value (§6.2): one token, so the line create writes is a valid
-    # trailer line that reads back whole (#77 review B; gh_trailer_token).
-    def tok: gh_trailer_token;
-    def allowed: ["kind", "title", "body", "epic", "deps", "module", "size", "status",
-                  "needs_human", "target_branch", "promote_to", "plan_ref"];
-    if has("id") then error("create: github assigns issue numbers; drop `id`")
-    elif ((keys - allowed) | length) > 0 then
-      error("create: unsupported field(s) \((keys - allowed) | join(", ")) (github create takes \(allowed | join(", ")))")
-    elif (.kind as $k | ["task", "epic", "promote"] | index($k)) == null then
-      error("create: kind must be task|epic|promote (never external) (got \(.kind | tojson))")
-    elif (.title | str | not) or (.title | test("[\r\n]")) then error("create: title must be a non-empty one-line string")
-    elif .body != null and (.body | type) != "string" then error("create: body must be a string")
-    elif (.status // "ready" | . as $s | ["ready", "blocked"] | index($s)) == null then
-      error("create: status must be ready or blocked (got \(.status | tojson))")
-    elif .epic != null and ((.epic | tostring) | test("^[1-9][0-9]*$") | not) then
-      error("create: epic must be an issue number (got \(.epic | tojson))")
-    elif any((.deps // [])[]; (if type == "object" then .id else . end | tostring | test("^[1-9][0-9]*$")) | not) then
-      error("create: every dep must be an issue number")
-    elif .module != null and ((.module | str | not) or (.module | startswith("module:"))) then
-      error("create: module must be a bare module name or null")
-    elif (.size as $s | ["S", "M", "L", null] | index($s)) == null then error("create: size must be S|M|L or null")
-    elif any((.deps // [])[]; type == "object" and .via != null and (.via | gh_via_ok | not)) then
-      error("create: a dep via must be a non-empty one-line string with no leading/trailing whitespace")
-    elif .promote_to != null and .kind != "promote" then error("create: promote_to is for promote nodes only")
-    elif .kind == "promote" and (.promote_to | tok | not) then
-      error("create: a promote node needs promote_to, one token (no whitespace) (got \(.promote_to | tojson))")
-    elif .plan_ref != null and ((.plan_ref | tok | not) or (.plan_ref | test("^[^/]+/[^/]+$") | not)) then
-      error("create: plan_ref must be <plan>/<plan-task-id>, one token (got \(.plan_ref | tojson))")
-    elif .target_branch != null and (.target_branch | tok | not) then
-      error("create: target_branch must be one token (no whitespace) (got \(.target_branch | tojson))")
-    elif .target_branch == null and ($base | tok | not) then
-      error("create: BASE_BRANCH (the default target_branch) must be one token (got \($base | tojson))")
-    else true end' "$tmp/in.json" > /dev/null 2> "$tmp/err" \
+  # The input check is gh_create_errors (graph-github.jq), shared with
+  # `plan.sh apply`'s composed-artifact validation so the two cannot drift.
+  gjq -r --arg base "$BASE_BRANCH" 'include "graph-github"; gh_create_errors($base)[]' \
+    "$tmp/in.json" > "$tmp/errs" 2> "$tmp/err" \
     || { sed 's/^jq: error (at [^)]*): //' "$tmp/err" >&2; die "create: invalid node (nothing written)"; }
+  [ ! -s "$tmp/errs" ] || { cat "$tmp/errs" >&2; die "create: invalid node (nothing written)"; }
   # Body: the contract (trailing whitespace dropped), a blank line, then the
   # trailer block (§6.2), always written whole: the read takes machine keys
   # from the body's last trailer paragraph only, so a key line in the contract
