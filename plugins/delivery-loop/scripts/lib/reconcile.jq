@@ -27,9 +27,13 @@
 #   7. an open epic with >= 1 child (graph.jq children: backlinks + checklist),
 #      every child done or cancelled -> done (GC45). Repeated until no epic
 #      changes, so an epic of epics closes in the same pass.
+#   4. claimed, or ready/blocked on a non-epic node, + an open agent PR with
+#      its task_id -> in-review (GC43; ready/blocked are status drift, GC69;
+#      an epic is left to rules 1/2/7). Runs before rules 1 and 2, so a
+#      drifted node is never shuffled between ready and blocked first: an open
+#      PR outranks the deps.
 #   1. blocked -> ready when deps_done and not needs_human (GC4).
 #   2. ready -> blocked when not deps_done.
-#   4. claimed + an open agent PR with its task_id -> in-review (GC43).
 #   5. agent claim, no open PR for the node, now - updated_at > 4h, not
 #      needs_human -> reclaim to ready (GC24). The node's status is not
 #      pre-filtered: the transition table is the judge (GC65).
@@ -134,7 +138,10 @@ def _rules12:
 def _rule4($open):
   _offer_all(
     _nodes[]
-    | select(.status == "claimed")
+    # ready/blocked drift is a task/promote repair only: an epic sent to
+    # in-review could never be closed by rule 7 (epic rows allow ready -> done).
+    | select(.status == "claimed"
+             or ((.status == "ready" or .status == "blocked") and .kind != "epic"))
     | .id as $id
     | first($open[] | select(.agent and .task_id == $id)) as $pr
     | _rec("transition"; "in-review"; "open PR #\($pr.number)"));
@@ -175,7 +182,7 @@ def reconcile_plan:
   | .now as $now
   | {order: ($nodes | map(.id)), idx: ($nodes | index_by_id),
      touched: {}, records: [], warnings: []}
-  | _rule3($prs) | _rule7 | _rules12 | _rule4($open) | _rule5($open; $now)
+  | _rule3($prs) | _rule7 | _rule4($open) | _rules12 | _rule5($open; $now)
   | _rule6($now) | _rule8
   | {records, warnings};
 
