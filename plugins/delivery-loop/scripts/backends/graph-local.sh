@@ -776,8 +776,8 @@ op_comment() {
 # The record checks that need no store: shape, op, a ping moves nothing.
 GL_RECORD='
   def str: type == "string" and length > 0;
-  if (keys - ["op", "id", "from", "to", "reason", "updated_at"] | length) > 0
-  then error("record: unexpected field(s) \(keys - ["op", "id", "from", "to", "reason", "updated_at"] | join(", "))")
+  if (keys - ["op", "id", "from", "to", "reason", "updated_at", "pr"] | length) > 0
+  then error("record: unexpected field(s) \(keys - ["op", "id", "from", "to", "reason", "updated_at", "pr"] | join(", "))")
   elif ([.op, .id, .from, .to, .reason, .updated_at] | all(str) | not)
   then error("record: op, id, from, to, reason and updated_at must be non-empty strings")
   elif (.op as $op | ["transition", "reclaim", "ping"] | index($op)) == null
