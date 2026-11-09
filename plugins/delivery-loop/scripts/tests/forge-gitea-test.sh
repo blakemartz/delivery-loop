@@ -304,8 +304,11 @@ expect "GC30: stale --sha under FORGE_DRY_RUN -> exit nonzero, no merge request 
 # The pinned merge request, as FORGE_DRY_RUN prints it.
 reset
 run FORGE_DRY_RUN=1 -- pr-merge 141 --method squash --sha "$(sha 141)"
+# Build the expected body outside expect's eval: bash 3.2 brace-expands a jq
+# object constructor nested as "$(jq "{a, b}")" inside eval'd text.
+want=$(jq -cn --arg s "$(sha 141)" '{Do: "squash", delete_branch_after_merge: true, head_commit_id: $s}')
 expect "FORGE_DRY_RUN: pr-merge prints POST …/pulls/141/merge + {Do, delete_branch_after_merge, head_commit_id}" \
-  '[ "$rc" = 0 ] && [ "$(sed -n 1p <<<"$out")" = "POST /api/v1/repos/example/repo/pulls/141/merge" ] && [ "$(sed -n 2p <<<"$out" | jq -c .)" = "$(jq -cn --arg s "$(sha 141)" "{Do: \"squash\", delete_branch_after_merge: true, head_commit_id: \$s}")" ] && [ "$(log_count POST)" = 0 ]'
+  '[ "$rc" = 0 ] && [ "$(sed -n 1p <<<"$out")" = "POST /api/v1/repos/example/repo/pulls/141/merge" ] && [ "$(sed -n 2p <<<"$out" | jq -c .)" = "$want" ] && [ "$(log_count POST)" = 0 ]'
 reset
 run FORGE_DRY_RUN=1 -- pr-merge 141 --method merge --sha "$(sha 141)"
 expect "FORGE_DRY_RUN: --method merge -> Do merge, branch kept" '[ "$rc" = 0 ] && [ "$(sed -n 2p <<<"$out" | jq -r "[.Do, .delete_branch_after_merge] | @tsv")" = "$(printf "merge\tfalse")" ]'

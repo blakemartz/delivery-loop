@@ -93,6 +93,11 @@ that adds a new class of check belongs **in** `scripts/check.sh`, not in prose
 here — the gate is the single definition of "correct" (it is `GATE_CMD` in
 `.claude/delivery.conf`).
 
+The gate also re-runs the unit tests under a real **bash 3.2**: set
+`DL_BASH32=/path/to/bash-3.2`, or keep a local `bash:3.2` docker image (override
+with `DL_BASH32_IMAGE`; never pulled). With neither it prints a `SKIPPED` notice
+and continues; `DL_BASH32=off` skips explicitly. Details in `scripts/check.sh`.
+
 To smoke-test an install without touching your real config, point Claude Code at
 a throwaway config dir: `CLAUDE_CONFIG_DIR=$(mktemp -d) claude plugin marketplace
 add ./ && … install …` (the CLI rejects bare `.` — use `./`). Never mutate
