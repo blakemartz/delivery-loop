@@ -13,6 +13,11 @@
 #                      dropped, input order kept.
 #   gh_short_blocked — the input issue's `blockedBy` returned fewer `nodes` than
 #                      its `totalCount` (it needs a `gh issue view` re-read, GC64).
+#   gh_short_comments — the input issue's `comments` may be truncated: `gh issue
+#                      list` returns at most the first 100 per issue and exposes no
+#                      total, so exactly 100 (or more) needs a re-read (GC74).
+#   gh_reread_fields — the comma-joined `gh issue view --json` fields the input
+#                      issue must re-read ("" when it is complete).
 #
 # Field derivation (github column of §4.1):
 #   kind        `task` label, else `epic`, else `promote` (v0.1.4 listed every
@@ -37,6 +42,10 @@
 #   applied_prs the PR numbers of every `AUTO-CLOSE: PR #<n>` comment, ascending,
 #               deduplicated (reconcile rule 3 skips them, so a human reopen
 #               sticks). v0.1.4's epic `AUTO-CLOSE: epic …` comment names no PR.
+#               A PR that closed the issue by GitHub closing keyword (no comment)
+#               is not derived yet: that is task B2's (spec §4.1, GC75).
+#   (comments)  pinged_at, applied_prs and claim need every comment; graph-github.sh
+#               re-reads an issue whose list read may be truncated (GC74).
 #   target_branch / plan_ref / promote_to
 #               the `Delivery-Target:` / `Delivery-Plan:` / `Delivery-Promote-To:`
 #               body lines (promote_to on promote nodes only).
@@ -95,6 +104,17 @@ def gh_deps:
 def gh_short_blocked:
   (.blockedBy | type) == "object"
   and (.blockedBy.totalCount // 0) > ((.blockedBy.nodes // []) | length);
+
+# `gh issue list --json comments` returns an issue's first 100 comments only (no
+# totalCount; gh 2.96.0). `gh issue view --json comments` pages them all.
+def _gh_list_comment_cap: 100;
+
+def gh_short_comments:
+  ((.comments // []) | length) >= _gh_list_comment_cap;
+
+def gh_reread_fields:
+  [ (if gh_short_blocked then "blockedBy" else empty end),
+    (if gh_short_comments then "comments" else empty end) ] | join(",");
 
 # Most advanced first, so a label edit caught half-way still reads forward.
 def _status_labels:

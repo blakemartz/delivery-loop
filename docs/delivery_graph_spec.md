@@ -158,7 +158,7 @@ on drift).
 | `epic` | string \| null | parent epic id, used for ordering and output. github: native `parent.number`, else the legacy `[Ee]pic #E` body match. That is parity with v0.1.4, whose task `epic` came from the body only. |
 | `checklist` | [string] | epic nodes only: ids from the epic's own `- [ ] #N` checklist (github). It is empty on local. `children(epic)` = nodes whose `epic` is this epic ∪ `checklist`. This is used only for the started-epic flag and epic completion, as in v0.1.4. |
 | `pinged_at` | ISO-8601 \| null | when a stale-human-claim ping was last posted. github: the newest `STALE-CLAIM-PING` comment; local: the newest `comment` event with that prefix. |
-| `applied_prs` | [int] | PR numbers whose merge reconcile rule 3 already applied to this node (§5), ascending, deduplicated; `[]` when none. Rule 3 skips them, so a human who reopens a closed task is never overridden (GC72). github: the number right after the prefix of every `AUTO-CLOSE: PR #<n>` comment (the comment the backend writes when it applies rule 3, B2; v0.1.4's `AUTO-CLOSE: epic …` comment names no PR). local: the same, from `comment` events whose body has that prefix (C2 appends one when it applies rule 3). Required on every node; `validate_node` rejects anything but an array of positive integers. |
+| `applied_prs` | [int] | PR numbers whose merge reconcile rule 3 already applied to this node (§5), ascending, deduplicated; `[]` when none. Rule 3 skips them, so a human who reopens a closed task is never overridden (GC72). github: the number right after the prefix of every `AUTO-CLOSE: PR #<n>` comment (the comment the backend writes when it applies rule 3, B2; v0.1.4's `AUTO-CLOSE: epic …` comment names no PR). github also counts a merged PR whose GitHub closing keyword (`Closes #N`, default branch only) closed the issue: GitHub writes no `AUTO-CLOSE` comment for it. B2 MUST derive that PR from evidence that survives a reopen (`closedByPullRequestsReferences`, or the issue timeline's `ClosedEvent` closer), after verifying the source against gh and live issue data (GC75); until B2 the read path derives only the comment form. The comment list is read in full: `gh issue list` returns at most 100 comments per issue, so the backend re-reads a longer thread (GC74, §6.2). local: the same, from `comment` events whose body has that prefix (C2 appends one when it applies rule 3). Required on every node; `validate_node` rejects anything but an array of positive integers. |
 | `module` | string \| null | from `module:<m>`. |
 | `size` | `S` \| `M` \| `L` \| null | |
 | `deps` | `[{id, via}]` | blocking edges. `via` is a string, or null for legacy edges. github: union of native `blockedBy.nodes[].number` and legacy `Depends-on:` lines, deduplicated (GC11). |
@@ -303,6 +303,14 @@ backend applies them, and `--fix` prints them as `fix: …` lines.
    re-closed by the same merge on every pass; a newer merged PR still closes it
    (GC72). Applying the rule records the PR: github writes the
    `AUTO-CLOSE: PR #<n>` comment, local appends the matching `comment` event.
+   v0.2 tracks each PR separately, so a NEWER merged PR does close a reopened
+   task; v0.1.4's H0 skipped any issue carrying an `AUTO-CLOSE: PR #` comment at
+   all. A merged PR that closed the issue through GitHub's closing keyword counts
+   as applied, although no `AUTO-CLOSE` comment exists for it (§4.1 `applied_prs`,
+   GC75, owned by B2). Without that, after a human reopens such an issue with
+   `BASE_BRANCH` = the default branch, rule 3 would re-close it once; v0.1.4 never
+   did, because H0 is skipped on the default branch. Until B2 the gap is latent:
+   reconcile does not drive the github board before B2.
 4. **Open PR → in-review.** An open agent PR with `task_id` X while X is `claimed`,
    or while a `task`/`promote` node X is `ready` or `blocked`, sets X to
    `in-review` (GC43). `ready`/`blocked` are status drift: the claim was cleared or
@@ -448,6 +456,13 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
   - The page size of nested `blockedBy` connections under `gh issue list` is
     UNVERIFIED. When `totalCount` exceeds the returned `nodes`, the backend re-reads
     that issue with `gh issue view --json blockedBy` (GC64).
+- **Comments are read in full.** `gh issue list --json comments` returns at most
+  the first 100 comments per issue and exposes no total (verified 2026-11-08, gh
+  2.96.0: 100 for an issue whose `gh issue view --json comments` returned 229).
+  The backend therefore re-reads every issue whose listed `comments` has 100 or
+  more entries with `gh issue view <n> --json comments`, which pages them all, so
+  `applied_prs`, `pinged_at` and the claim never silently truncate (§2 exception 2,
+  GC74). An issue short on both `blockedBy` and `comments` is re-read once for both.
 - **Claims are unchanged.** The comment-ordered Lamport lock (`lib/claim-winner.jq`,
   `lib/orphan-claims.jq`) is reused as is; GitHub offers no compare-and-set on
   assignment.
@@ -920,6 +935,8 @@ the case assertions it owns.
 | GC38 | `task-worktree.sh` on a node whose target branch is missing | exit 1, message names `plan.sh apply` |
 | GC48 | `graph.sh migrate` twice (gh shim); an issue needing 51 blockers | first run adds native edges and leaves `Depends-on:` text in the body; second run issues 0 edits; exit 1 naming the issue |
 | GC64 | github issue whose `blockedBy.totalCount` (3) exceeds the returned `nodes` (2) | backend re-reads it via `gh issue view --json blockedBy`; `deps` has 3 ids |
+| GC74 | github issue with 105 comments, its `AUTO-CLOSE: PR #77` marker the 103rd, a `STALE-CLAIM-PING` the 104th and a `RECLAIMED` (voiding an early `CLAIM`) the 105th; issues with exactly 100 and with 99 comments | `gh issue list` returns the first 100 only; the 105- and 100-comment issues are re-read via `gh issue view --json comments`, the 99-comment one is not; `applied_prs` `[77]`, `pinged_at` the 104th comment's time, `claim` null; `list` and `show` emit the same node |
+| GC75 | github fixture, `BASE_BRANCH` = the default branch: task X `ready` (a human reopened it) and a dependent `blocked` on X; merged agent PR P, base the default branch, that closed X through GitHub's closing keyword (closed-by-PR evidence for P on X, no `AUTO-CLOSE` comment) | X's `applied_prs` contains P; reconcile emits no record for X or the dependent |
 | GC66 | local `graph.sh create` without an id in epic `auth` holding `auth-1`, `auth-7` | new id `auth-8` |
 | GC49 | promote node, identical trees | `done`, note `nothing to promote`, no PR |
 | GC50 | promote node, red `PROMOTE_GATE_CMD` | `needs_human`, claim released, no PR, exit 1 |
@@ -1078,11 +1095,11 @@ exception).
 | A3 shapes | policy | S | A1 (test glob) | `lib/node.jq`, `lib/pr.jq` (`validate_node`, `validate_pr`); `tests/shapes-test.sh` accepts the valid node and PR fixtures and rejects 5 malformed ones |
 | A4 ready-transitions | policy | M | A3 (`validate_node`) | `lib/graph.jq` (§5 helpers, including `cycles`), `lib/ready.jq`, `lib/transitions.jq`; `tests/ready-test.sh` passes GC1, GC3, GC5, GC8, GC47 and the "not ready" assertions of GC2, GC4, GC6, GC7 |
 | A5 reconcile | policy | M | A4 (`lib/graph.jq`, ready predicate) | `lib/reconcile.jq`; `tests/reconcile-test.sh` passes the reconcile assertions of GC2, GC4, GC6, GC7, GC24 (record), GC25 (record), GC42 (record), GC43, GC44, GC45 (record), GC65 |
-| A5b reconcile-parity | policy | S | A5 (`reconcile.jq`) | `applied_prs` in §4.1 and `validate_node` (fixtures updated; `backends/graph-github.jq` derives it from `AUTO-CLOSE: PR #<n>` comments); rule 3 skips applied PRs; the §5 stale-claim `reconcile` row from `in-review`/`changes-requested`/`approved`/`ready`; `tests/reconcile-test.sh` passes GC72 and GC73, `tests/graph-github-read-test.sh` passes GC72 (`applied_prs` derivation), `tests/shapes-test.sh` rejects a node without `applied_prs` |
+| A5b reconcile-parity | policy | S | A5 (`reconcile.jq`) | `applied_prs` in §4.1 and `validate_node` (fixtures updated; `backends/graph-github.jq` derives it from `AUTO-CLOSE: PR #<n>` comments); rule 3 skips applied PRs; the §5 stale-claim `reconcile` row from `in-review`/`changes-requested`/`approved`/`ready`; `tests/reconcile-test.sh` passes GC72 and GC73, `tests/graph-github-read-test.sh` passes GC72 (`applied_prs` derivation) and GC74, `tests/shapes-test.sh` rejects a node without `applied_prs` |
 | A6 tick-plan | policy | M | A4 (ready order), A3 (PR shape) | `lib/tick-plan.jq`, `tick-plan.sh`; `tests/tick-plan-test.sh` passes GC12–GC20, GC39 (plan assertion), GC62, GC59 (`tick-plan.sh` part) |
 | D1 forge-github | forge | M | A3 (PR shape), A2 (`FORGE`, `LIST_LIMIT`) | `forge.sh` + `backends/forge-github.sh` (every §7.1 op); `tests/forge-github-test.sh` (gh shim) passes GC28 (github), GC29, GC30, GC32, GC33 (`task_id`), GC46, GC57, GC58, GC63, GC67 (github) |
 | B1 graph-github-read | graph | M | A4 (`ready.jq`), A2 (`GRAPH_BACKEND`, `LIST_LIMIT`, `--check`) | `graph.sh` (ready/list/show/export, config check at start) + `backends/graph-github.sh list/show`; `tests/graph-github-read-test.sh` (gh shim) passes GC5 (github fixture), GC9, GC10, GC11, GC44 (`pinged_at` derivation), GC45 (checklist normalization), GC56, GC64, GC59 (`graph.sh` part) |
-| B2 graph-github-write | graph | M | B1 (read path), A5 (`reconcile.jq`), D1 (`forge.sh pr-list` + linkage), A4d #51 (`validate_node` and policy accept `external`) | github create/update/link/flag/claim/release/comment, `graph.sh transition`/`claim`/`reconcile --fix`; `task-queue.sh` and `claim-task.sh` become wrappers; the existing claim tests pass unchanged; `tests/graph-github-write-test.sh` passes GC33 (reaper), GC42 (issue closed), GC61, GC68, GC71 |
+| B2 graph-github-write | graph | M | B1 (read path), A5 (`reconcile.jq`), D1 (`forge.sh pr-list` + linkage), A4d #51 (`validate_node` and policy accept `external`) | github create/update/link/flag/claim/release/comment, `graph.sh transition`/`claim`/`reconcile --fix`; `task-queue.sh` and `claim-task.sh` become wrappers; the existing claim tests pass unchanged; `tests/graph-github-write-test.sh` passes GC33 (reaper), GC42 (issue closed), GC61, GC68, GC71; `applied_prs` also holds a merged PR that closed the issue through GitHub's closing keyword, from closed-by-PR evidence verified against gh and live issue data to survive a reopen (§4.1, §5 rule 3), and a test passes GC75 |
 | B3 graph-migrate | graph | S | B2 (`link`) | `graph.sh migrate`; `tests/graph-migrate-test.sh` passes GC48 |
 | D2 forge-gitlab | forge | M | D1 (contract, `forge.sh`) | `backends/forge-gitlab.sh`; `tests/forge-gitlab-test.sh` passes GC28 (gitlab), GC29, GC30, GC31, GC32, GC67 (gitlab), GC59 (`forge.sh` part) |
 | D3 forge-gitea | forge | M | D1 (contract, `forge.sh`) | `backends/forge-gitea.sh`; `tests/forge-gitea-test.sh` passes GC28 (gitea), GC29, GC30, GC32, GC67 (gitea) |

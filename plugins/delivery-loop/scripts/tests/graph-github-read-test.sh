@@ -3,7 +3,8 @@
 # (docs/delivery_graph_spec.md §4.1, §6.1, §6.2, §11): golden cases GC5 (github
 # fixture), GC9, GC10, GC11, GC44 (`pinged_at` derivation), GC45 (checklist
 # normalization), GC56, GC64 and GC59 (`graph.sh` part) — §17 row B1 — plus
-# GC72's `applied_prs` derivation (§17 row A5b, issue #52).
+# GC72's `applied_prs` derivation and GC74 (comments past gh's 100-per-issue
+# list cap) (§17 row A5b, issue #52).
 #
 # Offline: a recording gh shim (fixtures/graph-github/gh-shim.sh) sits first on
 # PATH, answering from boards in the `gh issue list --json …` shape. Runs in a
@@ -185,6 +186,48 @@ eq "GC72: applied_prs = the AUTO-CLOSE: PR #<n> comment numbers, ascending, dedu
 eq "GC72: no AUTO-CLOSE comment -> applied_prs []" '[]' "$(node 2 .applied_prs)"
 eq "GC72: every node of the cases board carries applied_prs" true \
   "$(run -- list; jq -c 'all(.[]; .applied_prs == [])' <<<"$out")"
+
+# --- GC74: comments past `gh issue list`'s 100-per-issue cap -------------------------
+# The shim, like gh 2.96.0, returns only an issue's first 100 comments on `issue
+# list`; `issue view` returns them all. Issue 1 has 105 comments, its AUTO-CLOSE
+# marker the 103rd, its newest STALE-CLAIM-PING the 104th and the RECLAIMED that
+# voids its early CLAIM the 105th. Issue 2 has exactly 100 (complete, but
+# unprovable: gh exposes no total), issue 3 has 99 (provably complete).
+jq '[ .[] | select(.number == 6) ] as [$t]
+    | def c($i; $b): {body: $b, createdAt: ("2026-10-01T00:00:00Z" | fromdate + $i | todate)};
+      def filler($n): [ range(1; $n + 1) as $i | c($i; "chatter \($i)") ];
+    [ ($t | .number = 1
+      | .labels += [{id: "LA_claim", name: "claim:agent", description: "", color: "EDEDED"}]
+      | .assignees = []
+      | .comments = ([c(0; "CLAIM agent-1 host-1-100 2026-10-01T00:00:00Z")] + filler(101)
+                     + [c(200; "AUTO-CLOSE: PR #77 merged into release/x"),
+                        c(201; "STALE-CLAIM-PING @agent-1"),
+                        c(202; "RECLAIMED agent-1")])),
+      ($t | .number = 2 | .comments = filler(100)),
+      ($t | .number = 3 | .comments = filler(99)) ]' "$fx/cases-issues.json" > "$tmp/long.json"
+eq "GC74: fixture: issue 1 has 105 comments, the AUTO-CLOSE marker at 103" '[105,103]' \
+  "$(jq -c '.[0].comments | [length, (map(.body) | index("AUTO-CLOSE: PR #77 merged into release/x") + 1)]' "$tmp/long.json")"
+run SHIM_FX="$tmp" SHIM_BOARD=long.json -- list
+expect "GC74: list exits 0" '[ "$rc" = 0 ]'
+expect "GC74: an issue with >= 100 listed comments is re-read with gh issue view --json comments" \
+  'log_has "gh issue view 1 --json comments" && log_has "gh issue view 2 --json comments"'
+expect "GC74: an issue with < 100 comments is not re-read" '! log_has "gh issue view 3"'
+eq "GC74: applied_prs holds the AUTO-CLOSE marker past comment 100" '[77]' "$(node 1 .applied_prs)"
+eq "GC74: pinged_at is the STALE-CLAIM-PING past comment 100" \
+  "$(jq -c '.[0].comments[103].createdAt' "$tmp/long.json")" "$(node 1 .pinged_at)"
+eq "GC74: a RECLAIMED past comment 100 voids the early CLAIM (claim null)" 'null' "$(node 1 .claim)"
+list1=$(node 1 .)
+run SHIM_FX="$tmp" SHIM_BOARD=long.json -- show 1
+eq "GC74: list and show agree on the long-thread node" "$list1" "$(jq -c . <<<"$out")"
+run SHIM_FX="$tmp" SHIM_BOARD=long.json SHIM_GH_VERSION=2.93.0 -- list
+expect "GC74: comments are re-read on gh < 2.94.0 too (no blockedBy requested)" \
+  '[ "$rc" = 0 ] && log_has "gh issue view 1 --json comments" && ! log_has blockedBy && [ "$(node 1 .applied_prs)" = "[77]" ]'
+jq '.[0]._view = {blockedBy: {nodes: [{number: 3}, {number: 4}], totalCount: 2}}
+    | .[0].blockedBy = {nodes: [{number: 3}], totalCount: 2}' "$tmp/long.json" > "$tmp/long-bb.json"
+run SHIM_FX="$tmp" SHIM_BOARD=long-bb.json -- list
+expect "GC64+GC74: an issue short on both is re-read once, for both fields" \
+  'log_has "gh issue view 1 --json blockedBy,comments" && [ "$(log_count "gh issue view 1 ")" = 1 ]'
+eq "GC64+GC74: both re-read fields land" '[["3","4"],[77]]' "$(node 1 '[[.deps[].id], .applied_prs]')"
 
 # --- GC10: LIST_LIMIT -------------------------------------------------------------
 run SHIM_BOARD=gc5-issues.json LIST_LIMIT=11 -- list
