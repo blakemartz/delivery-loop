@@ -23,7 +23,9 @@
 # each accepted record updates, so one pass settles a cascade (a merged PR's
 # task goes done, its epic completes, a dependent unblocks: GC25):
 #   3. an agent PR, state merged, task_id X (X open), base == X's target branch
-#      (a promote node's promotion PR targets promote_to, §9) -> X done (GC42).
+#      (a promote node's promotion PR targets promote_to, §9), its number not in
+#      X.applied_prs -> X done (GC42). A PR already applied is skipped, so a
+#      human reopen is never overridden (GC72).
 #   7. an open epic with >= 1 child (graph.jq children: backlinks + checklist),
 #      every child done or cancelled -> done (GC45). Repeated until no epic
 #      changes, so an epic of epics closes in the same pass.
@@ -35,8 +37,10 @@
 #   1. blocked -> ready when deps_done and not needs_human (GC4).
 #   2. ready -> blocked when not deps_done.
 #   5. agent claim, no open PR for the node, now - updated_at > 4h, not
-#      needs_human -> reclaim to ready (GC24). The node's status is not
-#      pre-filtered: the transition table is the judge (GC65).
+#      needs_human -> reclaim to ready (GC24), from claimed or any later open
+#      status, or from ready itself (claim drift), so a claim whose PR closed
+#      unmerged is released, not warned about forever (GC73). The node's status
+#      is not pre-filtered: the transition table is the judge (GC65).
 #   6. human claim on an open node, now - updated_at > 72h, pinged_at null ->
 #      one ping; human claims are never released (GC44).
 #   8. warnings: `blocked on cancelled dep`, `unknown dep` (open nodes), and
@@ -103,8 +107,9 @@ def _subjects: _nodes[] | select(_is_subject);
 def _rec($op; $to; $reason): {op: $op, id, from: .status, to: $to, reason: $reason};
 
 # _rule3 — §5 rule 3 is existential: *an* agent PR merged into the node's merge
-# base closes it. The base is checked per PR before grouping, so a newer merge
-# elsewhere (a cherry-pick into main) cannot hide the qualifying one; among the
+# base closes it. The base and `applied_prs` are checked per PR before grouping,
+# so a newer merge elsewhere (a cherry-pick into main) cannot hide the qualifying
+# one, and an applied PR never re-closes a reopened node (GC72); among the
 # qualifying PRs the newest names the record.
 def _rule3($prs):
   _offer_all(
@@ -112,7 +117,8 @@ def _rule3($prs):
     | $prs
     | map(select(.agent and .state == "merged" and .task_id != null
                  and $idx[.task_id] != null
-                 and .base == ($idx[.task_id] | _merge_base)))
+                 and .base == ($idx[.task_id] | _merge_base)
+                 and (.number as $n | any($idx[.task_id].applied_prs[]; . == $n) | not)))
     | group_by(.task_id)[]
     | max_by(.number) as $pr
     | $idx[$pr.task_id]

@@ -11,7 +11,7 @@ def fixture_now: 1798761600;
 
 def full_node:
   {kind: "task", title: "Task \(.id)", epic: null, checklist: [], pinged_at: null,
-   module: null, size: "S", deps: [], status: "ready", needs_human: false,
+   applied_prs: [], module: null, size: "S", deps: [], status: "ready", needs_human: false,
    claim: null, target_branch: "main", promote_to: null, plan_ref: null,
    body: "", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-12-31T23:00:00Z"}
   + .

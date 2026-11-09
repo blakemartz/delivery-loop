@@ -34,6 +34,9 @@
 #               a node validate_node must reject. No `claim:agent` but an
 #               assignee: a human claim {actor: login, run: null, at: null}.
 #   pinged_at   the newest `STALE-CLAIM-PING` comment's createdAt, else null.
+#   applied_prs the PR numbers of every `AUTO-CLOSE: PR #<n>` comment, ascending,
+#               deduplicated (reconcile rule 3 skips them, so a human reopen
+#               sticks). v0.1.4's epic `AUTO-CLOSE: epic …` comment names no PR.
 #   target_branch / plan_ref / promote_to
 #               the `Delivery-Target:` / `Delivery-Plan:` / `Delivery-Promote-To:`
 #               body lines (promote_to on promote nodes only).
@@ -126,6 +129,15 @@ def gh_pinged_at:
   [ (.comments // [])[] | select((.body // "") | startswith("STALE-CLAIM-PING")) | .createdAt ]
   | max // null;
 
+# The number must follow the prefix directly (offset 0), so a body like
+# "AUTO-CLOSE: PR #x\n5" names no PR; #0 is not a PR number.
+def gh_applied_prs:
+  [ (.comments // [])[] | (.body // "")
+    | select(startswith("AUTO-CLOSE: PR #")) | ltrimstr("AUTO-CLOSE: PR #")
+    | first(match("[0-9]+")) | select(.offset == 0) | .string | tonumber
+    | select(. > 0) ]
+  | unique;
+
 # Several size:* labels: L wins (v0.1.4 excluded any size:L issue — L means
 # "split me", never claimable), then S, then M (v0.1.4 ranked S only on size:S).
 def gh_size:
@@ -143,6 +155,7 @@ def gh_node($base):
       epic: gh_epic,
       checklist: (if $kind == "epic" then gh_checklist else [] end),
       pinged_at: gh_pinged_at,
+      applied_prs: gh_applied_prs,
       module: gh_module,
       size: gh_size,
       deps: gh_deps,

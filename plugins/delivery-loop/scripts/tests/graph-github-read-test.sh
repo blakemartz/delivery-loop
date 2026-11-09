@@ -2,7 +2,8 @@
 # Tests for graph.sh (ready/list/show/export) + backends/graph-github.sh list/show
 # (docs/delivery_graph_spec.md §4.1, §6.1, §6.2, §11): golden cases GC5 (github
 # fixture), GC9, GC10, GC11, GC44 (`pinged_at` derivation), GC45 (checklist
-# normalization), GC56, GC64 and GC59 (`graph.sh` part) — §17 row B1.
+# normalization), GC56, GC64 and GC59 (`graph.sh` part) — §17 row B1 — plus
+# GC72's `applied_prs` derivation (§17 row A5b, issue #52).
 #
 # Offline: a recording gh shim (fixtures/graph-github/gh-shim.sh) sits first on
 # PATH, answering from boards in the `gh issue list --json …` shape. Runs in a
@@ -166,6 +167,24 @@ eq "size precedence: S+L -> L, M+L -> L, S+M -> S, M -> M" '["L","L","S","M"]' \
 run SHIM_FX="$tmp" SHIM_BOARD=sizes.json -- ready
 eq "size precedence: an S+L (or M+L) task is not ready; S+M ranks as S ahead of M" '["3","4"]' \
   "$(jq -sc 'map(.id)' <<<"$out")"
+
+# --- GC72: applied_prs from AUTO-CLOSE: PR #<n> comments (§4.1) ---------------------
+# Only a comment that starts with the marker, with the number right after it,
+# names a PR; v0.1.4's epic AUTO-CLOSE comment names none.
+jq '[ .[] | select(.number == 6) ] as [$t]
+    | def c($b): {body: $b, createdAt: "2026-10-01T00:00:00Z"};
+    [ ($t | .number = 1 | .state = "OPEN"
+      | .comments = [c("AUTO-CLOSE: PR #12 merged into release/x (closing keywords only fire on the default branch). (Reconciled by scripts/task-queue.sh --fix.)"),
+                     c("AUTO-CLOSE: PR #9 merged into release/x"), c("AUTO-CLOSE: PR #12 merged again"),
+                     c("AUTO-CLOSE: epic fully delivered — all 2 child tasks are closed."),
+                     c("see AUTO-CLOSE: PR #99"), c("AUTO-CLOSE: PR #x\n55"), c("AUTO-CLOSE: PR #0")]),
+      ($t | .number = 2) ]' "$fx/cases-issues.json" > "$tmp/applied.json"
+run SHIM_FX="$tmp" SHIM_BOARD=applied.json -- list
+expect "GC72: list exits 0" '[ "$rc" = 0 ]'
+eq "GC72: applied_prs = the AUTO-CLOSE: PR #<n> comment numbers, ascending, deduplicated" '[9,12]' "$(node 1 .applied_prs)"
+eq "GC72: no AUTO-CLOSE comment -> applied_prs []" '[]' "$(node 2 .applied_prs)"
+eq "GC72: every node of the cases board carries applied_prs" true \
+  "$(run -- list; jq -c 'all(.[]; .applied_prs == [])' <<<"$out")"
 
 # --- GC10: LIST_LIMIT -------------------------------------------------------------
 run SHIM_BOARD=gc5-issues.json LIST_LIMIT=11 -- list

@@ -1,0 +1,7 @@
+{"nodes": [
+  {"id": "72", "status": "ready", "applied_prs": [172]},
+  {"id": "73", "status": "blocked", "deps": ["72"]}
+ ],
+ "prs": [
+  {"number": 172, "state": "merged", "task_id": "72"}
+ ]}
