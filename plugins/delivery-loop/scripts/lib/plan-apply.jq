@@ -16,6 +16,12 @@
 #                          plan renders. Only the trailing block is dropped: a
 #                          marker line above it (a human edit) is body drift.
 #                          Plan text never carries one (plan-lint refuses it).
+#                          Line endings are normalized first (plan_body_norm).
+#   plan_body_norm       — a body with every CRLF and lone CR as LF. Drift
+#                          applies it to both sides of a github body compare
+#                          (the stored body, via plan_body_core, and the
+#                          plan's), so plan text with CR or a trailing CRLF
+#                          does not read as `body` drift on every re-apply.
 #   plan_apply($ctx)     — {errors, drift, steps}:
 #     errors  refusals found before anything is written (exit 1, nothing
 #             created): a plan_ref on more than one node, an existing node of
@@ -24,7 +30,8 @@
 #             collides or is not a valid local id, a multi-line title (github
 #             create refuses one, which would strand a half-applied plan), a
 #             multi-line via (it would break its `Depends-on:` line), more
-#             than 50 blockers on one github issue (§6.2).
+#             than 50 blockers on one github issue (§6.2), more than 100
+#             sub-issues on one github epic (GitHub's cap per parent issue).
 #     drift   [{id, field}] for each existing node whose field differs from the
 #             plan (title, body, epic, module, size, deps, target_branch,
 #             promote_to). Reported, never overwritten (GC54).
@@ -59,8 +66,10 @@ def _is_trailer_line:
   or test("^Depends-on:[ \t]*#[0-9]+([ \t]*[(]via:.*[)])?[ \t]*$")
   or test("^Part of epic #[0-9]+[ \t]*$");
 
+def plan_body_norm: (. // "") | gsub("\r\n?"; "\n");
+
 def plan_body_core:
-  (. // "") | split("\n") | map(rtrimstr("\r"))
+  plan_body_norm | split("\n")
   | until(length == 0 or (.[-1] | _is_trailer_line | not); .[:-1])
   | join("\n") | _rtrim;
 
@@ -166,6 +175,23 @@ def plan_apply($ctx):
        else empty end),
       (if $backend == "local" and ($pids | _has_str("inbox")) then
          "id `inbox` is reserved by the local backend: rename it"
+       else empty end),
+      # GitHub's sub-issue cap: "You can add up to 100 sub-issues per parent
+      # issue" (https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/adding-sub-issues).
+      # create sets each task's epic as its native parent (`--parent`), so a
+      # plan that would push an epic past it is refused here, before any
+      # write, instead of failing part-way. Checked on every gh version (gh <
+      # 2.94 writes `Part of epic` text instead) so a plan stays portable. The
+      # count: the epic's existing children (`graph.sh list` reads closed
+      # issues too, and GitHub counts them) plus the plan tasks still to
+      # create under it; an epic the plan adds nothing to is never refused.
+      (if $backend == "github" then
+         $p.epics[] | .id as $eid
+         | ([ $items[] | select(.kind == "task" and .node.epic == $eid and (.matches | length) == 0) ] | length) as $new
+         | ($found[$eid]) as $nid
+         | (if $nid == null then 0 else [ $nodes[] | select(.epic == $nid) ] | length end) as $have
+         | select($new > 0 and $have + $new > 100)
+         | "epic `\($eid)`: \($have + $new) sub-issues (\($have) existing + \($new) to create) exceed GitHub's 100 per parent issue: split the epic"
        else empty end) ] as $errors
   # drift: the existing node against the plan, with every known id mapped (an
   # item not yet created maps to null, so an edge to it is missing: drift).
@@ -173,8 +199,9 @@ def plan_apply($ctx):
       | ($t | .epic |= (if . == null then null else $found[.] end)
             | if has("deps") then .deps |= map(if .ref == "plan" then $found[.id] else .id end) else . end) as $want
       | ( (if $n.title != $want.title then "title" else empty end),
-          (if (if $backend == "github" then $n.body | plan_body_core else $n.body // "" | _rtrim end)
-              != ($want.body | _rtrim) then "body" else empty end),
+          (if (if $backend == "github" then [($n.body | plan_body_core), ($want.body | plan_body_norm | _rtrim)]
+               else [($n.body // "" | _rtrim), ($want.body | _rtrim)] end) | .[0] != .[1]
+           then "body" else empty end),
           (if $t.kind == "task" and $n.epic != $want.epic then "epic" else empty end),
           (if $t.kind == "task" and $n.module != $want.module then "module" else empty end),
           (if $t.kind == "task" and $n.size != $want.size then "size" else empty end),
