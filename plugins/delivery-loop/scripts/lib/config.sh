@@ -69,10 +69,51 @@ export BASE_BRANCH WORKTREE_SETUP_CMD GATE_CMD SPEC_SOURCES \
        FORGE FORGE_URL FORGE_REPO PLANS_DIR \
        TASK_MERGE_METHOD PROMOTE_MERGE_METHOD PROMOTE_GATE_CMD
 
-# dl_config_check — validate the resolved combination. Prints one line per
-# problem to stderr and returns 1 if any; returns 0 (silent) if valid.
+# dl_jq_check — refuse a jq the engine cannot run on. Supported: jq >= 1.6,
+# except exactly 1.8.2, which mis-links nested module includes (upstream
+# jqlang/jq#3597) and crashes most of scripts/lib/. A version string that does
+# not parse as a release (a git snapshot such as Alpine's "jq-master-v2021…",
+# or a dev build past a tag, "jq-1.8.2-12-gabc") is accepted: it cannot be
+# placed in the range, and refusing it would block working installs.
+# Prints one line to stderr and returns 1 if refused; returns 0 (silent) if ok.
+dl_jq_check() {
+  local _dl_v _dl_core _dl_major _dl_minor _dl_patch
+  if ! _dl_v="$(jq --version 2>/dev/null)"; then
+    echo "config: jq not found (or not runnable); the delivery loop needs jq >= 1.6 (not 1.8.2)" >&2
+    return 1
+  fi
+  _dl_core="${_dl_v#jq-}"
+  case "$_dl_core" in
+    [0-9]*.[0-9]*) : ;;
+    *) return 0 ;;                                        # unparseable: accept
+  esac
+  case "$_dl_core" in
+    *-[0-9]*-g*) return 0 ;;                              # dev build past a tag
+  esac
+  _dl_core="${_dl_core%%[!0-9.]*}"                        # drop -dirty, rc1, ...
+  _dl_major="${_dl_core%%.*}"; _dl_core="${_dl_core#*.}"
+  _dl_minor="${_dl_core%%.*}"
+  case "$_dl_core" in *.*) _dl_patch="${_dl_core#*.}"; _dl_patch="${_dl_patch%%.*}" ;; *) _dl_patch=0 ;; esac
+  case "$_dl_major" in ''|*[!0-9]*) return 0 ;; esac
+  case "$_dl_minor" in ''|*[!0-9]*) return 0 ;; esac
+  case "$_dl_patch" in ''|*[!0-9]*) return 0 ;; esac
+  if [ "$_dl_major" -lt 1 ] || { [ "$_dl_major" -eq 1 ] && [ "$_dl_minor" -lt 6 ]; }; then
+    echo "config: $_dl_v is too old; the delivery loop needs jq >= 1.6 (not 1.8.2)" >&2
+    return 1
+  fi
+  if [ "$_dl_major" -eq 1 ] && [ "$_dl_minor" -eq 8 ] && [ "$_dl_patch" -eq 2 ]; then
+    echo "config: $_dl_v is unsupported: it mis-links nested module includes and crashes the engine (upstream bug jqlang/jq#3597); install jq 1.8.1, or 1.8.3 or later once released" >&2
+    return 1
+  fi
+  return 0
+}
+
+# dl_config_check — validate the resolved combination (and the jq on PATH, via
+# dl_jq_check). Prints one line per problem to stderr and returns 1 if any;
+# returns 0 (silent) if valid.
 dl_config_check() {
   local _dl_bad=0
+  dl_jq_check || _dl_bad=1
   case "$GRAPH_BACKEND" in
     github|local) : ;;
     *) echo "config: unknown GRAPH_BACKEND='$GRAPH_BACKEND' (valid: github local)" >&2; _dl_bad=1 ;;

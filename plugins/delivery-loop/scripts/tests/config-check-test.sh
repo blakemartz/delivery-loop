@@ -95,5 +95,35 @@ run
 expect_rc "GC41 via delivery.conf -> exit 1" 1 "github local"
 noconf
 
+# --- --check: the jq on PATH (dl_jq_check) ---------------------------------------
+# A shim jq first on PATH reports $DL_FAKE_JQ_VERSION for --version and hands
+# every other call to the real jq, so only the version check sees the fake.
+real_jq="$(command -v jq)"
+mkdir "$tmp/shim"
+cat > "$tmp/shim/jq" <<EOF
+#!/bin/sh
+if [ "\$1" = --version ]; then echo "\$DL_FAKE_JQ_VERSION"; exit 0; fi
+exec "$real_jq" "\$@"
+EOF
+chmod +x "$tmp/shim/jq"
+shim_path="$tmp/shim:$PATH"
+
+run PATH="$shim_path" DL_FAKE_JQ_VERSION=jq-1.8.2
+expect_rc "jq 1.8.2 -> exit 1, names jqlang/jq#3597" 1 "jqlang/jq#3597"
+expect_rc "jq 1.8.2 -> message names the remedy" 1 "install jq 1.8.1, or 1.8.3 or later"
+
+run PATH="$shim_path" DL_FAKE_JQ_VERSION=jq-1.5
+expect_rc "jq 1.5 (< 1.6) -> exit 1" 1 "needs jq >= 1.6"
+
+for v in jq-1.6 jq-1.7.1 jq-1.8.1 jq-1.8.3; do
+  run PATH="$shim_path" DL_FAKE_JQ_VERSION=$v
+  expect_rc "$v -> valid" 0
+done
+
+# The refusal is part of --check, so it adds to (not replaces) config problems.
+run PATH="$shim_path" DL_FAKE_JQ_VERSION=jq-1.8.2 GRAPH_BACKEND=sqlite
+expect_rc "jq 1.8.2 + bad backend -> both reported" 1 "jqlang/jq#3597"
+expect_rc "jq 1.8.2 + bad backend -> backend still reported" 1 "github local"
+
 [ "$fails" = 0 ] || { echo "config-check-test: FAILED" >&2; exit 1; }
 echo "config-check-test: all passed"

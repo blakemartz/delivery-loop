@@ -63,9 +63,9 @@ def _field_errors($what; $required; $optional):
 # _typed($what; $name; cond; $msg): shape.jq `check`, prefixed with $what.
 def _typed($what; $name; cond; $msg): check($name; cond; $msg) | "\($what): \(.)";
 
-def _malformed($what; $label):
+def _malformed($what; $noun):
   if has("id") and (.id | is_node_id | not)
-  then "\($what): malformed \($label) \(.id | tojson) (want \(_id_rule))"
+  then "\($what): malformed \($noun) \(.id | tojson) (want \(_id_rule))"
   else empty end;
 
 def _where($kind; $i):
