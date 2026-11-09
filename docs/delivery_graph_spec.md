@@ -524,7 +524,8 @@ between (GC22).
   inside the same lock. `op` is one of `create` | `claim` | `release` | `reclaim` |
   `transition` | `comment` | `link` | `apply` | `lock-broken`.
 - The epic files are the source of truth. The journal is the audit trail, and in
-  v0.3 the metrics input. `graph.sh show <id>` prints the node's last 10 events.
+  v0.3 the metrics input. `graph.sh show <id> --events` prints the node's last 10
+  events after the node (opt-in, so a plain `show` stays exactly one node).
 
 **Claim.**
 - `with_lock`: re-read the node, require `status=="ready"` and `claim==null`, then

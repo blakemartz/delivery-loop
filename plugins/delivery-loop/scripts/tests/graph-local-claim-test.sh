@@ -4,8 +4,12 @@
 # GC21 (8 concurrent claims, one winner), GC24 (the `reclaim` event), GC25 (a
 # merged PR on the forge -> done, its dependent -> ready, end to end) — §17 row
 # C2 — plus GC66 through `graph.sh create`, the routed writes, human claims,
-# stale-claim pings, the reconcile compare-and-set, and `graph.sh show`'s
-# journal tail.
+# stale-claim pings, the reconcile compare-and-set, `graph.sh show --events`'s
+# journal tail, the stop-at-first-stale-record apply loop, and that graph.sh
+# leaves no temp dir behind.
+#
+# bash 3.2: no jq filter containing `{a, b}` goes inside an `expect` (eval)
+# string, where 3.2 brace-expands it; compute such values first, then `eq`.
 #
 # Runs in a throwaway git repo under ${TMPDIR:-/tmp}, so the host repo's
 # .claude/delivery.conf never leaks in. The forge is FORGE=github behind the
@@ -152,8 +156,10 @@ g "$R" -- release auth-7 "handing back"
 eq "release keeps needs_human set" '{"status":"ready","needs_human":true,"claim":null}' \
   "$(field "$R" auth-7 '{status, needs_human, claim}')"
 g "$R" -- comment auth-1 "a durable note" --actor ann
-expect "graph.sh comment exits 0 and journals a comment event" \
-  '[ "$rc" = 0 ] && [ "$(last_event "$R" "{op, id, body, actor}")" = "{\"op\":\"comment\",\"id\":\"auth-1\",\"body\":\"a durable note\",\"actor\":\"ann\"}" ]'
+eq "graph.sh comment exits 0" 0 "$rc"
+eq "graph.sh comment journals a comment event" \
+  '{"op":"comment","id":"auth-1","body":"a durable note","actor":"ann"}' \
+  "$(last_event "$R" '{op, id, body, actor}')"
 before=$(cat "$R"/epics/*.json | cksum)
 printf 'multi\nline' | (cd "$repo" && env $ENV_CLEAR GRAPH_BACKEND=local STATE_DIR="$R" bash "$graph" comment auth-1 - > /dev/null) && rc=0 || rc=$?
 expect "comment - reads the text from stdin" '[ "$rc" = 0 ] && [ "$(last_event "$R" .body)" = "\"multi\\nline\"" ]'
@@ -161,20 +167,33 @@ eq "a comment never touches the node files" "$before" "$(cat "$R"/epics/*.json |
 g "$R" -- comment nope "x"
 eq "commenting on an unknown node exits 1" 1 "$rc"
 
-# --- graph.sh show: the node's last 10 journal events (§6.3) ---------------------
+# --- graph.sh show --events: the node's last 10 journal events (§6.3) ------------
 for i in 1 2 3 4 5 6 7 8 9 10 11 12; do g "$R" -- comment auth-8 "note $i"; done
 g "$R" -- show auth-8
-expect "show: stdout is still exactly one valid node" \
-  '[ "$rc" = 0 ] && jq -e -s -L "$lib" "include \"node\"; length == 1 and (.[0] | validate_node | .id == \"auth-8\")" <<<"$out" > /dev/null'
-eq "show: stderr carries exactly the last 10 journal events of the node" \
+expect "show: stdout is exactly one valid node, and nothing is on stderr" \
+  '[ "$rc" = 0 ] && [ -z "$err" ] && jq -e -s -L "$lib" "include \"node\"; length == 1 and (.[0] | validate_node | .id == \"auth-8\")" <<<"$out" > /dev/null'
+g "$R" -- show auth-8 --events
+expect "show --events: the node first, then exactly 11 lines" \
+  '[ "$rc" = 0 ] && [ "$(head -n 1 <<<"$out" | jq -r .id)" = auth-8 ] && [ "$(wc -l <<<"$out" | tr -d " ")" = 11 ]'
+eq "show --events: the last 10 journal events of the node follow it on stdout" \
   '["note 3","note 4","note 5","note 6","note 7","note 8","note 9","note 10","note 11","note 12"]' \
-  "$(jq -sc 'map(.body)' <<<"$err")"
-g "$R" -- show auth-9
-eq "show: a node with fewer events prints all of its own (and no other node's)" \
-  '[["create","auth-9"],["transition","auth-9"]]' "$(jq -sc 'map([.op, .id])' <<<"$err")"
-g "$R" -- show auth-9 --format md
-expect "show --format md: the same tail on stderr, the markdown on stdout" \
-  '[ "$(jq -s length <<<"$err")" = 2 ] && [ "$out" = "# from stdin" ]'
+  "$(tail -n +2 <<<"$out" | jq -sc 'map(.body)')"
+g "$R" -- show --events auth-9
+eq "show --events: a node with fewer events prints all of its own (and no other node's)" \
+  '[["create","auth-9"],["transition","auth-9"]]' "$(tail -n +2 <<<"$out" | jq -sc 'map([.op, .id])')"
+g "$R" -- show auth-9 --format md --events
+expect "show --format md --events: the markdown, then the tail" \
+  '[ "$rc" = 0 ] && [ "$(head -n 1 <<<"$out")" = "# from stdin" ] && [ "$(grep -c "^{" <<<"$out")" = 2 ]'
+g "$R" GRAPH_BACKEND=github FORGE_REPO=o/r -- show auth-9 --events
+expect "show --events on a backend with no journal exits 1 before any read" \
+  '[ "$rc" = 1 ] && case "$err" in *"has no journal"*) true ;; *) false ;; esac'
+printf '{"torn' >> "$R/events.jsonl"
+g "$R" -- show auth-8 --events
+expect "show --events over a torn journal tail: succeeds, warns once" \
+  '[ "$rc" = 0 ] && [ "$(grep -c . <<<"$err")" = 1 ]'
+# Repair the tail (the store's own append would do so; the test keeps it tidy).
+sed '$d' "$R/events.jsonl" > "$R/events.new"; mv "$R/events.new" "$R/events.jsonl"
+
 
 # --- GC21: 8 concurrent graph.sh claim X -> exactly one winner --------------------
 C="$tmp/race"
@@ -253,6 +272,70 @@ done
 gl "$A" -- reconcile "{\"op\":\"transition\",\"id\":\"y\",\"from\":\"ready\",\"to\":\"bogus\",\"reason\":\"x\",\"updated_at\":\"$stamp\"}"
 eq "reconcile refuses a record whose result fails validate_node (exit 1)" 1 "$rc"
 eq "refused records write nothing" "$before" "$(cat "$A"/epics/*.json "$A/events.jsonl" | cksum)"
+
+# --- the apply loop stops at the first stale record (reconcile records cascade) ---
+# x is in-review with a merged PR (301), dep is blocked on x: the plan is
+# [x -> done, dep -> ready]. While graph.sh reads the forge (after it loaded the
+# board), an unrelated update retitles x, so x's record is stale. dep's record
+# rests on x being done, so it must not be applied either.
+S="$tmp/cascade"
+g "$S" -- create '{"id":"x","kind":"task","title":"shipped","size":"S","status":"in-review"}'
+g "$S" -- create '{"id":"dep","kind":"task","title":"waits on x","size":"S","status":"blocked","deps":["x"]}'
+backdate "$S" x "2026-01-01T00:00:00Z" "2026-01-02T00:00:00Z"
+backdate "$S" dep "2026-01-01T01:00:00Z" "2026-01-01T01:00:00Z"
+g "$S" -- reconcile
+eq "cascade: the plan is x -> done, then dep -> ready" \
+  '[["x","done"],["dep","ready"]]' "$(jq -sc 'map([.id, .to])' <<<"$out")"
+mkdir -p "$tmp/bin-race"
+cat > "$tmp/bin-race/gh" <<HOOK
+#!/usr/bin/env bash
+case "\$*" in *"--state merged"*)
+  bash "$backend" update x '{"title":"retitled"}' > /dev/null ;;
+esac
+exec bash "$here/fixtures/forge-github/gh-shim.sh" "\$@"
+HOOK
+chmod +x "$tmp/bin-race/gh"
+g "$S" PATH="$tmp/bin-race:$PATH" -- reconcile --fix
+eq "cascade: a stale record stops --fix with exit 4" 4 "$rc"
+expect "cascade: it says the board changed and to re-run reconcile" \
+  'case "$err" in *"board changed"*"re-run reconcile"*) true ;; *) false ;; esac'
+expect "cascade: both records are reported as not applied, none as fixed" \
+  '[ -z "$out" ] && [ "$(grep -c "^warn: not applied" <<<"$err")" = 2 ]'
+g "$S" -- list
+eq "cascade: dep is NOT made ready (its premise, x done, never happened)" \
+  '{"dep":"blocked","x":"in-review"}' "$(jq -cS 'map({(.id): .status}) | add' <<<"$out")"
+eq "cascade: no transition is journaled" 0 "$(events "$S" '.op == "transition" and .from != .to')"
+g "$S" -- reconcile --fix
+eq "cascade: the next pass re-plans from fresh state and applies both" \
+  "$(printf 'fix: transition x in-review -> done: PR #301 merged into main\nfix: transition dep blocked -> ready: every dep is done')" \
+  "$out"
+
+# --- graph.sh leaves no dl-graph.* temp dir behind (claims never exec past it) ---
+P="$tmp/private-tmp"; mkdir -p "$P"
+L="$tmp/leak"
+g "$L" TMPDIR="$P" -- create '{"id":"l","kind":"task","title":"contended","size":"S"}'
+g "$L" TMPDIR="$P" -- create '{"id":"m","kind":"task","title":"serial","size":"S"}'
+pids=""
+for i in 1 2 3 4 5 6 7 8; do
+  (cd "$repo" && env $ENV_CLEAR GRAPH_BACKEND=local STATE_DIR="$L" TMPDIR="$P" \
+     bash "$graph" claim l "agent-$i" --run "run-$i" > /dev/null 2>&1 && r=0 || r=$?
+   echo "$r" > "$tmp/leak-$i.rc") &
+  pids="$pids $!"
+done
+# shellcheck disable=SC2086
+wait $pids
+eq "leak: 8 concurrent claims -> one winner" "0 1 1 1 1 1 1 1 " "$(cat "$tmp"/leak-*.rc | sort | tr '\n' ' ')"
+g "$L" TMPDIR="$P" -- claim m agent-a --run run-a
+eq "leak: a serial winning claim exits 0" 0 "$rc"
+g "$L" TMPDIR="$P" -- claim m agent-b --run run-b
+eq "leak: a losing claim exits 1" 1 "$rc"
+g "$L" TMPDIR="$P" -- claim nope agent-b
+for args in "show m" "show m --events" "show m --format md" "list" "export" "ready" "reconcile" "reconcile --fix"; do
+  # shellcheck disable=SC2086
+  g "$L" TMPDIR="$P" -- $args
+done
+eq "leak: claims (winning and losing) and every read leave zero dl-graph.* dirs in TMPDIR" \
+  '' "$(find "$P" -mindepth 1 -maxdepth 1 -name 'dl-graph.*')"
 
 # --- GC25: a merged PR (Delivery-Task: x) -> x done; its dependent -> ready ------
 # PR 301 is merged into main with Delivery-Task: x; PR 300 is merged into

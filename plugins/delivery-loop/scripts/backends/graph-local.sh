@@ -42,8 +42,8 @@
 #                                 a `comment` event whose body is the reason
 #                                 (STALE-CLAIM-PING…, so pinged_at derives).
 #   journal <id> [n]              the node's last n (default 10) journal events,
-#                                 one JSON object per line (graph.sh show prints
-#                                 them, §6.3). A reader: no lock.
+#                                 one JSON object per line (`graph.sh show <id>
+#                                 --events` prints them, §6.3). A reader: no lock.
 #   unlock --force                operator cleanup: remove lock, lock.break and
 #                                 lock.break.reap whatever their owners.
 # Mutating primitives accept trailing `--actor <name>` / `--run <run>`, recorded
@@ -782,6 +782,11 @@ gl_do_reconcile() {
   old=$(gl_get "$id")
   # Compare-and-set: the node is as the plan saw it, and the record's op still
   # fits its claim. Anything else is a stale record: exit 4, nothing written.
+  # Precision: updated_at is gl_now, whole seconds, so writes that land within
+  # the second the plan read the node (e.g. claim -> release -> re-claim) leave
+  # it unchanged and pass. Reclaim and ping are immune (they need updated_at
+  # hours old); a transition has that one-second window. A monotonic per-node
+  # revision (or a journal offset) would close it.
   if ! jq -e --slurpfile r "$rf" '$r[0] as $r
        | .status == $r.from and .updated_at == $r.updated_at
          and (if $r.op == "reclaim" then (.claim // {}).by == "agent"

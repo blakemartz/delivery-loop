@@ -14,16 +14,20 @@
 #                               started, epic, module, target_branch}).
 #   list                        every node, open and closed, as one compact
 #                               JSON array.
-#   show <id> [--format json|md]
+#   show <id> [--format json|md] [--events]
 #                               one node (json, the default), or its title and
 #                               body as markdown for agent prompts. The markdown
 #                               is rendered here from the validated node, so
-#                               every backend gets it.
-#                               On the local backend the node's last 10 journal
-#                               events follow on stderr, one JSON object per
-#                               line (§6.3): stdout stays exactly one node, the
-#                               §6.1 contract callers parse. The tail is best
-#                               effort: a journal read failure only warns.
+#                               every backend gets it. Without --events stdout
+#                               is exactly that one node, the §6.1 contract
+#                               callers parse (task-worktree.sh does), and
+#                               nothing else is printed.
+#                               --events (local backend, §6.3): the node's last
+#                               10 journal events follow it on stdout, one JSON
+#                               object per line. Opt-in, so the hot read stays
+#                               quiet; an unreadable journal is then an error
+#                               (exit 1), and a backend with no journal refuses
+#                               it (exit 1).
 #   export                      every node as pretty-printed JSON, for backup
 #                               and debugging.
 #   create <node-json>|-  ·  update <id> <patch-json>|-  ·  link <id> <dep-id> [via]
@@ -51,13 +55,20 @@
 #                               is applied through the backend's `reconcile`
 #                               primitive, a compare-and-set against the node as
 #                               the plan saw it, and printed as
-#                               `fix: <op> <id> <from> -> <to>: <reason>`; a
-#                               record the board outran (backend exit 4) is a
-#                               `warn: skipped` line, not a failure.
+#                               `fix: <op> <id> <from> -> <to>: <reason>`.
+#                               Records cascade (x -> done, so its dependent ->
+#                               ready), so applying stops at the first record
+#                               not applied: the rest of the plan rests on it.
+#                               Each unapplied record is a `warn: not applied`
+#                               line. A record the board outran (backend exit
+#                               4) exits 4, "board changed; re-run reconcile";
+#                               any other backend failure exits 1. The next
+#                               pass re-plans from fresh state.
 #
 # Exit codes: 0 ok · 1 failed / invalid config / not claimable · 2 usage · 3
-# the backend list reached LIST_LIMIT · 5 a backend emitted a node that fails
-# validate_node. A routed write op exits with its backend's status.
+# the backend list reached LIST_LIMIT · 4 reconcile --fix: the board changed
+# since the plan (stopped; re-run reconcile) · 5 a backend emitted a node that
+# fails validate_node. A routed write op exits with its backend's status.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/config.sh
@@ -66,7 +77,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 dl_config_check || exit 1
 
 usage() {
-  echo "usage: graph.sh ready | list | show <id> [--format json|md] | export | create <node-json> | update <id> <patch-json> | link <id> <dep-id> [via] | flag <id> needs-human on|off | claim <id> <actor> [--run <run>] | claim <id> --human <name> | release <id> <reason> | comment <id> <text> | reconcile [--fix] (docs/delivery_graph_spec.md §6.1)" >&2
+  echo "usage: graph.sh ready | list | show <id> [--format json|md] [--events] | export | create <node-json> | update <id> <patch-json> | link <id> <dep-id> [via] | flag <id> needs-human on|off | claim <id> <actor> [--run <run>] | claim <id> --human <name> | release <id> <reason> | comment <id> <text> | reconcile [--fix] (docs/delivery_graph_spec.md §6.1)" >&2
   exit 2
 }
 
@@ -83,7 +94,9 @@ backend="$SCRIPT_DIR/backends/graph-$GRAPH_BACKEND.sh"
 [ -f "$backend" ] || { echo "graph.sh: no backend for GRAPH_BACKEND=$GRAPH_BACKEND ($backend missing)" >&2; exit 1; }
 
 # Plain writes are the backend's primitives verbatim: exec, so stdin (`-`),
-# stdout and the exit status pass straight through (§6.1).
+# stdout and the exit status pass straight through (§6.1). They exec BEFORE the
+# temp dir exists; below it, never exec: exec replaces the shell and skips the
+# EXIT trap, leaking the dir. Run the backend and exit with its status instead.
 case "$op" in
   create|update|link|flag|release|comment) exec bash "$backend" "$op" "$@" ;;
 esac
@@ -120,28 +133,36 @@ case "$op" in
     load_all
     pjq "$ALL" "$tmp/nodes.json" ;;
   show)
-    id="" format=json
+    id="" format=json events=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --format) format="${2:-}"; [ $# -ge 2 ] || usage; shift 2 ;;
+        --events) events=1; shift ;;
         -*) usage ;;
         *) [ -z "$id" ] || usage; id="$1"; shift ;;
       esac
     done
     [ -n "$id" ] || usage
     case "$format" in json|md) : ;; *) usage ;; esac
+    # The journal is the local store's audit trail (§6.3); github's history is
+    # the issue timeline, which no primitive reads yet.
+    [ -z "$events" ] || [ "$GRAPH_BACKEND" = local ] || {
+      echo "graph.sh: show --events: backend $GRAPH_BACKEND has no journal" >&2; exit 1; }
     bash "$backend" show "$id" > "$tmp/node.json" || exit $?
     if [ "$format" = md ]; then
       pjq 'include "node"; validate_node | "# \(.title)\n\n\(.body)"' "$tmp/node.json" -r
     else
       pjq 'include "node"; validate_node' "$tmp/node.json" -c
     fi
-    # §6.3: the journal is the local store's audit trail (github's history is
-    # the issue timeline). On stderr, so stdout stays one node; best effort, so
-    # an unreadable journal never fails the read of a valid node.
-    if [ "$GRAPH_BACKEND" = local ]; then
-      bash "$backend" journal "$id" 10 >&2 \
-        || echo "graph.sh: warning: cannot print the journal of $id" >&2
+    # The backend's show already read this journal (pinged_at derives from it)
+    # and warned about anything unparsable, so the journal read's own copy of
+    # that warning is kept only if the read fails.
+    if [ -n "$events" ]; then
+      bash "$backend" journal "$id" 10 2> "$tmp/journal.err" || {
+        cat "$tmp/journal.err" >&2
+        echo "graph.sh: show --events: cannot read the journal of $id" >&2
+        exit 1
+      }
     fi ;;
   claim)
     id="${1:-}" actor="" run="" by=agent
@@ -166,7 +187,9 @@ case "$op" in
         elif $by == "agent" and .needs_human then "\(.id | tojson) is needs-human"
         else empty end' "$tmp/node.json" -r --arg by "$by")
     [ -z "$why" ] || { echo "graph.sh: not claimable: $why" >&2; exit 1; }
-    exec bash "$backend" claim "$id" "$actor" "${run:--}" "$by" ;;
+    rc=0
+    bash "$backend" claim "$id" "$actor" "${run:--}" "$by" || rc=$?
+    exit "$rc" ;;
   reconcile)
     load_all
     pjq "$ALL" "$tmp/nodes.json" -c > "$tmp/valid.json"
@@ -198,16 +221,30 @@ case "$op" in
       exit 0
     fi
     jq -c '.records[]' "$tmp/plan.json" > "$tmp/records.jsonl"
-    failed=0
+    # Backend-generic (B2 reuses it). reconcile_plan runs over a working copy,
+    # so a record may rest on an earlier one (x -> done, then dep -> ready
+    # because x is done), while the backend's compare-and-set checks only the
+    # record's own node. Once one record is not applied the rest of the plan is
+    # untrusted: stop, list what was not applied, and let the next pass re-plan.
+    status=0
     while IFS= read -r rec; do
       line=$(jq -r '"\(.op) \(.id) \(.from) -> \(.to): \(.reason)"' <<<"$rec")
+      if [ "$status" -ne 0 ]; then
+        echo "warn: not applied $line (the plan is stale)" >&2
+        continue
+      fi
       rc=0
       bash "$backend" reconcile "$rec" < /dev/null 2> "$tmp/apply.err" || rc=$?
       case "$rc" in
         0) echo "fix: $line" ;;
-        4) echo "warn: skipped $line: $(cat "$tmp/apply.err")" >&2 ;;
-        *) cat "$tmp/apply.err" >&2; echo "graph.sh: reconcile: failed to apply $line (exit $rc)" >&2; failed=1 ;;
+        4) echo "warn: not applied $line: $(cat "$tmp/apply.err")" >&2; status=4 ;;
+        *) cat "$tmp/apply.err" >&2
+           echo "graph.sh: reconcile: failed to apply $line (exit $rc)" >&2; status=1 ;;
       esac
     done < "$tmp/records.jsonl"
-    exit "$failed" ;;
+    case "$status" in
+      4) echo "graph.sh: reconcile: board changed since the plan; stopped applying, re-run reconcile" >&2 ;;
+      1) echo "graph.sh: reconcile: stopped applying after a failed record; fix it, then re-run reconcile" >&2 ;;
+    esac
+    exit "$status" ;;
 esac
