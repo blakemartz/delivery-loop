@@ -253,7 +253,8 @@ task PRs ──squash──▶ release/1.0 ──promotion PR (merge commit, hum
 - Every task of the plan forks from, targets, and merges into the target branch.
   Implementers and patchers catch up with a moved target by **merging** it into
   the task branch — never rebasing, never force-pushing. The loop closes each
-  task when its PR merges, whichever branch that is.
+  task when its PR merges into the task's own `target_branch`; a PR merged into
+  any other base does not close it.
 - When every epic is delivered, the tick runs `promote.sh`: it gates the target
   branch (`PROMOTE_GATE_CMD`, default `GATE_CMD`) and opens the promotion PR
   `Promote <target> → <promote_to>`. A red gate escalates to you instead.

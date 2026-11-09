@@ -140,7 +140,7 @@ Approves proposed backlogs, pins spec-level design decisions and nods on spec dr
 
 ### 3.7 Spec author
 
-Upstream of the decomposer: turns a subsystem into a merged, decompose-ready sub-spec (`/delivery-loop:author-spec`). Collects operator pins before drafting, grounds every claim against the repo and primary sources, drafts to a house template, and lands the spec through a fresh-agent adversarial **docs review** (grounding, consistency, and buildability instead of executable criteria; verdict as a single comment-form review per round, `forge.sh pr-review <pr> comment --sha <head>`, whose body's first line is the plain-text `Docs-review verdict: APPROVE` or `Docs-review verdict: REQUEST_CHANGES` — the adapter adds the `## Adversarial review — verdict: COMMENT` heading and the `Reviewed-Head:` trailer, §10, §13.2, runbook §7). Docs-review fix rounds resume the *same* reviewer — its grounding context is the asset — a deliberate deviation from §3.4's fresh-reviewer rule, scoped to docs reviews only. Two human gates: the draft nod before any PR, and the `/decompose` backlog approval after merge. The spec PR's merge follows the same authority model as every other PR (§3.6, §8.2): human by default, agent only under the operator's explicit standing authorization, and then only after gating the merged result. The spec author never implements tasks — it hands the merged cutline to the decomposer and stops. Sequencing is deliberate: decomposition always runs against the **merged** spec, because review rounds change cutlines.
+Upstream of the decomposer: turns a subsystem into a merged, decompose-ready sub-spec (`/delivery-loop:author-spec`). Collects operator pins before drafting, grounds every claim against the repo and primary sources, drafts to a house template, and lands the spec through a fresh-agent adversarial **docs review** (grounding, consistency, and buildability instead of executable criteria; verdict as a single comment-form review per round, `forge.sh pr-review <pr> comment --sha <head>`, whose body's first line is the plain-text `Docs-review verdict: APPROVE` or `Docs-review verdict: REQUEST_CHANGES` — the adapter appends the `Reviewed-Head:` trailer; on github and gitea the verdict lands as a formal COMMENT review with that body, and only on gitlab, where it is a note, does the adapter also head it `## Adversarial review — verdict: COMMENT`, §10, §13.2, runbook §7). Docs-review fix rounds resume the *same* reviewer — its grounding context is the asset — a deliberate deviation from §3.4's fresh-reviewer rule, scoped to docs reviews only. Two human gates: the draft nod before any PR, and the `/decompose` backlog approval after merge. The spec PR's merge follows the same authority model as every other PR (§3.6, §8.2): human by default, agent only under the operator's explicit standing authorization, and then only after gating the merged result. The spec author never implements tasks — it hands the merged cutline to the decomposer and stops. Sequencing is deliberate: decomposition always runs against the **merged** spec, because review rounds change cutlines.
 
 ## 4. Task Model
 
@@ -239,14 +239,18 @@ every node plus the forge's open PRs and the PRs merged since the oldest open
 node was created (`forge.sh pr-list`), computes fix records with
 `lib/reconcile.jq`, and applies each through the backend as a compare-and-set
 against the node as the plan saw it. Records cascade, so applying stops at the
-first record not applied (exit 4: the board changed; re-run). The rules:
+first record not applied (exit 4: the board changed; re-run). The rules, numbered as
+in `lib/reconcile.jq` and evaluated in the order 3, 7, 4, 1, 2, 5, 6, 8 (a node gets at
+most one record per pass: the first rule that fires wins):
 
-1. `blocked → ready` when every dep is `done` (never while `needs_human`); `ready → blocked` when a dep is not.
-2. **Merged PR → done, on every backend and every target branch.** An agent PR linked to node X (§10 linkage), merged into X's `target_branch`, sets X to `done`. On github the backend closes the issue as completed with an `AUTO-CLOSE: PR #<pr>` comment — GitHub's closing keywords only act on PRs into the default branch. The rule acts once per (node, PR): a PR already applied (recorded by that marker, or GitHub's own closing-keyword close) is skipped, so a human reopen is never overridden by the same merge; a newer merged PR still closes it.
-3. **Open PR → in-review.** An open agent PR linked to a `claimed` node, or to a `ready`/`blocked` task or promote node (status drift), sets it `in-review`. This is applied before the deps rules, so an open PR outranks them.
-4. **Stale claims** (§5.2).
-5. **Fully delivered epics.** An open epic is a tracker: once it has ≥ 1 child and every child is `done` or `cancelled`, it is set `done` (closed on github). The `≥ 1` guard keeps a freshly created epic whose tasks are not filed yet from closing itself vacuously.
-6. **Warnings, never mutations**, on stderr: a dep that is cancelled or unknown, and one `cycle: <id> → … → <id>` per dependency cycle.
+1. `blocked → ready` when every dep is `done` (never while `needs_human`).
+2. `ready → blocked` when a dep is not `done`.
+3. **Merged PR → done, on every backend and every target branch.** An agent PR linked to node X (§10 linkage), merged into X's `target_branch` (a promote node's: its `promote_to`), sets X to `done`; a PR merged into any other base does not. On github the backend closes the issue as completed with an `AUTO-CLOSE: PR #<pr>` comment — GitHub's closing keywords only act on PRs into the default branch. The rule acts once per (node, PR): a PR already applied (recorded by that marker, or GitHub's own closing-keyword close) is skipped, so a human reopen is never overridden by the same merge; a newer merged PR still closes it.
+4. **Open PR → in-review.** An open agent PR linked to a `claimed` node, or to a `ready`/`blocked` task or promote node (status drift), sets it `in-review`. This is applied before rules 1 and 2, so an open PR outranks them.
+5. **Stale agent claims** (§5.2): an agent claim with no open PR for the node, untouched for > 4h and not `needs_human`, is released to `ready`.
+6. **Stale human claims** (§5.2): a human claim untouched for > 72h gets one ping; it is never released.
+7. **Fully delivered epics.** An open epic is a tracker: once it has ≥ 1 child and every child is `done` or `cancelled`, it is set `done` (closed on github). The `≥ 1` guard keeps a freshly created epic whose tasks are not filed yet from closing itself vacuously.
+8. **Warnings, never mutations**, on stderr: a dep that is cancelled or unknown, and one `cycle: <id> → … → <id>` per dependency cycle.
 
 ### 5.2 Claims: human vs agent, and staleness
 
@@ -281,7 +285,7 @@ The review/patch loop: reviewer executes criteria on the head and the gate on th
 
 The `deliver-task` skill runs this whole implement → review → patch sequence for a single task in one invocation — the Level-0 counterpart to the loop. The reviewer is always spawned as a fresh agent, so review independence (§3.4) holds by construction; the loop (`delivery-tick`) instead spreads the same roles across ticks so it stays crash-recoverable and replans from the graph each tick.
 
-A merge (human, or `tick-merge.sh` under auto-merge) is turned into `done` by the next reconcile (§5.1 rule 2), which also promotes any dependents whose last dependency just finished.
+A merge (human, or `tick-merge.sh` under auto-merge) is turned into `done` by the next reconcile (§5.1 rule 3), which also promotes any dependents whose last dependency just finished.
 
 ## 7. Queue Mechanics (deterministic scripts)
 
@@ -533,9 +537,9 @@ authoritative contract.
 
 ## 17. Branch flow & promotion
 
-* **Targets.** Every node has a `target_branch`, default `BASE_BRANCH`; a plan file sets it for its nodes (§18). `task-worktree.sh` forks from `origin/<target_branch>`, task PRs are created with `--base <target_branch>`, and implementers and patchers catch up with a moved target branch by **merging** it into the task branch — never rebasing, never force-pushing. Reconcile closes a task when its PR merges into its own `target_branch`, whichever branch that is (§5.1 rule 2).
+* **Targets.** Every node has a `target_branch`, default `BASE_BRANCH`; a plan file sets it for its nodes (§18). `task-worktree.sh` forks from `origin/<target_branch>`, task PRs are created with `--base <target_branch>`, and implementers and patchers catch up with a moved target branch by **merging** it into the task branch — never rebasing, never force-pushing. Reconcile closes a task when its PR merges into its own `target_branch`, whichever branch that is (§5.1 rule 3).
 * **Merge methods.** Task PRs merge with `TASK_MERGE_METHOD` (default `squash`). Promotion PRs merge with `PROMOTE_MERGE_METHOD` (default `merge`, which keeps the target branch's ancestry), so the repo must keep merge commits enabled.
-* **Promote node.** For a plan with `promote_to` set, `plan.sh apply` creates one node of kind `promote` carrying `target_branch` T and `promote_to` P, whose deps are the plan's **epics** (not its tasks, which keeps a large plan under GitHub's 50-blocker cap). Epics become `done` through reconcile (§5.1 rule 5), so the promote node becomes `ready` when every epic is delivered. `next-task` never claims it: only `task` nodes are ever ready.
+* **Promote node.** For a plan with `promote_to` set, `plan.sh apply` creates one node of kind `promote` carrying `target_branch` T and `promote_to` P, whose deps are the plan's **epics** (not its tasks, which keeps a large plan under GitHub's 50-blocker cap). Epics become `done` through reconcile (§5.1 rule 7), so the promote node becomes `ready` when every epic is delivered. `next-task` never claims it: only `task` nodes are ever ready.
 * **Promote action.** `tick-plan.sh` emits `promote` for a `ready` promote node that is not `needs-human`. The tick runs `promote.sh <id>`, a deterministic script:
   1. claim the node (actor `promote`);
   2. if `origin/P` and `origin/T` have identical trees, comment `nothing to promote`, set the node `done`, and open no PR;
