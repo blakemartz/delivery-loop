@@ -139,7 +139,7 @@
       }
     ],
     "assignees": [],
-    "body": "Delivery-Target: release/x\n\n## Context\nx\n",
+    "body": "## Context\nx\n\nDelivery-Target: release/x\n",
     "createdAt": "2026-10-01T00:00:00Z",
     "updatedAt": "2026-10-01T00:00:00Z",
     "comments": [],
@@ -169,7 +169,7 @@
       }
     ],
     "assignees": [],
-    "body": "Delivery-Target: release/missing\n\n## Context\nx\n",
+    "body": "## Context\nx\n\nDelivery-Target: release/missing\n",
     "createdAt": "2026-10-01T00:00:00Z",
     "updatedAt": "2026-10-01T00:00:00Z",
     "comments": [],

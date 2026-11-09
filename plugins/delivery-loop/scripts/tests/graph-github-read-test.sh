@@ -4,7 +4,7 @@
 # fixture), GC9, GC10, GC11, GC44 (`pinged_at` derivation), GC45 (checklist
 # normalization), GC56, GC64 and GC59 (`graph.sh` part) — §17 row B1 — plus
 # GC72's `applied_prs` derivation and GC74 (comments past gh's 100-per-issue
-# list cap) (§17 row A5b, issue #52).
+# list cap) (§17 row A5b, issue #52), and the trailer-block rule (issue #77).
 #
 # Offline: a recording gh shim (fixtures/graph-github/gh-shim.sh) sits first on
 # PATH, answering from boards in the `gh issue list --json …` shape. Runs in a
@@ -229,6 +229,64 @@ run SHIM_FX="$tmp" SHIM_BOARD=long-bb.json -- list
 expect "GC64+GC74: an issue short on both is re-read once, for both fields" \
   'log_has "gh issue view 1 --json blockedBy,comments" && [ "$(log_count "gh issue view 1 ")" = 1 ]'
 eq "GC64+GC74: both re-read fields land" '[["3","4"],[77]]' "$(node 1 '[[.deps[].id], .applied_prs]')"
+
+# --- #77: machine keys only from the trailer block; Depends-on at line start --------
+# The trailer block (§6.2) is the body's last paragraph when every line of it is
+# a trailer line (a `Delivery-*:` key line, a `Depends-on:` line or a `Part of
+# epic #E` line, at column 0). A key line anywhere else is prose: it must not
+# steal plan_ref (re-apply would duplicate), retarget the node or name its
+# promotion. `Depends-on:` is read on any line, but only at column 0: the issue
+# #77 criterion that mentioned it mid-line made the v0.1.4 queue block #77 on #1.
+mid='- [ ] verify `Depends-on: #1` handling'
+jq --arg mid "$mid" '[ .[] | select(.number == 6) ] as [$t]
+    | def t($n; $body): $t | .number = $n | .title = "trailer \($n)" | .body = $body;
+    [ t(1; "## Context\nDelivery-Plan: other/x\nDelivery-Target: main\n\n## Acceptance criteria\n- [ ] x\n\nDelivery-Target: release/x\nDelivery-Plan: v2/t1"),
+      t(2; "## Context\nDelivery-Plan: other/x\nDelivery-Target: main\n\n- [ ] x"),
+      t(3; "Delivery-Target: main\nDelivery-Plan: other/x\n\nThanks!"),
+      t(4; "x\n\nDelivery-Target: release/x\nDelivery-Plan: v2/t4\nsee above"),
+      t(5; "x\r\n\r\nDelivery-Target: release/x\r\nDepends-on: #3 (via: shared config)\r\nDelivery-Plan: v2/t5\r\nDelivery-Task: t5\r\n\r\n  \n"),
+      t(6; "Delivery-Target: release/x\nDelivery-Plan: v2/t6\nDelivery-Plan: other/x"),
+      t(7; "## Acceptance criteria\n\($mid)\n- [ ] see Depends-on: #10 too\n  Depends-on: #5\nDepends-on: #3"),
+      t(8; "Part of epic #30\n\n\($mid)"),
+      t(9; "Delivery-Promote-To: other\n\nDelivery-Target: release/x\nDelivery-Promote-To: main\nDelivery-Plan: v2/promote")
+        | .labels = [{id: "LA_promote", name: "promote", description: "", color: "EDEDED"}],
+      (t(10; "an unlabelled issue") | .labels = []) ]' \
+  "$fx/cases-issues.json" > "$tmp/trailer.json"
+run SHIM_FX="$tmp" SHIM_BOARD=trailer.json BASE_BRANCH=release/y -- list
+expect "#77: list exits 0" '[ "$rc" = 0 ]'
+tb() { node "$1" '[.target_branch, .plan_ref]'; }
+eq "#77: human Delivery-Plan / Delivery-Target lines above the trailer block: the trailer's values win" \
+  '["release/x","v2/t1"]' "$(tb 1)"
+eq "#77: key lines outside the last paragraph are prose: no trailer -> BASE_BRANCH, plan_ref null" \
+  '["release/y",null]' "$(tb 2)"
+eq "#77: a key paragraph followed by prose is not the trailer block" '["release/y",null]' "$(tb 3)"
+eq "#77: a last paragraph mixing key lines and prose is not a trailer block" '["release/y",null]' "$(tb 4)"
+eq "#77: trailer block with CRLF, a Depends-on and a Delivery-Task line, trailing blank lines" \
+  '["release/x","v2/t5"]' "$(tb 5)"
+eq "#77: … and its Depends-on line still names the edge" '[{"id":"3","via":"shared config"}]' "$(node 5 .deps)"
+eq "#77: within the block the first line of a key wins (parity with the pre-#77 read)" '["release/x","v2/t6"]' "$(tb 6)"
+eq "#77: Depends-on only at column 0: the mid-line criterion, prose and an indented line add no edge" \
+  '["3"]' "$(node 7 '[.deps[].id]')"
+eq "#77: the literal #77 criterion string adds no edge" '[]' "$(node 8 '[.deps[].id]')"
+eq "#77: … and Part of epic at line start still names the epic" '"30"' "$(node 8 .epic)"
+eq "#77: promote: Delivery-Promote-To above the trailer is prose" '["promote","release/x","main","v2/promote"]' \
+  "$(node 9 '[.kind, .target_branch, .promote_to, .plan_ref]')"
+eq "#77: an unlabelled issue named only by a mid-line Depends-on is not a referenced external" \
+  '["1","2","3","4","5","6","7","8","9"]' "$(jq -c 'map(.id) | sort_by(tonumber)' <<<"$out")"
+run SHIM_FX="$tmp" SHIM_BOARD=trailer.json BASE_BRANCH=release/y -- show 1
+eq "#77: show reads the trailer block as list does" '["release/x","v2/t1"]' "$(jq -c '[.target_branch, .plan_ref]' <<<"$out")"
+# migrate reads Depends-on / Part of epic at column 0 too: prose never becomes
+# a native edge or parent (#75 re-review: no `migrate --apply` live before #77).
+jq --arg mid "$mid" '[ .[] | select(.number == 6) ] as [$t]
+    | def t($n; $body): $t | .number = $n | .title = "m \($n)" | .body = $body | .blockedBy = {nodes: [], totalCount: 0} | .parent = null;
+    [ t(1; "## Acceptance criteria\n\($mid)\nnot Part of epic #2 yet"),
+      t(2; "Part of epic #3\nDepends-on: #1"),
+      ($t | .number = 3 | .title = "epic" | .body = "" | .labels = [{id: "LA_epic", name: "epic", description: "", color: "EDEDED"}]
+          | .blockedBy = {nodes: [], totalCount: 0} | .parent = null) ]' \
+  "$fx/cases-issues.json" > "$tmp/mig77.json"
+eq "#77: migrate-plan: a mid-line Depends-on / Part of epic plans nothing; line-start ones still migrate" \
+  '[{"id":"2","links":["1"],"parent":"3"}]' \
+  "$(jq -c -L "$lib" -L "$here/../backends" 'include "graph-github"; gh_migrate_plan | map({id, links, parent})' "$tmp/mig77.json")"
 
 # --- GC10: LIST_LIMIT -------------------------------------------------------------
 run SHIM_BOARD=gc5-issues.json LIST_LIMIT=11 -- list

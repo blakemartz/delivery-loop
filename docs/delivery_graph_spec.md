@@ -161,13 +161,13 @@ on drift).
 | `applied_prs` | [int] | PR numbers whose merge reconcile rule 3 already applied to this node (§5), ascending, deduplicated; `[]` when none. Rule 3 skips them, so a human who reopens a closed task is never overridden (GC72). github: the number right after the prefix of every `AUTO-CLOSE: PR #<n>` comment (the comment the backend writes when it applies rule 3, B2; v0.1.4's `AUTO-CLOSE: epic …` comment names no PR). github also counts a merged PR whose GitHub closing keyword (`Closes #N`, default branch only) closed the issue: GitHub writes no `AUTO-CLOSE` comment for it. B2 MUST derive that PR from evidence that survives a reopen (`closedByPullRequestsReferences`, or the issue timeline's `ClosedEvent` closer), after verifying the source against gh and live issue data (GC75); until B2 the read path derives only the comment form. The comment list is read in full: `gh issue list` returns at most 100 comments per issue, so the backend re-reads a longer thread (GC74, §6.2). local: the same, from `comment` events whose body has that prefix (C2 appends one when it applies rule 3). Required on every node; `validate_node` rejects anything but an array of positive integers. |
 | `module` | string \| null | from `module:<m>`. |
 | `size` | `S` \| `M` \| `L` \| null | |
-| `deps` | `[{id, via}]` | blocking edges. `via` is a string, or null for legacy edges. github: union of native `blockedBy.nodes[].number` and legacy `Depends-on:` lines, deduplicated (GC11). |
+| `deps` | `[{id, via}]` | blocking edges. `via` is a string, or null for legacy edges. github: union of native `blockedBy.nodes[].number` and legacy `Depends-on:` lines, deduplicated (GC11). A `Depends-on:` line counts only when it starts at column 0: a mention mid-line (prose such as a criterion quoting the convention) adds no edge (§6.2 trailer block). |
 | `status` | `blocked` \| `ready` \| `claimed` \| `in-review` \| `changes-requested` \| `approved` \| `done` \| `cancelled` | github: `done`/`cancelled` come from `state` + `stateReason` (`COMPLETED` → done; `NOT_PLANNED`/`DUPLICATE` → cancelled). Other statuses come from labels, a cache that reconcile repairs. |
 | `needs_human` | bool | orthogonal flag (the design spec's "any → needs-human"). |
 | `claim` | `{actor, run, at, by: "agent"\|"human"}` \| null | github: derived from assignee + `claim:agent` + the winning `CLAIM` comment. |
-| `target_branch` | string | the plan's target. Default `BASE_BRANCH`. github: from a `Delivery-Target: <branch>` body line. |
-| `promote_to` | string \| null | promote nodes only. github: from a `Delivery-Promote-To: <branch>` body line, which `plan.sh apply` writes (§8.3, §9). |
-| `plan_ref` | string \| null | `<plan>/<plan-task-id>`, the idempotency key for `plan.sh apply` (§8.3). |
+| `target_branch` | string | the plan's target. Default `BASE_BRANCH`. github: from the `Delivery-Target: <branch>` line of the body's trailer block (§6.2); a key line anywhere else in the body is prose. |
+| `promote_to` | string \| null | promote nodes only. github: from the `Delivery-Promote-To: <branch>` line of the body's trailer block (§6.2), which `plan.sh apply` writes through `create` (§8.3, §9). |
+| `plan_ref` | string \| null | `<plan>/<plan-task-id>`, the idempotency key for `plan.sh apply` (§8.3). github: from the `Delivery-Plan: <ref>` line of the body's trailer block (§6.2), so a human body edit cannot steal it. |
 | `body` | string | markdown: Context + Acceptance criteria (the task contract). |
 | `created_at`, `updated_at` | ISO-8601 | |
 
@@ -474,18 +474,49 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
   more entries with `gh issue view <n> --json comments`, which pages them all, so
   `applied_prs`, `pinged_at` and the claim never silently truncate (§2 exception 2,
   GC74). An issue short on both `blockedBy` and `comments` is re-read once for both.
+- **Trailer block.** The machine keys `Delivery-Target:`, `Delivery-Plan:`,
+  `Delivery-Promote-To:` and `Delivery-Task:` are read **only** from the body's
+  trailer block. That block is the body's last paragraph: the lines after the
+  last blank (empty or whitespace-only) line, ignoring trailing blank lines and
+  `\r`. It is a trailer block only when every one of its lines is a trailer
+  line, at column 0:
+  - a key line, `<Key>: <value>` with a non-empty value;
+  - a `Depends-on:` line;
+  - a `Part of epic #E` line.
+
+  Otherwise the body has no trailer block, and every key takes its default
+  (`target_branch` = `BASE_BRANCH`, the others null). Within the block the first
+  line of a key wins, and its value is the first whitespace-delimited token. A
+  key line anywhere else in the body is prose. That is what keeps a human body
+  edit from stealing `plan_ref` (a re-apply would then duplicate the node),
+  retargeting the node, or naming its promotion. `create` always writes the
+  block, and `link` appends its `Depends-on:` lines to it (below). Bodies
+  written by v0.1.4 and earlier v0.2 creates put their key lines last, so they
+  read unchanged. `Depends-on:` and `Part of epic #E` remain human-authored
+  body conventions, read on any line but only at column 0: a mid-line mention
+  adds no edge and gives `migrate` no parent. The `epic` field's `[Ee]pic #E`
+  body fallback keeps v0.1.4's match anywhere (§4.1); it orders nodes and adds
+  no edge.
 - **Claims are unchanged.** The comment-ordered Lamport lock (`lib/claim-winner.jq`,
   `lib/orphan-claims.jq`) is reused as is; GitHub offers no compare-and-set on
   assignment.
 - **Writes:**
-  - `create` uses `gh issue create --blocked-by … --parent …` plus labels and the
-    `Delivery-Target:` / `Delivery-Plan:` / `Delivery-Promote-To:` body lines (the
-    last on promote nodes only). It never creates `external` nodes.
+  - `create` uses `gh issue create --blocked-by … --parent …` plus labels. It
+    always ends the body with its own trailer block, after a blank line, even
+    when the contract already carries those keys: `Delivery-Target:` (always;
+    `BASE_BRANCH` when unset, so the block is never empty), `Delivery-Plan:`,
+    `Delivery-Promote-To:` (promote nodes only), then any text edges. It never
+    creates `external` nodes.
+  - `link` with a `via`, or on a gh without native relations, records a
+    `Depends-on: #<dep> (via: …)` line: in place if the body already has that
+    dep's line, else directly below the body's last non-blank line, so it joins
+    the trailer block.
   - status changes are label edits, as today.
   - `done`/`cancelled` are issue close with `--reason completed|"not planned"`.
 - **`graph.sh migrate`** is idempotent. For every open task, it adds a native
   blocked-by for each legacy `Depends-on:` ref and sets the native parent from
-  `Part of epic #E`. Text lines are left in place (GC48).
+  `Part of epic #E`, both read at column 0 only (trailer block, above). Text
+  lines are left in place (GC48).
   - It refuses to exceed 50 blockers per issue: it prints the offender and exits 1.
     The cap is from GitHub's changelog of 2025-08-21: "You can link up to 50 issues
     for each relationship type". It is not in the REST reference, so it is enforced

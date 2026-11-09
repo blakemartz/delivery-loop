@@ -446,7 +446,34 @@ for bad in '{"kind":"external","title":"x"}' '{"id":"9","kind":"task","title":"x
   expect "create refuses $bad (exit 1, no gh issue create)" '[ "$rc" = 1 ] && ! log_has "issue create"'
 done
 run SHIM_GH_VERSION=2.90.0 -- "$graph" create '{"kind":"task","title":"old gh","epic":"1","deps":["2"]}'
-eq "create on gh < 2.94: text edges instead of native flags" '"Part of epic #1\nDepends-on: #2"' "$(issue "$out" .body)"
+eq "create on gh < 2.94: text edges instead of native flags (after the always-written Delivery-Target)" \
+  '"Delivery-Target: main\nPart of epic #1\nDepends-on: #2"' "$(issue "$out" .body)"
+# #77: create always writes its own trailer block, after a blank line, even when
+# the contract carries those keys; the read takes the trailer's values (a key
+# line in the contract is prose, so it can't steal plan_ref or retarget).
+contract=$'## Context\nDelivery-Plan: other/zzz\nDelivery-Target: main\n\nDelivery-Promote-To: other'
+nodejson=$(jq -cn --arg b "$contract" '{kind: "promote", title: "keys in the contract", body: $b,
+  target_branch: "release/x", plan_ref: "p/t2", promote_to: "main"}')
+g -- create "$nodejson"
+eq "#77 create: the trailer block is appended whole even when the contract has those keys" \
+  "$(jq -c --arg b "$contract" -n '$b + "\n\nDelivery-Target: release/x\nDelivery-Plan: p/t2\nDelivery-Promote-To: main"')" \
+  "$(issue "$out" .body)"
+g -- show "$out"
+eq "#77 round trip: the node reads back the trailer's values" '["release/x","p/t2","main"]' \
+  "$(jq -c '[.target_branch, .plan_ref, .promote_to]' <<<"$out")"
+g -- create "$(jq -cn '{kind: "task", title: "no keys", body: "x\n\nDelivery-Plan: other/zzz\n\n"}')"
+n77=$out
+eq "#77 create with no keys set: Delivery-Target: BASE_BRANCH, so the contract's last paragraph is never the trailer" \
+  '"x\n\nDelivery-Plan: other/zzz\n\nDelivery-Target: main"' "$(issue "$n77" .body)"
+g -- show "$n77"
+eq "#77 round trip: plan_ref stays null" '["main",null]' "$(jq -c '[.target_branch, .plan_ref]' <<<"$out")"
+jq --argjson n "$n77" 'map(if .number == $n then .body += "\n\n" else . end)' "$st/board.json" > "$st/b" && mv "$st/b" "$st/board.json"
+g -- link "$n77" 2 "lib/x.jq"
+eq "#77 link: a via line joins the trailer block (trailing blank lines dropped)" \
+  '"x\n\nDelivery-Plan: other/zzz\n\nDelivery-Target: main\nDepends-on: #2 (via: lib/x.jq)"' "$(issue "$n77" .body)"
+g -- show "$n77"
+eq "#77 link: the trailer still reads (target kept, edge with its via)" '["main",null,[{"id":"2","via":"lib/x.jq"}]]' \
+  "$(jq -c '[.target_branch, .plan_ref, .deps]' <<<"$out")"
 
 g -- update 4 '{"status":"ready","module":"forge","size":"S","needs_human":true,"title":"renamed"}'
 eq "update: labels swapped in one edit (module/size replace every other module:/size: label)" \

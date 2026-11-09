@@ -78,7 +78,23 @@
 #               target_branch is BASE_BRANCH.
 #   target_branch / plan_ref / promote_to
 #               the `Delivery-Target:` / `Delivery-Plan:` / `Delivery-Promote-To:`
-#               body lines (promote_to on promote nodes only).
+#               lines of the body's trailer block (promote_to on promote nodes
+#               only); a key line anywhere else in the body is prose (#77).
+#
+# The trailer block (§6.2) is the body's last paragraph: the lines after the
+# last blank (empty or whitespace-only) line, trailing blank lines ignored,
+# when every one of them is a trailer line — a machine key line
+# (`Delivery-Target:` / `Delivery-Plan:` / `Delivery-Promote-To:` /
+# `Delivery-Task:` followed by a value), a `Depends-on:` line, or a `Part of
+# epic #E` line, each at column 0. Otherwise the body has no trailer block. It
+# is where `create` writes its key lines (always, after a blank line) and where
+# `link` appends `Depends-on:` lines, so bodies written by v0.1.4 and B2 (key
+# lines last) read as before. Within the block the first line of a key wins.
+# Machine keys are read from the block only. `Depends-on:` and `Part of epic`
+# stay human-authored body conventions read on any line, but only at column 0,
+# so prose that mentions them mid-line adds no edge and no migrate parent. (The
+# `epic` field's `[Ee]pic #E` body fallback keeps v0.1.4's match anywhere, §4.1:
+# it orders, it adds no edge.)
 #
 # Line-oriented matches split the body on "\n" first: jq's Oniguruma `^`/`$` do
 # not reliably anchor at line boundaries.
@@ -93,9 +109,24 @@ def _lines: (.body // "") | split("\n") | map(rtrimstr("\r"));
 # Ordered dedupe: first occurrence wins.
 def _uniq: reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end);
 
-# The value of the first `<key>: <value>` body line (one token), or null.
+def _is_blank: test("^[ \t]*$");
+
+def _is_trailer_line:
+  test("^(Delivery-Target|Delivery-Plan|Delivery-Promote-To|Delivery-Task):[ \t]*[^ \t]")
+  or startswith("Depends-on:")
+  or test("^Part of [Ee]pic #[0-9]+[ \t]*$");
+
+# The body's trailer block (see the header), as lines; [] when it has none.
+def _trailer_block:
+  _lines
+  | until(length == 0 or (.[-1] | _is_blank | not); .[:-1])
+  | (([ to_entries[] | select(.value | _is_blank) | .key ] | last) // -1) as $b
+  | .[$b + 1:]
+  | if length > 0 and all(.[]; _is_trailer_line) then . else [] end;
+
+# The value of the trailer block's first `<key>: <value>` line (one token), or null.
 def _trailer($key):
-  [ _lines[] | capture("^" + $key + ":[ \t]*(?<v>[^ \t]+)") | .v ] | first // null;
+  [ _trailer_block[] | capture("^" + $key + ":[ \t]*(?<v>[^ \t]+)") | .v ] | first // null;
 
 def gh_kind:
   if _has_label("task") then "task"
@@ -110,11 +141,12 @@ def gh_epic:
 def gh_checklist:
   [ _lines[] | capture("^[ \t]*[-*] \\[[ xX]\\][ \t]*#(?<n>[0-9]+)") | .n ] | _uniq;
 
-# Legacy text edges: every `#N` on a `Depends-on:` line (v0.1.4 scanned the rest
-# of each line), minus a trailing `(via: …)` annotation, which names the edge.
+# Legacy text edges: every `#N` on a line that starts `Depends-on:` (v0.1.4
+# scanned the rest of each line), minus a trailing `(via: …)` annotation, which
+# names the edge. Unlike v0.1.4, a mid-line `Depends-on:` is prose, not an edge.
 def _text_edges:
   [ _lines[]
-    | capture("Depends-on:(?<rest>.*)").rest
+    | capture("^Depends-on:(?<rest>.*)").rest
     | ([ capture("[(]via:[ \t]*(?<v>.*[^ \t])[ \t]*[)][ \t]*$") | .v ] | first // null) as $via
     | sub("[(]via:.*$"; "")
     | scan("#([0-9]+)") | {id: .[0], via: $via} ];
@@ -317,8 +349,10 @@ def gh_label_plan($p):
 
 # gh_link_body($dep; $via) — input: a raw issue. Its body with the text edge
 # `Depends-on: #<dep> (via: <via>)` recorded: a single-dep `Depends-on: #<dep>`
-# line is rewritten in place (its via replaced), else the line is appended.
-# Line endings are normalized to "\n".
+# line is rewritten in place (its via replaced), else the line is appended
+# directly below the last non-blank line, so it joins the trailer block (§6.2)
+# rather than starting a paragraph of its own. Line endings are normalized to
+# "\n".
 def gh_link_body($dep; $via):
   ("Depends-on: #" + $dep + (if $via == null then "" else " (via: " + $via + ")" end)) as $line
   | _lines as $ls
@@ -326,7 +360,7 @@ def gh_link_body($dep; $via):
        | select(.value | test("^Depends-on:[ \t]*#" + $dep + "[ \t]*([(]via:.*[)])?[ \t]*$"))
        | .key ] | first // null) as $at
   | if $at != null then $ls | .[$at] = $line | join("\n")
-    else ($ls | join("\n") | rtrimstr("\n")) as $b
+    else ($ls | until(length == 0 or (.[-1] | _is_blank | not); .[:-1]) | join("\n")) as $b
          | (if $b == "" then $line else $b + "\n" + $line end) end;
 
 # gh_has_text_edge($dep; $via) — the body already records the edge to $dep
@@ -336,17 +370,19 @@ def gh_has_text_edge($dep; $via):
 
 # --- migrate (task B3) ------------------------------------------------------------
 
-# The epic of a `Part of epic #E` body line (§6.2: the legacy parent), or null.
+# The epic of a line that starts `Part of epic #E` (§6.2: the legacy parent), or
+# null. Mid-line prose ("not Part of epic #3") names no parent.
 def _gh_part_of_epic:
-  [ _lines[] | capture("Part of [Ee]pic #(?<e>[0-9]+)") | .e ] | first // null;
+  [ _lines[] | capture("^Part of [Ee]pic #(?<e>[0-9]+)") | .e ] | first // null;
 
-# The `Depends-on:` refs as migrate reads them: like _text_edges (via dropped),
-# but a ref with an `owner/repo` prefix is kept apart as cross-repo, {repo, id},
-# so migrate never turns `other/repo#5` into a local native edge. (_text_edges
-# itself keeps v0.1.4's reading, so `list` is unchanged.)
+# The `Depends-on:` refs as migrate reads them: like _text_edges (line start
+# only, via dropped), but a ref with an `owner/repo` prefix is kept apart as
+# cross-repo, {repo, id}, so migrate never turns `other/repo#5` into a local
+# native edge. (_text_edges itself keeps v0.1.4's `#N` scan, so `list` reads
+# `other/repo#5` as #5.)
 def _gh_dep_refs:
   [ _lines[]
-    | capture("Depends-on:(?<rest>.*)").rest
+    | capture("^Depends-on:(?<rest>.*)").rest
     | sub("[(]via:.*$"; "")
     | scan("([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#([0-9]+)") | {repo: .[0], id: .[1]} ];
 
