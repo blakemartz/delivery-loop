@@ -776,13 +776,14 @@ op_comment() {
 # The record checks that need no store: shape, op, a ping moves nothing.
 GL_RECORD='
   def str: type == "string" and length > 0;
-  if (keys - ["op", "id", "from", "to", "reason", "updated_at"] | length) > 0
-  then error("record: unexpected field(s) \(keys - ["op", "id", "from", "to", "reason", "updated_at"] | join(", "))")
+  if (keys - ["op", "id", "from", "to", "reason", "updated_at", "pr"] | length) > 0
+  then error("record: unexpected field(s) \(keys - ["op", "id", "from", "to", "reason", "updated_at", "pr"] | join(", "))")
   elif ([.op, .id, .from, .to, .reason, .updated_at] | all(str) | not)
   then error("record: op, id, from, to, reason and updated_at must be non-empty strings")
   elif (.op as $op | ["transition", "reclaim", "ping"] | index($op)) == null
   then error("record: unknown op \(.op | tojson) (transition|reclaim|ping)")
   elif .op == "ping" and .from != .to then error("record: a ping moves nothing (from must equal to)")
+  elif (.pr | . == null or type == "number" | not) then error("record: pr must be null or a number")
   else . end'
 
 # gl_autoclose_marker <record-file> <node-json>: the §5 rule-3 evidence comment
