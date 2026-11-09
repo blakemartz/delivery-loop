@@ -100,11 +100,40 @@ fi
 eq "cycles names the GC6 cycle" '[["gc6-a","gc6-b","gc6-a"]]' \
   "$(jq -c -L "$lib" 'include "graph"; cycles' "$fx/gc6.json")"
 
-eq "cycles: self-loop and two cycles sharing a node, each once" \
-  '[["a","a"],["a","b","a"],["a","b","c","a"]]' \
+# One SCC {a,b,c} holding three cycles (a self-loop, a->b->a, a->b->c->a):
+# one representative, the shortest through the smallest id, plus the members.
+eq "cycles: one SCC holding three cycles -> one cycle, the shortest via its smallest id" \
+  '[["a","a"]]' \
   "$(jq -c -n -L "$lib" 'include "graph";
       [{id:"a",deps:[{id:"a"},{id:"b"}]},{id:"b",deps:[{id:"a"},{id:"c"}]},
        {id:"c",deps:[{id:"a"},{id:"zz"}]}] | cycles')"
+eq "cycle_report: the SCC's members ride along; total counts the SCCs" \
+  '{"sccs":[{"members":["a","b","c"],"cycle":["a","b","a"]}],"total":1}' \
+  "$(jq -c -n -L "$lib" 'include "graph";
+      [{id:"a",deps:[{id:"b"}]},{id:"b",deps:[{id:"a"},{id:"c"}]},
+       {id:"c",deps:[{id:"a"}]}] | cycle_report')"
+eq "cycles: two disjoint SCCs and a self-loop -> one cycle each, by smallest id" \
+  '[["1","2","1"],["3","4","5","3"],["q","q"]]' \
+  "$(jq -c -n -L "$lib" 'include "graph";
+      [{id:"q",deps:[{id:"q"},{id:"5"}]},{id:"5",deps:[{id:"3"}]},{id:"4",deps:[{id:"5"}]},
+       {id:"3",deps:[{id:"4"},{id:"1"}]},{id:"2",deps:[{id:"1"}]},{id:"1",deps:[{id:"2"}]}] | cycles')"
+eq "cycles: every cycle is a valid id path (each hop is a dep edge)" true \
+  "$(jq -n -L "$lib" 'include "graph";
+      [{id:"q",deps:[{id:"q"},{id:"5"}]},{id:"5",deps:[{id:"3"}]},{id:"4",deps:[{id:"5"}]},
+       {id:"3",deps:[{id:"4"},{id:"1"}]},{id:"2",deps:[{id:"1"}]},{id:"1",deps:[{id:"2"}]}]
+      | index_by_id as $idx
+      | all(cycles[]; . as $c | .[0] == .[-1]
+            and all(range(0; length - 1); $c[. + 1] as $w | any($idx[$c[.]].deps[]; .id == $w)))')"
+eq "cycle_text: names the members only when the cycle misses some" \
+  '["a -> b -> a (SCC: a, b, c)","x -> y -> x"]' \
+  "$(jq -c -n -L "$lib" 'include "graph";
+      [{id:"a",deps:[{id:"b"}]},{id:"b",deps:[{id:"a"},{id:"c"}]},{id:"c",deps:[{id:"a"}]},
+       {id:"x",deps:[{id:"y"}]},{id:"y",deps:[{id:"x"}]}] | [cycle_text(" -> ")]')"
+eq "cycle_report: capped at cycle_cap SCCs; cycle_text counts the rest" \
+  '[20,25,"5 more cyclic SCCs not listed (cap 20)"]' \
+  "$(jq -c -n -L "$lib" 'include "graph";
+      [range(0; 25) as $i | {id: "s\($i)", deps: [{id: "s\($i)"}]}]
+      | [(cycle_report | (.sccs | length), .total), ([cycle_text(" -> ")] | last)]')"
 
 eq "cycles: acyclic graph (unknown dep included) -> []" '[]' \
   "$(jq -c -L "$lib" 'include "graph"; cycles' "$fx/gc7.json")"
@@ -142,6 +171,16 @@ jq -n '[foreach range(1; 1001) as $i ({x: 1}; .x = ((.x * 75 + 74) % 65537);
 eq "random board has its edges (guards the generator)" true \
   "$(jq '[.[].deps | length] | add > 1000' "$tmp/board.json")"
 timed_cycles "cycles: random acyclic 1000-issue board" "$tmp/board.json"
+# Regression (issue #64): the old walk enumerated every simple cycle, so a fully
+# cyclic 9-task graph printed 125,664 cycles in 9.5s and 10+ tasks hung. Now a
+# dense SCC costs O(V + E): 30 nodes, each depending on all 29 others.
+jq -n '[range(1; 31) as $i | {id: "\($i)", deps: [range(1; 31) | select(. != $i) | {id: "\(.)"}]}]' \
+  >"$tmp/dense.json"
+start=$SECONDS
+got=$(jq -c -L "$lib" 'include "graph"; cycles' "$tmp/dense.json")
+eq "cycles: fully connected 30-node graph -> exactly one SCC cycle" '[["1","2","1"]]' "$got"
+if [ $((SECONDS - start)) -lt 2 ]; then pass "cycles: fully connected 30-node graph finishes under 2s"
+else fail "cycles: fully connected 30-node graph finishes under 2s" "took $((SECONDS - start))s"; fi
 eq "cycles: one 2-cycle added to the 1000-issue board is found alone" '[["1000","2000","1000"]]' \
   "$(jq -c -L "$lib" 'include "graph";
       map(if .id == "1000" then .deps += [{id: "2000"}] else . end)

@@ -44,7 +44,8 @@
 #   6. human claim on an open node, now - updated_at > 72h, pinged_at null ->
 #      one ping; human claims are never released (GC44).
 #   8. warnings: `blocked on cancelled dep`, `unknown dep` (open nodes), and
-#      `cycle: a → … → a` (graph.jq cycles).
+#      `cycle: a → … → a`, one per strongly connected component, naming the
+#      SCC's members when the cycle misses some (graph.jq cycle_text).
 # Rules 1-7 act on task, epic and promote nodes only (_subjects): an `external`
 # node (§4.1) gets no record of any rule, filtered here rather than left for the
 # transition table to reject, so a board with externals prints no "skipped"
@@ -189,7 +190,7 @@ def _rule8:
        | if $idx[.] == null then "\($id): unknown dep \(.)"
          elif $idx[.].status == "cancelled" then "\($id): blocked on cancelled dep \(.)"
          else empty end),
-      ($all | cycles[] | "cycle: \(join(" → "))") ];
+      ($all | cycle_text(" → ") | "cycle: \(.)") ];
 
 def reconcile_plan:
   if (.now | type) != "number" then error("reconcile: `now` must be epoch seconds (got \(.now | tojson))")

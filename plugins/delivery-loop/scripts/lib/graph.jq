@@ -14,9 +14,13 @@
 #   deps_done($idx) — every dep of the input node exists and is done (a
 #                     cancelled or unknown dep never counts, GC2/GC7).
 #   id_key          — sort key for one id: numeric ids by value, then slugs.
-#   cycles          — every simple cycle over the `deps` edges, each an id path
-#                     [a, b, …, a] that starts and ends at its smallest id
-#                     (id_key order). Near-linear on acyclic graphs.
+#   cycle_report    — {sccs: [{members, cycle}], total}: one representative
+#                     cycle per non-trivial strongly connected component of the
+#                     `deps` edges, capped at cycle_cap SCCs. O(V + E).
+#   cycles          — those cycles alone, each an id path [a, b, …, a] that
+#                     starts and ends at its SCC's smallest id (id_key order).
+#   cycle_text($arrow) — the report as lines for a diagnostic: each cycle, plus
+#                     the SCC members it misses, plus a line for any overflow.
 #   iso_epoch       — seconds since the epoch for one ISO-8601 timestamp.
 #
 # Usage: jq -L scripts/lib 'include "graph"; cycles' nodes.json
@@ -86,48 +90,60 @@ def _sccs($adj):
     end)
   | .sccs;
 
-# _reaching($s; $radj; $ok) — the ids in object $ok that reach $s through ids
-# in $ok, $s included: a breadth-first walk of the reversed edges $radj.
-def _reaching($s; $radj; $ok):
-  {seen: {($s): true}, todo: [$s]}
-  | until(.todo == [];
-      .todo[0] as $v
-      | .todo |= .[1:]
-      | reduce ($radj[$v] // [] | .[] | select($ok[.] and true)) as $u (.;
-          if .seen[$u] then . else .seen[$u] = true | .todo += [$u] end))
-  | .seen;
+# _scc_cycle($adj; $in) — the input id $s is the smallest member of a
+# non-trivial SCC whose members are the keys of $in. A shortest cycle through
+# $s inside the SCC, as [$s, …, $s]: a breadth-first walk from $s over the
+# SCC's edges in $adj order, stopping at the first id with an edge back to $s.
+# O(V + E) of the SCC; the queue is read by index, never sliced.
+def _scc_cycle($adj; $in):
+  . as $s
+  | {parent: {}, seen: {($s): true}, todo: [$s], head: 0, found: null}
+  | until(.found != null;
+      .todo[.head] as $v
+      | .head += 1
+      | if any($adj[$v][]; . == $s) then .found = $v
+        else reduce ($adj[$v][] | select($in[.] and true)) as $w (.;
+          if .seen[$w] then . else .seen[$w] = true | .parent[$w] = $v | .todo += [$w] end)
+        end)
+  | .parent as $parent
+  | [.found | recurse(if . == $s then empty else $parent[.] end)] | reverse + [$s];
 
-# Every simple cycle, each exactly once as an id path [a, b, …, a] rooted at its
-# smallest id (id_key order). Johnson-style restriction:
-#   1. Tarjan SCCs: a cycle lies inside one SCC, so only non-trivial SCCs (more
-#      than one node, or a self-loop) are searched. An acyclic graph stops here,
-#      in O(V + E).
-#   2. Within an SCC, the walk from root $s visits only ids ranked above $s
-#      that can still reach $s through such ids (reverse reachability), so
-#      every branch the walk takes can close a cycle back to $s.
-# Unlike Johnson's blocked sets, a branch can still dead-end when its only way
-# back runs through the current path, so a dense SCC can cost more than the
-# cycles it holds; a backlog's SCCs are what lint reports, and stay tiny.
-def cycles:
+# cycle_cap — the most cyclic SCCs cycle_report lists; the rest are counted.
+def cycle_cap: 20;
+
+# cycle_report — {sccs: [{members, cycle}], total}: one entry per non-trivial
+# SCC (more than one node, or a self-loop), at most cycle_cap of them, ordered
+# by their smallest id; `total` counts every such SCC. `members` is the SCC in
+# id_key order; `cycle` is a shortest cycle through its smallest id (see
+# _scc_cycle). Reusing the Tarjan pass keeps the cost O(V + E) on any graph:
+# §5 needs every cycle reported, not every cycle enumerated (a dense SCC holds
+# exponentially many).
+def cycle_report:
   _dep_adj as $adj
-  | (reduce ($adj | to_entries[]) as $e ({}; reduce $e.value[] as $w (.; .[$w] += [$e.key])))
-    as $radj
   | [ _sccs($adj)[]
       | select(length > 1 or (.[0] as $v | any($adj[$v][]; . == $v)))
-      | sort_by(id_key) ] as $comps
-  | [ $comps[]
-      | . as $comp
-      | range(0; length) as $r
-      | $comp[$r] as $s
-      | (reduce $comp[$r:][] as $c ({}; .[$c] = true)) as $above
-      | _reaching($s; $radj; $above) as $live
-      | def _walk($path; $on):
-          $adj[$path[-1]][] as $w
-          | if $w == $s then $path + [$s]
-            elif $live[$w] and ($on[$w] | not) then _walk($path + [$w]; $on + {($w): true})
-            else empty end;
-        _walk([$s]; {($s): true}) ]
-  | sort_by(map(id_key));
+      | sort_by(id_key) ]
+  | sort_by(.[0] | id_key)
+  | { sccs: [ .[:cycle_cap][]
+              | . as $m
+              | {members: $m,
+                 cycle: ($m[0] | _scc_cycle($adj; reduce $m[] as $c ({}; .[$c] = true)))} ],
+      total: length };
+
+# cycles — the cycle_report cycles alone: one id path per listed SCC.
+def cycles: cycle_report | [.sccs[].cycle];
+
+# cycle_text($arrow) — one line per listed SCC naming its cycle, joined by
+# $arrow, plus the SCC's members when the cycle does not visit them all; then
+# one line counting the SCCs past cycle_cap, if any. Callers prefix the lines.
+def cycle_text($arrow):
+  cycle_report
+  | (.sccs[]
+     | (.cycle | join($arrow))
+       + (if (.cycle | length) - 1 < (.members | length)
+          then " (SCC: \(.members | join(", ")))" else "" end)),
+    (if .total > (.sccs | length)
+     then "\(.total - (.sccs | length)) more cyclic SCCs not listed (cap \(cycle_cap))" else empty end);
 
 # jq's fromdateiso8601 parses only "…:SSZ". The node and PR shapes (shape.jq
 # is_iso8601) also admit fractional seconds and a ±hh:mm offset, so normalize
