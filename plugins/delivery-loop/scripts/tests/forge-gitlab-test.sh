@@ -128,10 +128,28 @@ got=$(gljq -r 'include "forge-gitlab"; gl_checks' <<<'{"sha":"a","head_pipeline"
 rc=0; out="$got"; err=""
 expect "GC28: a successful pipeline for another commit is pending, never success" '[ "$got" = pending ]'
 # GC28: merged-results / merge-train pipelines run on a synthetic merge commit
-# (sha != MR head), so their status maps as is (§7.3); the stale-sha guard holds
-# only for branch pipelines (source branch or refs/merge-requests/<iid>/head).
-expect "GC28: merged-results success (ref …/211/merge, sha != head) -> success (211)" '[ "$(jq -s -r ".[10].checks" "$tmp/gc28.jsonl")" = success ]'
-expect "GC28: merged-results failed (ref …/212/merge, sha != head) -> failure (212)" '[ "$(jq -s -r ".[11].checks" "$tmp/gc28.jsonl")" = failure ]'
+# (sha != MR head). A merged-results status counts only when the MR head is a
+# parent of that commit (GitLab's head_pipeline is not head-checked); a train's
+# maps as is (§7.3); the stale-sha guard holds for branch pipelines (source
+# branch or refs/merge-requests/<iid>/head).
+expect "GC28: merged-results success, head a parent of its commit -> success (211)" '[ "$(jq -s -r ".[10].checks" "$tmp/gc28.jsonl")" = success ]'
+expect "GC28: merged-results failed, head a parent of its commit -> failure (212)" '[ "$(jq -s -r ".[11].checks" "$tmp/gc28.jsonl")" = failure ]'
+expect "GC28: the merged-results commit is read for its parent_ids (211)" \
+  'log_line "GET $R/repository/commits/$(jq -r ".[\"211\"].head_pipeline.sha" "$fx/mrs.json") token=$TOKEN"'
+expect "GC28: no commit read for a branch or train pipeline (201, 213, 214)" \
+  '[ "$(log_count "repository/commits/")" = 2 ]'
+reset
+run -- pr-view 215
+expect "GC28: a previous head's merged-results success (head not a parent) -> pending (215)" '[ "$rc" = 0 ] && jq_true ".checks == \"pending\"" && log_has "repository/commits/"'
+reset
+run -- pr-view 216
+expect "GC28: merged-results commit unreadable (404) -> pending, not a failure of pr-view (216)" '[ "$rc" = 0 ] && jq_true ".checks == \"pending\""'
+for c in '["x","a"]:success' '["x","y"]:pending' 'null:pending' '[]:pending'; do
+  pa="${c%%:*}"; want="${c#*:}"
+  got=$(gljq -r --argjson pa "$pa" 'include "forge-gitlab"; {iid: 7, sha: "a", head_pipeline: {sha: "m", ref: "refs/merge-requests/7/merge", status: "success"}} | gl_checks($pa)' <<<null)
+  rc=0; out="$got"; err=""
+  expect "GC28: merged-results success with parent_ids $pa -> $want" '[ "$got" = "$want" ]'
+done
 expect "GC28: merge-train success (ref …/213/train, sha != head) -> success (213)" '[ "$(jq -s -r ".[12].checks" "$tmp/gc28.jsonl")" = success ]'
 expect "GC28: a stale branch pipeline (ref = source branch, sha != head) -> pending (214)" '[ "$(jq -s -r ".[13].checks" "$tmp/gc28.jsonl")" = pending ]'
 for c in 'refs/merge-requests/7/merge:running:pending' 'refs/merge-requests/7/train:canceled:failure' \

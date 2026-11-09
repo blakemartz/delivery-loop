@@ -11,7 +11,9 @@
 #   gt_mergeable_computing — a PullRequest whose mergeability is still unknown
 #                            (open, `mergeable` absent/null), so a re-poll can help.
 #   gt_checks              — [CommitStatus] (every page) → success|pending|failure|none.
-#   gt_reviews             — [PullReview] → [{author, verdict, body, at, commit}]
+#   gt_reviews($comments)  — [PullReview] → [{author, verdict, body, at, commit}]:
+#                            every review, then every verdict-headed issue comment
+#                            of $comments ([Comment]; forge-verdict.jq).
 #   gt_comments            — [Comment] → [{author, body, at, url}]
 #   gt_older_than($t)      — a list page holds a PR updated before ISO-8601 $t
 #                            (the stop rule of the `--since` merged feed).
@@ -24,6 +26,7 @@
 include "pr";
 include "shape";
 include "forge-github";
+include "forge-verdict";
 
 # Gitea substitutes its "Ghost" user for a deleted account; a missing user still
 # gets the §4.2 placeholder login.
@@ -79,7 +82,7 @@ def gt_pr($graph_backend):
   | validate_pr;
 
 # A dismissed review is reported as `dismissed`, as github's DISMISSED state is.
-def gt_reviews:
+def gt_reviews($comments):
   [ .[]
     | { author: (.user | _gt_login),
         verdict: (if .dismissed == true then "dismissed"
@@ -89,7 +92,10 @@ def gt_reviews:
                        // (.state // "" | ascii_downcase) end),
         body: (.body // ""),
         at: .submitted_at,
-        commit: (.commit_id // null) } ];
+        commit: (.commit_id // null) } ]
+  + ([ ($comments // [])[] | {author: (.user | _gt_login), body: (.body // ""), at: .created_at} ]
+     | verdict_comments);
+def gt_reviews: gt_reviews([]);
 
 def gt_comments:
   [ .[] | { author: (.user | _gt_login), body: (.body // ""), at: .created_at, url: (.html_url // null) } ];

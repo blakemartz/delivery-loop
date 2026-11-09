@@ -3,17 +3,21 @@
 #
 # Pure: no I/O. Used by backends/forge-gitlab.sh with `-L lib -L backends`.
 #
-#   gl_pr($graph_backend)  — {mr, notes} → a §4.2 PR, built field by field and
+#   gl_pr($graph_backend)  — {mr, notes, merge_parents} → a §4.2 PR, built field by field and
 #                            passed through validate_pr. `mr` is one single-MR GET
 #                            (the only response carrying `head_pipeline`), `notes`
-#                            every note of it (all pages).
+#                            every note of it (all pages), `merge_parents` the
+#                            `parent_ids` of a `/merge` head_pipeline's commit
+#                            (absent/null when not read).
 #   gl_mergeable_computing — an open MR whose `detailed_merge_status` is still being
 #                            computed (or absent), so a re-poll can help.
 #   gl_mergeable           — detailed_merge_status → clean|conflicting|blocked|unknown.
-#   gl_checks              — a single-MR GET → success|pending|failure|none.
+#   gl_checks($parents)    — a single-MR GET → success|pending|failure|none.
+#                            $parents: the `parent_ids` of a merged-results
+#                            pipeline's commit, or null when not read.
 #   gl_reviews($approvals) — [Note] → [{author, verdict, body, at, commit}]: every
 #                            approval of $approvals (GET …/approvals), then every
-#                            verdict-headed, non-system note.
+#                            verdict-headed, non-system note (forge-verdict.jq).
 #   gl_comments($web_url)  — [Note] → [{author, body, at, url}], system notes dropped.
 #   gl_merged_since($t)    — keep MRs merged at or after ISO-8601 $t.
 #   gl_unified_diff        — [MR diff] (GET …/diffs) → a unified diff text.
@@ -24,6 +28,7 @@
 include "pr";
 include "shape";
 include "forge-github";
+include "forge-verdict";
 
 # GitLab reassigns a deleted account's content to its "Ghost User" (username
 # `ghost`); a missing author still gets the §4.2 placeholder login.
@@ -57,31 +62,40 @@ def gl_mergeable_computing:
 # (created, pending, running, manual, skipped, …) → pending, never success.
 #
 # Which commit the pipeline ran on depends on its ref:
-#   - a merged-results or merge-train pipeline (`refs/merge-requests/<iid>/merge`
-#     or `…/train`) runs on a synthetic merge commit, so its `sha` is never the
-#     MR head; GitLab only makes it the head_pipeline for the MR's current diff
-#     head, so its status is taken as is;
+#   - a merged-results pipeline (`refs/merge-requests/<iid>/merge`) runs on a
+#     synthetic merge commit, so its `sha` is never the MR head. GitLab reports
+#     the raw `head_pipeline`, not the head-checked `diff_head_pipeline`: right
+#     after a push, the previous head's merged-results pipeline can still be the
+#     head_pipeline until one exists for the new head. So its status counts only
+#     when the MR head is a parent of that merge commit ($parents, the commit's
+#     `parent_ids`); unread ($parents null) or not a parent → pending;
+#   - a merge-train pipeline (`…/<iid>/train`) is taken as is;
 #   - a branch pipeline (ref = the source branch, or `refs/merge-requests/<iid>/head`)
 #     runs on the head itself: one built for another commit says nothing about
 #     this head, so it is pending. Any other ref is held to the same rule.
+def gl_merge_result_ref($iid): (.ref // "") == "refs/merge-requests/\($iid)/merge";
 def gl_merge_ref_pipeline($iid):
   (.ref // "") as $r
   | $r == "refs/merge-requests/\($iid)/merge" or $r == "refs/merge-requests/\($iid)/train";
 
-def gl_checks:
+def gl_checks($parents):
   .sha as $sha
   | .iid as $iid
   | .head_pipeline as $p
   | if $p == null then "none"
     elif ($p | gl_merge_ref_pipeline($iid) | not) and ($p.sha // $sha) != $sha then "pending"
+    elif ($p | gl_merge_result_ref($iid))
+         and (($parents | type) != "array" or (any($parents[]; . == $sha) | not)) then "pending"
     elif $p.status == "success" then "success"
     elif ($p.status // "") | is_enum(["failed", "canceled", "canceling"]) then "failure"
     else "pending" end;
+def gl_checks: gl_checks(null);
 
 def _gl_human_notes: map(select(.system != true));
 
 def gl_pr($graph_backend):
   .mr as $m
+  | (.merge_parents // null) as $parents
   | ((.notes // []) | _gl_human_notes) as $notes
   | ([ ($m.labels // [])[] | if type == "object" then .name else . end ]) as $labels
   | { number: $m.iid,
@@ -91,7 +105,7 @@ def gl_pr($graph_backend):
       base: $m.target_branch,
       head_sha: $m.sha,
       mergeable: ($m | gl_mergeable),
-      checks: ($m | gl_checks),
+      checks: ($m | gl_checks($parents)),
       task_id: ({body: ($m.description // ""), headRefName: ($m.source_branch // "")} | gh_task_id($graph_backend)),
       labels: $labels,
       patch_iteration: ({comments: $notes} | gh_patch_iteration),
@@ -100,35 +114,14 @@ def gl_pr($graph_backend):
       author: ($m.author | _gl_login) }
   | validate_pr;
 
-# A note is a verdict when its first non-blank line is a markdown h2 naming one:
-# `## <anything> verdict: APPROVE|REQUEST_CHANGES|COMMENT` (the verdict word in
-# any case). The adapter's canonical heading (gl_verdict_heading, prefixed by
-# `pr-review` to a body that has none) is one such line; so is a caller's own
-# heading such as `## Review — verdict: APPROVE`, which `pr-review` sends as is.
-def gl_verdict_heading: "## Adversarial review — verdict: ";
-def gl_verdict_line_re: "^##[ \t].*verdict:[ \t]*(?<v>APPROVE|REQUEST_CHANGES|COMMENT)\\b";
-def gl_heading_verdict:
-  (capture(gl_verdict_line_re; "i").v // null)
-  | if . == null then null
-    else {"APPROVE": "approve", "REQUEST_CHANGES": "request-changes", "COMMENT": "comment"}[ascii_upcase] end;
-def _gl_note_verdict:
-  (.body // "" | split("\n") | map(rtrimstr("\r")) | map(select(test("\\S"))) | first // "")
-  | gl_heading_verdict;
-
-# The head a note's `Reviewed-Head:` trailer ties it to, else null.
-def _gl_note_commit:
-  first(.body // "" | split("\n")[] | rtrimstr("\r")
-        | capture("^Reviewed-Head:[ \t]*(?<sha>[0-9A-Fa-f]+)[ \t]*$").sha) // null;
-
+# Approvals first, then every verdict-headed, non-system note (the shared
+# forge-verdict rule: `verdict` from the heading, `commit` from the trailer).
 def gl_reviews($approvals):
   [ ($approvals.approved_by // [])[]
     | { author: (.user | _gl_login), verdict: "approve", body: "",
         at: (.approved_at // null), commit: null } ]
-  + [ _gl_human_notes[]
-      | _gl_note_verdict as $v
-      | select($v != null)
-      | { author: (.author | _gl_login), verdict: $v, body: (.body // ""),
-          at: .created_at, commit: _gl_note_commit } ];
+  + ([ _gl_human_notes[] | {author: (.author | _gl_login), body: (.body // ""), at: .created_at} ]
+     | verdict_comments);
 
 # Notes carry no URL of their own: GitLab anchors them on the MR page as #note_<id>.
 def gl_comments($web_url):

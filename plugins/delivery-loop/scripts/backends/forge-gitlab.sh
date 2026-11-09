@@ -41,9 +41,13 @@
 #   - `checks` is `head_pipeline.status`, the pipeline's own roll-up over all of
 #     its jobs. `head_pipeline` is sent only by the single-MR GET, so `pr-list`
 #     and `pr-find` re-read every MR they return (and re-poll an async
-#     merge status: up to ~12 s per such MR). A merged-results or merge-train
-#     pipeline (ref `refs/merge-requests/<iid>/merge|train`) runs on a synthetic
-#     merge commit, so its status is taken as is; a branch pipeline (the source
+#     merge status: up to ~12 s per such MR). `head_pipeline` is the raw latest
+#     pipeline, not the head-checked `diff_head_pipeline`, so a merged-results
+#     pipeline (ref `refs/merge-requests/<iid>/merge`, run on a synthetic merge
+#     commit) may still be the previous head's right after a push: its commit is
+#     read (GET …/repository/commits/:sha) and its status counts only when the
+#     MR head is one of its `parent_ids`, else `pending`. A merge-train pipeline
+#     (`…/<iid>/train`) is taken as is; a branch pipeline (the source
 #     branch or `…/<iid>/head`) for another commit than the MR head reads
 #     `pending`. `head_pipeline` is sent only to users who may read pipelines:
 #     a token without that right reads `none`.
@@ -74,7 +78,8 @@
 #     also exits 1: the verdict body never landed.
 #   - `pr-reviews` lists the approvals (GET …/approvals) as `approve`, then the
 #     non-system notes whose first non-blank line is a verdict heading
-#     (`^## .*verdict: (APPROVE|REQUEST_CHANGES|COMMENT)`, any case).
+#     (`^## .*verdict: (APPROVE|REQUEST_CHANGES|COMMENT)`, any case: the shared
+#     rule of backends/forge-verdict.jq).
 #   - notes carry no URL; it is `<web_url>#note_<id>`, the MR page anchor.
 #   - `pr-merge` PUTs …/merge `{squash, should_remove_source_branch, sha}` (405
 #     cannot merge, 409 sha mismatch, 422 merge failed: each exits 1 at once),
@@ -264,13 +269,34 @@ repoll() {
   done
 }
 
+# merge_parents <mr-file> <out-file>: when the MR's head_pipeline is a
+# merged-results pipeline (ref refs/merge-requests/<iid>/merge), write the
+# `parent_ids` of the commit it ran on (GET …/repository/commits/:sha), so
+# gl_checks can tell a pipeline for this head from a stale one; else `null`.
+# An unreadable commit is `null` too: its status then reads pending.
+merge_parents() {
+  local psha
+  echo null > "$2"
+  [ "$(fjq -r 'include "forge-gitlab"; .iid as $i | (.head_pipeline // {}) | gl_merge_result_ref($i)' "$1")" = true ] || return 0
+  psha=$(jq -r '.head_pipeline.sha // empty' "$1")
+  [ -n "$psha" ] || return 0
+  api GET "$P/repository/commits/$psha"
+  if ok2xx; then
+    jq -c '.parent_ids // null' "$tmp/resp" > "$2"
+  else
+    echo "forge-gitlab: merged-results commit $psha unreadable (HTTP $code: $(err_msg)); checks read pending" >&2
+  fi
+}
+
 # view <iid>: print the §4.2 PR for MR <iid> (single GET, re-poll, every note).
 view() {
   get_mr "$1" "$tmp/mr.json"
   repoll "$tmp/mr.json"
   [ -n "$(jq -r '.sha // empty' "$tmp/mr.json")" ] || die "merge request !$1 has no sha"
+  merge_parents "$tmp/mr.json" "$tmp/parents.json"
   paged "$P/merge_requests/$1/notes?sort=asc&order_by=created_at" "$tmp/notes.json"
-  jq -n --slurpfile mr "$tmp/mr.json" --slurpfile nt "$tmp/notes.json" '{mr: $mr[0], notes: $nt[0]}' \
+  jq -n --slurpfile mr "$tmp/mr.json" --slurpfile nt "$tmp/notes.json" --slurpfile pa "$tmp/parents.json" \
+        '{mr: $mr[0], notes: $nt[0], merge_parents: $pa[0]}' \
     | fjq -c --arg gb "$GRAPH_BACKEND" 'include "forge-gitlab"; gl_pr($gb)'
 }
 
@@ -289,6 +315,15 @@ post_note() {
   api POST "$P/merge_requests/$1/notes" "$(jq -cn --rawfile b "$2" '{body: $b}')"
   ok2xx || { echo "forge-gitlab: POST note on !$1 -> HTTP $code: $(err_msg)" >&2; die "note on !$1 failed; nothing posted"; }
   posted_url=$(jq -r --arg w "$WEB/-/merge_requests/$1" 'if .id then "\($w)#note_\(.id)" else "" end' "$tmp/resp")
+}
+
+# head_verdict <verdict> <body-file>: rewrite <body-file> in place with a verdict
+# heading (forge-verdict.jq with_verdict_heading); exits 1 if its own heading
+# names another verdict.
+head_verdict() {
+  fjq -jRs --arg v "$1" 'include "forge-verdict"; with_verdict_heading($v)' "$2" > "$2.h" 2> "$tmp/heading.err" \
+    || die "$(sed 's/^jq: error ([^)]*): //' "$tmp/heading.err")"
+  mv "$2.h" "$2"
 }
 
 # --- ops ------------------------------------------------------------------------
@@ -379,7 +414,7 @@ op_pr_find() {
 
 op_pr_review() {
   local u="pr-review <n> approve|request-changes|comment --sha S --body-file F"
-  local n="${1:-}" verdict="${2:-}" sha="" body="" form=comment last first hv heading
+  local n="${1:-}" verdict="${2:-}" sha="" body="" form=comment last
   need_n "$n" "$u"; shift 2 || usage "$u"
   case "$verdict" in approve|request-changes|comment) : ;; *) usage "$u" ;; esac
   while [ $# -gt 0 ]; do
@@ -402,17 +437,10 @@ op_pr_review() {
   esac
   # The note is the verdict whenever no formal one lands (request-changes and
   # comment always; approve when /approve is refused), so it must read as one
-  # to `pr-reviews` (§7.3): a body whose first line is a verdict heading
-  # (gl_heading_verdict) keeps it if it names this verdict and is refused if it
-  # names another; a body with none gets the canonical heading.
-  first=$(awk 'NF { sub(/\r$/, ""); print; exit }' "$tmp/verdict.md")
-  hv=$(fjq -rn --arg l "$first" 'include "forge-gitlab"; $l | gl_heading_verdict // ""')
-  if [ -z "$hv" ]; then
-    heading="$(fjq -rn 'include "forge-gitlab"; gl_verdict_heading')$(printf '%s' "$verdict" | tr 'a-z-' 'A-Z_')"
-    { printf '%s\n\n' "$heading"; cat "$tmp/verdict.md"; } > "$tmp/verdict.n" && mv "$tmp/verdict.n" "$tmp/verdict.md"
-  elif [ "$hv" != "$verdict" ]; then
-    die "body opens '$first', a $hv verdict, not $verdict; refusing"
-  fi
+  # to `pr-reviews` (§7.3): forge-verdict's with_verdict_heading keeps a body's
+  # own verdict heading if it names this verdict, refuses one naming another,
+  # and gives a body with none the canonical heading.
+  head_verdict "$verdict" "$tmp/verdict.md"
   [ -z "${GITLAB_REVIEW_TOKEN:-}" ] || tok="$GITLAB_REVIEW_TOKEN"
   if [ "$verdict" = approve ]; then
     api POST "$P/merge_requests/$n/approve" "$(jq -cn --arg s "$sha" '{sha: $s}')"
