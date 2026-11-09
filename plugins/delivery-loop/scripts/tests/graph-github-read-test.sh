@@ -231,10 +231,11 @@ expect "GC64+GC74: an issue short on both is re-read once, for both fields" \
 eq "GC64+GC74: both re-read fields land" '[["3","4"],[77]]' "$(node 1 '[[.deps[].id], .applied_prs]')"
 
 # --- #77: machine keys only from the trailer block; Depends-on at line start --------
-# The trailer block (§6.2) is the body's last paragraph whose every line is a
-# trailer line (a `Delivery-*:` key line, a `Depends-on:` line or a `Part of
-# epic #E` line, at column 0) with at least one key line; paragraphs below it
-# are skipped. A key line anywhere else is prose: it must not steal plan_ref
+# The trailer block (§6.2) is the leading run of trailer lines (a `Delivery-*:`
+# key line at column 0, or a `Depends-on:` / `Part of epic #E` line with the
+# edge parser's line lead) of the body's last paragraph that opens with a key
+# line; lines after the run and paragraphs below that don't open with a key
+# line are ignored. A key line anywhere else is prose: it must not steal plan_ref
 # (re-apply would duplicate), retarget the node or name its promotion; and prose
 # appended below the block must not lose it (the same harm). `Depends-on:` is
 # read on any line, but only at line start (indent / bullet / bold allowed): the
@@ -257,7 +258,15 @@ jq --arg mid "$mid" '[ .[] | select(.number == 6) ] as [$t]
       t(11; "x\n\nDelivery-Target: release/x\nDelivery-Plan: v2/t11\n\nUpdate: discussed in standup, see #3.\nDelivery-Plan: other/x"),
       t(12; "x\n\nDelivery-Target: release/x\nDelivery-Plan: v2/t12\n\nDepends-on: #4\n\nPart of epic #30\n\n\u00a0\n"),
       t(13; "x\n\nDelivery-Target: release/x\u00a0\nPart of epic #30 (the queue)\nDelivery-Plan: v2/t13 \t\n\u00a0"),
-      t(14; "- Depends-on: #3\n**Depends-on:** #4\n* **Depends-on**: #5 (via: a b)\n  Depends-on: #6\n\tDepends-on: #7\n+ Depends-on: #8\n> Depends-on: #10\n- [ ] Depends-on: #10\n`Depends-on: #10`\nnot Depends-on: #10") ]' \
+      t(14; "- Depends-on: #3\n**Depends-on:** #4\n* **Depends-on**: #5 (via: a b)\n  Depends-on: #6\n\tDepends-on: #7\n+ Depends-on: #8\n> Depends-on: #10\n- [ ] Depends-on: #10\n`Depends-on: #10`\nnot Depends-on: #10\n1. Depends-on: #9\n2) Depends-on: #11\n1. [ ] Depends-on: #10"),
+      # #77 review A′: a line appended directly into the block paragraph (no
+      # blank line first) ends the run, or joins it as an edge; either way the
+      # keys survive.
+      ( [ "\nUpdate: standup, see #3.", "\n- [ ] also handle X", "\n- Depends-on: #4", "\n  Depends-on: #4",
+          "\n**Depends-on:** #4", "\n1. Depends-on: #4", "\n\u2003\nlater", "\n\u200b\nlater",
+          "\nDepends-on: #4\nDelivery-Plan: other/x", "\n\nDepends-on: #4\nDelivery-Plan: other/x",
+          "\n\n```\nDelivery-Plan: other/x\n```" ]
+        | to_entries[] | t(.key + 15; "x\n\nDelivery-Target: release/x\nDelivery-Plan: v2/t\(.key + 15)" + .value) ) ]' \
   "$fx/cases-issues.json" > "$tmp/trailer.json"
 run SHIM_FX="$tmp" SHIM_BOARD=trailer.json BASE_BRANCH=release/y -- list
 expect "#77: list exits 0" '[ "$rc" = 0 ]'
@@ -268,7 +277,7 @@ eq "#77: key lines in a paragraph with prose are prose: no trailer -> BASE_BRANC
   '["release/y",null]' "$(tb 2)"
 eq "#77: a key-only paragraph followed by prose is the trailer block (the last one wins; §6.2 trade-off)" \
   '["main","other/x"]' "$(tb 3)"
-eq "#77: a paragraph mixing key lines and prose is not a trailer block" '["release/y",null]' "$(tb 4)"
+eq "#77 review A′: prose typed directly under the block ends its run; the keys above it survive" '["release/x","v2/t4"]' "$(tb 4)"
 eq "#77: trailer block with CRLF, a Depends-on and a Delivery-Task line, trailing blank lines" \
   '["release/x","v2/t5"]' "$(tb 5)"
 eq "#77: … and its Depends-on line still names the edge" '[{"id":"3","via":"shared config"}]' "$(node 5 .deps)"
@@ -280,7 +289,7 @@ eq "#77: … and Part of epic at line start still names the epic" '"30"' "$(node
 eq "#77: promote: Delivery-Promote-To above the trailer is prose" '["promote","release/x","main","v2/promote"]' \
   "$(node 9 '[.kind, .target_branch, .promote_to, .plan_ref]')"
 eq "#77: an unlabelled issue named only by a mid-line / quoted / checklist Depends-on is not a referenced external" \
-  '["1","2","3","4","5","6","7","8","9","11","12","13","14"]' "$(jq -c 'map(.id) | sort_by(tonumber)' <<<"$out")"
+  "$(jq -cn '[range(1; 26) | select(. != 10) | tostring]')" "$(jq -c 'map(.id) | sort_by(tonumber)' <<<"$out")"
 eq "#77 review A: prose appended below the trailer block keeps it (plan_ref and target survive; a key line in the prose is prose)" \
   '["release/x","v2/t11"]' "$(tb 11)"
 eq "#77 review A: key-less trailer-line paragraphs and an NBSP-only line below the block are skipped" \
@@ -288,10 +297,24 @@ eq "#77 review A: key-less trailer-line paragraphs and an NBSP-only line below t
 eq "#77 review A: … and their Depends-on line still names the edge" '["4"]' "$(node 12 '[.deps[].id]')"
 eq "#77: trailing NBSP/whitespace and a 'Part of epic #E (…)' line inside the block" \
   '["release/x","v2/t13"]' "$(tb 13)"
-eq "#77 review C (§2 exception 7): bullet / bold / indented Depends-on lines count; quote, checklist item, code span, mid-line do not" \
-  '[["3",null],["4",null],["5","a b"],["6",null],["7",null],["8",null]]' "$(node 14 '[.deps[] | [.id, .via]]')"
+eq "#77 review C (§2 exception 7): bullet / ordered / bold / indented Depends-on lines count; quote, checklist item, code span, mid-line do not" \
+  '[["3",null],["4",null],["5","a b"],["6",null],["7",null],["8",null],["9",null],["11",null]]' "$(node 14 '[.deps[] | [.id, .via]]')"
+i=15
+for what in 'prose ("Update: …")' 'a checklist item' 'a bulleted Depends-on' 'an indented Depends-on' 'a bold Depends-on' \
+            'an ordered-list Depends-on' 'an em-space-only line, then prose' 'a ZWSP-only line, then prose' \
+            'a Depends-on then a key line (in the run: the first key wins)' \
+            'a paragraph opening with Depends-on, then a key line (skipped)' 'a fenced example key paragraph (not key-first: skipped)'; do
+  eq "#77 review A′: appended $what: target and plan_ref survive" "[\"release/x\",\"v2/t$i\"]" "$(tb $i)"
+  i=$((i + 1))
+done
+eq "#77 review A′: … and the appended bulleted / indented / bold / ordered Depends-on lines are edges" \
+  '[["4"],["4"],["4"],["4"]]' "$(jq -c '[.[] | select(.id | IN("17", "18", "19", "20")) | [.deps[].id]]' <<<"$out")"
 run SHIM_FX="$tmp" SHIM_BOARD=trailer.json BASE_BRANCH=release/y -- show 1
 eq "#77: show reads the trailer block as list does" '["release/x","v2/t1"]' "$(jq -c '[.target_branch, .plan_ref]' <<<"$out")"
+eq "#77: show warns once per key line outside the trailer block (read as prose)" \
+  $'graph-github: warning: #1: key line outside the trailer block, read as prose: Delivery-Plan: other/x\ngraph-github: warning: #1: key line outside the trailer block, read as prose: Delivery-Target: main' "$err"
+run SHIM_FX="$tmp" SHIM_BOARD=trailer.json BASE_BRANCH=release/y -- show 5
+expect "#77: show of a body whose key lines are all in the block warns nothing" '[ "$rc" = 0 ] && [ -z "$err" ]'
 # migrate reads Depends-on / Part of epic at column 0 too: prose never becomes
 # a native edge or parent (#75 re-review: no `migrate --apply` live before #77).
 jq --arg mid "$mid" '[ .[] | select(.number == 6) ] as [$t]
