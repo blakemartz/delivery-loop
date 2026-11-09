@@ -327,9 +327,11 @@ Kept here so they don't get re-learned:
   plus every comment whose first non-blank line is a `## … verdict:` heading.
 - **Docs-review verdicts.** `/delivery-loop:author-spec`'s reviewer posts a
   `comment` verdict whose first line is plain text, `Docs-review verdict:
-  APPROVE` or `Docs-review verdict: REQUEST_CHANGES`; the adapter adds the
-  `## Adversarial review — verdict: COMMENT` heading itself. Never open such a
-  body with a `## … verdict:` heading of its own: the gitlab adapter refuses a
+  APPROVE` or `Docs-review verdict: REQUEST_CHANGES`. On github and gitea it
+  lands as a formal COMMENT review with that body (a comment review is allowed
+  on one's own PR); only on gitlab, where it is a note, does the adapter add
+  the `## Adversarial review — verdict: COMMENT` heading itself. Never open such
+  a body with a `## … verdict:` heading of its own: the gitlab adapter refuses a
   `comment` whose heading names another verdict.
 - **The permission layer is part of the system.** If your harness gates tool
   use, it will (correctly) block things like a gate-disabling push disguised as a
@@ -358,7 +360,9 @@ Kept here so they don't get re-learned:
 - **A node's target is pinned when it is created.** github `create` writes
   `Delivery-Target:` with the `BASE_BRANCH` in force at creation time (a plan's
   `target_branch` when it names one). Changing `BASE_BRANCH` later retargets only
-  nodes created afterwards; existing nodes keep their branch.
+  nodes created afterwards; existing nodes keep their branch. A node with no
+  `Delivery-Target:` line (created by v0.1.4, or whose trailer block was
+  broken) is not pinned: it follows whatever `BASE_BRANCH` is in force.
 - **jq ≥ 1.7, excluding 1.8.2.** jq 1.8.2 mis-links nested module includes
   (upstream jqlang/jq#3597) and crashes most of the engine; use 1.8.1, or 1.8.3
   or later. Every entry point's config check refuses jq < 1.7 and exactly 1.8.2
@@ -398,9 +402,11 @@ Kept here so they don't get re-learned:
     truncating. Raise `LIST_LIMIT` when a repo outgrows it.
   - PRs link to tasks by the `Delivery-Task:` trailer, not by any `#N`
     mention.
-  - A merged agent PR closes its task whatever branch it merged into, once per
-    (task, PR); a human reopen is respected, and only a newer merged PR closes
-    the task again.
+  - A merged agent PR closes its task only when the PR's base is the task's
+    `target_branch` (a promote node's: its `promote_to`), on any backend and
+    whichever branch that is; a PR merged into another base leaves the task
+    open. It acts once per (task, PR); a human reopen is respected, and only a
+    newer merged PR closes the task again.
   - **Human PRs into a non-default base no longer close delivery tasks.** v0.1.4
     closed every issue named by a closing keyword in any merged PR into a
     non-default `BASE_BRANCH`; v0.2 acts only on agent PRs (the `agent-authored`
@@ -443,7 +449,7 @@ Kept here so they don't get re-learned:
 | Same task fails review 3× | Criteria ambiguous or task too big | Split the task / rewrite criteria; file the harness lesson |
 | Status looks wrong vs reality | Drift | `bash "${CLAUDE_PLUGIN_ROOT}/scripts/graph.sh" reconcile --fix`; ground truth: closed issue > merged PR > open PR > stored status |
 | A script exits 1 with `config: …` | Invalid seam combination, missing token, or unsupported jq | Fix what the line names; `delivery-config.sh --check` re-validates |
-| Exit 3, `… >= LIST_LIMIT` | A list hit the fetch ceiling (never truncated) | Raise `LIST_LIMIT` in `.claude/delivery.conf` |
+| Exit 3, `graph-github: gh issue list returned <n> issues = LIST_LIMIT (<n>); refusing to truncate (raise LIST_LIMIT)` (a forge list: `forge-<forge>: … returned <n> items = LIST_LIMIT (<n>) …`; a github comment thread: `… has <n> comments >= LIST_LIMIT (<n>) …`) | A list hit the fetch ceiling (never truncated) | Raise `LIST_LIMIT` in `.claude/delivery.conf` |
 | Exit 75 / "busy; retry" (local) | Another writer holds the store lock | Retry. A lock left by a dead process is broken automatically once older than `LOCK_STALE_SECONDS`; see §10.2 for an owner-less or crashed lock |
 | Reconcile exit 4, "board changed" | The board moved under the plan | Re-run; the tick and `task-queue.sh` retry automatically |
 | `drift: <id> <field>` from `plan.sh apply` | A node differs from its plan file | Decide which is right; apply never overwrites |
