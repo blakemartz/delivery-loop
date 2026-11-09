@@ -341,6 +341,9 @@ op_create() {
   printf '%s' "$in" > "$tmp/in.json"
   gjq -e --arg base "$BASE_BRANCH" '
     def str: type == "string" and length > 0;
+    # A trailer value (§6.2): one non-empty token, so the line create writes is
+    # a valid trailer line that reads back whole (#77 review B).
+    def tok: type == "string" and test("^[^ \t\r\n\f\u000b\u00a0]+$");
     def allowed: ["kind", "title", "body", "epic", "deps", "module", "size", "status",
                   "needs_human", "target_branch", "promote_to", "plan_ref"];
     if has("id") then error("create: github assigns issue numbers; drop `id`")
@@ -359,18 +362,26 @@ op_create() {
     elif .module != null and ((.module | str | not) or (.module | startswith("module:"))) then
       error("create: module must be a bare module name or null")
     elif (.size as $s | ["S", "M", "L", null] | index($s)) == null then error("create: size must be S|M|L or null")
+    elif any((.deps // [])[]; type == "object" and .via != null
+             and ((.via | type) != "string" or (.via | test("[\r\n]")))) then
+      error("create: a dep via must be a one-line string")
     elif .promote_to != null and .kind != "promote" then error("create: promote_to is for promote nodes only")
-    elif .plan_ref != null and ((.plan_ref | type) != "string" or (.plan_ref | test("^[^/]+/[^/]+$") | not)) then
-      error("create: plan_ref must be <plan>/<plan-task-id>")
-    elif .target_branch != null and (.target_branch | str | not) then error("create: target_branch must be a non-empty string")
+    elif .kind == "promote" and (.promote_to | tok | not) then
+      error("create: a promote node needs promote_to, one token (no whitespace) (got \(.promote_to | tojson))")
+    elif .plan_ref != null and ((.plan_ref | tok | not) or (.plan_ref | test("^[^/]+/[^/]+$") | not)) then
+      error("create: plan_ref must be <plan>/<plan-task-id>, one token (got \(.plan_ref | tojson))")
+    elif .target_branch != null and (.target_branch | tok | not) then
+      error("create: target_branch must be one token (no whitespace) (got \(.target_branch | tojson))")
+    elif .target_branch == null and ($base | tok | not) then
+      error("create: BASE_BRANCH (the default target_branch) must be one token (got \($base | tojson))")
     else true end' "$tmp/in.json" > /dev/null 2> "$tmp/err" \
     || { sed 's/^jq: error (at [^)]*): //' "$tmp/err" >&2; die "create: invalid node (nothing written)"; }
   # Body: the contract (trailing whitespace dropped), a blank line, then the
   # trailer block (§6.2), always written whole: the read takes machine keys
-  # from the body's last paragraph only, so a key line in the contract is prose
-  # and never stands in for one here (#77). Delivery-Target is always written
-  # (BASE_BRANCH when unset, as the local backend stores it), so the block is
-  # never empty and the contract's last paragraph is never read as one.
+  # from the body's last trailer paragraph only, so a key line in the contract
+  # is prose and never stands in for one here (#77). Delivery-Target is always
+  # written (BASE_BRANCH when unset, as the local backend stores it), so the
+  # block always has a key line and wins over any key paragraph in the contract.
   jq -r --argjson native "$native" --arg base "$BASE_BRANCH" '
     def rtrim_ws: if length > 0 and (.[-1:] | test("[ \t\r\n]")) then .[:-1] | rtrim_ws else . end;
     ((.deps // []) | map(if type == "object" then {id: (.id | tostring), via: .via} else {id: tostring, via: null} end)) as $deps

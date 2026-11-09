@@ -105,6 +105,16 @@ local mode, and new node kinds beyond `task | epic | promote | external`.
    precedence). v0.1.4 listed it as a task **and** counted it as an epic, so a
    closed child could mark it started and reorder the ready set. v0.2 never treats
    it as an epic: not for the started-epic flag, not for epic completion (GC71).
+7. A `Depends-on:` line names edges only when the keyword starts the line (#77).
+   v0.1.4 matched `Depends-on:` anywhere on a line, so a criterion that quoted
+   the convention (``- [ ] verify `Depends-on: #1` handling``) blocked its task.
+   Still counted: optional indentation, then one `-`/`*`/`+` list bullet, then
+   an optional `**` bold opener, then `Depends-on:` (bold may close before or
+   after the colon: `**Depends-on:** #3`, `**Depends-on**: #3`). No longer
+   counted, so such a task can become ready where v0.1.4 kept it blocked: a
+   mention after other text on the line (prose, a checklist item `- [ ] …`, a
+   code span), and a blockquote line (`> Depends-on: #5`, usually quoted from
+   elsewhere). The same line rule applies to `Part of epic #E` for `migrate`.
 
 ## 3. Architecture
 
@@ -161,7 +171,7 @@ on drift).
 | `applied_prs` | [int] | PR numbers whose merge reconcile rule 3 already applied to this node (§5), ascending, deduplicated; `[]` when none. Rule 3 skips them, so a human who reopens a closed task is never overridden (GC72). github: the number right after the prefix of every `AUTO-CLOSE: PR #<n>` comment (the comment the backend writes when it applies rule 3, B2; v0.1.4's `AUTO-CLOSE: epic …` comment names no PR). github also counts a merged PR whose GitHub closing keyword (`Closes #N`, default branch only) closed the issue: GitHub writes no `AUTO-CLOSE` comment for it. B2 MUST derive that PR from evidence that survives a reopen (`closedByPullRequestsReferences`, or the issue timeline's `ClosedEvent` closer), after verifying the source against gh and live issue data (GC75); until B2 the read path derives only the comment form. The comment list is read in full: `gh issue list` returns at most 100 comments per issue, so the backend re-reads a longer thread (GC74, §6.2). local: the same, from `comment` events whose body has that prefix (C2 appends one when it applies rule 3). Required on every node; `validate_node` rejects anything but an array of positive integers. |
 | `module` | string \| null | from `module:<m>`. |
 | `size` | `S` \| `M` \| `L` \| null | |
-| `deps` | `[{id, via}]` | blocking edges. `via` is a string, or null for legacy edges. github: union of native `blockedBy.nodes[].number` and legacy `Depends-on:` lines, deduplicated (GC11). A `Depends-on:` line counts only when it starts at column 0: a mention mid-line (prose such as a criterion quoting the convention) adds no edge (§6.2 trailer block). |
+| `deps` | `[{id, via}]` | blocking edges. `via` is a string, or null for legacy edges. github: union of native `blockedBy.nodes[].number` and legacy `Depends-on:` lines, deduplicated (GC11). A `Depends-on:` line counts only when the keyword starts the line (indentation, a list bullet and `**` bold allowed): a mention mid-line (prose such as a criterion quoting the convention) or in a blockquote adds no edge (§2 exception 7, §6.2 trailer block). |
 | `status` | `blocked` \| `ready` \| `claimed` \| `in-review` \| `changes-requested` \| `approved` \| `done` \| `cancelled` | github: `done`/`cancelled` come from `state` + `stateReason` (`COMPLETED` → done; `NOT_PLANNED`/`DUPLICATE` → cancelled). Other statuses come from labels, a cache that reconcile repairs. |
 | `needs_human` | bool | orthogonal flag (the design spec's "any → needs-human"). |
 | `claim` | `{actor, run, at, by: "agent"\|"human"}` \| null | github: derived from assignee + `claim:agent` + the winning `CLAIM` comment. |
@@ -476,27 +486,51 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
   GC74). An issue short on both `blockedBy` and `comments` is re-read once for both.
 - **Trailer block.** The machine keys `Delivery-Target:`, `Delivery-Plan:`,
   `Delivery-Promote-To:` and `Delivery-Task:` are read **only** from the body's
-  trailer block. That block is the body's last paragraph: the lines after the
-  last blank (empty or whitespace-only) line, ignoring trailing blank lines and
-  `\r`. It is a trailer block only when every one of its lines is a trailer
-  line, at column 0:
+  trailer block. The body is split into paragraphs on blank lines (empty, or
+  only spaces, tabs and NBSPs; `\r` and trailing whitespace on each line are
+  ignored). A paragraph is a trailer paragraph when every one of its lines is a
+  trailer line, at column 0, and at least one is a key line:
   - a key line, `<Key>: <value>` with a non-empty value;
   - a `Depends-on:` line;
-  - a `Part of epic #E` line.
+  - a `Part of epic #E` line (any text may follow the number).
 
-  Otherwise the body has no trailer block, and every key takes its default
-  (`target_branch` = `BASE_BRANCH`, the others null). Within the block the first
-  line of a key wins, and its value is the first whitespace-delimited token. A
-  key line anywhere else in the body is prose. That is what keeps a human body
-  edit from stealing `plan_ref` (a re-apply would then duplicate the node),
-  retargeting the node, or naming its promotion. `create` always writes the
-  block, and `link` appends its `Depends-on:` lines to it (below). Bodies
-  written by v0.1.4 and earlier v0.2 creates put their key lines last, so they
-  read unchanged. `Depends-on:` and `Part of epic #E` remain human-authored
-  body conventions, read on any line but only at column 0: a mid-line mention
-  adds no edge and gives `migrate` no parent. The `epic` field's `[Ee]pic #E`
-  body fallback keeps v0.1.4's match anywhere (§4.1); it orders nodes and adds
-  no edge.
+  The trailer block is the body's **last trailer paragraph**; paragraphs below
+  it are skipped. With none, every key takes its default (`target_branch` =
+  `BASE_BRANCH`, the others null). Within the block the first line of a key
+  wins, and its value is the first whitespace-delimited token. A key line
+  anywhere else in the body (above the block, or in a paragraph that mixes it
+  with prose) is prose. That is what keeps a contract or a human body edit
+  from stealing `plan_ref` (a re-apply would then duplicate the node),
+  retargeting the node, or naming its promotion.
+
+  *Why "last trailer paragraph", not "last paragraph" or a fixed separator.*
+  Humans append to issues ("Update: …", notes, a `Depends-on:` line of their
+  own). If only the last paragraph counted, any such append would silently drop
+  `plan_ref` and the target, and a re-apply would duplicate the node: the very
+  harm the rule exists to prevent. Skipping non-trailer paragraphs below the
+  block, and key-less ones (a lone `Depends-on:` or `Part of epic` paragraph),
+  keeps the block through every append that does not itself write a key line.
+  A fixed separator (an HTML comment marker) was rejected: it would have to be
+  written into every existing body (a live mutation, plus a fallback rule for
+  bodies not yet migrated), and it protects nothing more, since anyone who can
+  append below the block can edit the block itself. The accepted trade-off: a
+  key-only paragraph a human writes **below** the machine block wins over it,
+  exactly as editing the block would; a key-only paragraph followed by prose
+  is read when it is the last one (`Delivery-Target: main\n\nThanks!` reads
+  `main`). Fenced code is not special-cased: an unclosed fence above the block
+  must not hide it.
+
+  `create` always writes the block last, and every value it writes is one
+  token (it refuses anything else before any `gh` call, so the block it writes
+  always reads back whole). `link` appends its `Depends-on:` lines to the
+  body's last paragraph (below). Bodies written by v0.1.4 and earlier v0.2
+  creates put their key lines last, so they read unchanged. `Depends-on:` and
+  `Part of epic #E` remain human-authored body conventions, read on any line
+  but only when the keyword starts the line (after optional indentation, one
+  `-`/`*`/`+` list bullet and a `**` bold opener): a mid-line or quoted mention
+  adds no edge and gives `migrate` no parent (§2 exception 7). The `epic`
+  field's `[Ee]pic #E` body fallback keeps v0.1.4's match anywhere (§4.1); it
+  orders nodes and adds no edge.
 - **Claims are unchanged.** The comment-ordered Lamport lock (`lib/claim-winner.jq`,
   `lib/orphan-claims.jq`) is reused as is; GitHub offers no compare-and-set on
   assignment.
@@ -504,18 +538,21 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
   - `create` uses `gh issue create --blocked-by … --parent …` plus labels. It
     always ends the body with its own trailer block, after a blank line, even
     when the contract already carries those keys: `Delivery-Target:` (always;
-    `BASE_BRANCH` when unset, so the block is never empty), `Delivery-Plan:`,
-    `Delivery-Promote-To:` (promote nodes only), then any text edges. It never
-    creates `external` nodes.
+    `BASE_BRANCH` when unset, so the block always has a key line),
+    `Delivery-Plan:`, `Delivery-Promote-To:` (promote nodes only, where it is
+    required), then any text edges. Every key value must be one token (no
+    whitespace) and a dep's `via` one line; `create` refuses anything else
+    (exit 1, nothing written). It never creates `external` nodes.
   - `link` with a `via`, or on a gh without native relations, records a
     `Depends-on: #<dep> (via: …)` line: in place if the body already has that
     dep's line, else directly below the body's last non-blank line, so it joins
-    the trailer block.
+    the trailer block when nothing was appended below it (any `Depends-on:`
+    line counts as an edge wherever it sits).
   - status changes are label edits, as today.
   - `done`/`cancelled` are issue close with `--reason completed|"not planned"`.
 - **`graph.sh migrate`** is idempotent. For every open task, it adds a native
   blocked-by for each legacy `Depends-on:` ref and sets the native parent from
-  `Part of epic #E`, both read at column 0 only (trailer block, above). Text
+  `Part of epic #E`, both read at line start only (trailer block, above). Text
   lines are left in place (GC48).
   - It refuses to exceed 50 blockers per issue: it prints the offender and exits 1.
     The cap is from GitHub's changelog of 2025-08-21: "You can link up to 50 issues

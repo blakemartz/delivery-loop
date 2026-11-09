@@ -81,20 +81,29 @@
 #               lines of the body's trailer block (promote_to on promote nodes
 #               only); a key line anywhere else in the body is prose (#77).
 #
-# The trailer block (§6.2) is the body's last paragraph: the lines after the
-# last blank (empty or whitespace-only) line, trailing blank lines ignored,
-# when every one of them is a trailer line — a machine key line
+# The trailer block (§6.2) is the body's LAST paragraph that is a trailer
+# paragraph: paragraphs are split on blank lines (empty, or only spaces, tabs
+# and NBSPs; trailing whitespace on a line is ignored), and a trailer paragraph
+# is one whose every line is a trailer line — a machine key line
 # (`Delivery-Target:` / `Delivery-Plan:` / `Delivery-Promote-To:` /
 # `Delivery-Task:` followed by a value), a `Depends-on:` line, or a `Part of
-# epic #E` line, each at column 0. Otherwise the body has no trailer block. It
-# is where `create` writes its key lines (always, after a blank line) and where
-# `link` appends `Depends-on:` lines, so bodies written by v0.1.4 and B2 (key
-# lines last) read as before. Within the block the first line of a key wins.
+# epic #E` line, each at column 0 — and at least one of them a machine key line.
+# Paragraphs below it (prose a human appended: "Update: …", a `Depends-on:`
+# line of its own) are skipped, so appending never loses the block (#77
+# review A); key lines in any paragraph above it, or in a paragraph that mixes
+# them with prose, are prose. `create` always writes the block last (a
+# Delivery-Target line at least, after a blank line) and `link` appends
+# `Depends-on:` lines to the last paragraph, so bodies written by v0.1.4 and B2
+# (key lines last) read as before. Within the block the first line of a key
+# wins. A body with no trailer paragraph has no machine keys.
 # Machine keys are read from the block only. `Depends-on:` and `Part of epic`
-# stay human-authored body conventions read on any line, but only at column 0,
-# so prose that mentions them mid-line adds no edge and no migrate parent. (The
-# `epic` field's `[Ee]pic #E` body fallback keeps v0.1.4's match anywhere, §4.1:
-# it orders, it adds no edge.)
+# stay human-authored body conventions read on any line, but only at line start
+# (after optional indentation, one `-`/`*`/`+` list bullet and a `**` bold
+# opener; `Depends-on` may also close the bold before or after its colon), so
+# prose that mentions them mid-line, a checklist item, a quote (`> …`) or code
+# span adds no edge and no migrate parent (§2 exception 7). (The `epic` field's
+# `[Ee]pic #E` body fallback keeps v0.1.4's match anywhere, §4.1: it orders, it
+# adds no edge.)
 #
 # Line-oriented matches split the body on "\n" first: jq's Oniguruma `^`/`$` do
 # not reliably anchor at line boundaries.
@@ -109,24 +118,38 @@ def _lines: (.body // "") | split("\n") | map(rtrimstr("\r"));
 # Ordered dedupe: first occurrence wins.
 def _uniq: reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end);
 
-def _is_blank: test("^[ \t]*$");
+def _is_blank: test("^[ \t\u00a0]*$");
+
+def _rtrim_ws: sub("[ \t\u00a0]+$"; "");
+
+def _is_key_line:
+  test("^(Delivery-Target|Delivery-Plan|Delivery-Promote-To|Delivery-Task):[ \t]*[^ \t]");
 
 def _is_trailer_line:
-  test("^(Delivery-Target|Delivery-Plan|Delivery-Promote-To|Delivery-Task):[ \t]*[^ \t]")
+  _is_key_line
   or startswith("Depends-on:")
-  or test("^Part of [Ee]pic #[0-9]+[ \t]*$");
+  or test("^Part of [Ee]pic #[0-9]+([^0-9]|$)");
 
-# The body's trailer block (see the header), as lines; [] when it has none.
+# The body's trailer block (see the header), as lines (trailing whitespace
+# trimmed); [] when it has none.
 def _trailer_block:
-  _lines
-  | until(length == 0 or (.[-1] | _is_blank | not); .[:-1])
-  | (([ to_entries[] | select(.value | _is_blank) | .key ] | last) // -1) as $b
-  | .[$b + 1:]
-  | if length > 0 and all(.[]; _is_trailer_line) then . else [] end;
+  reduce (_lines[] | _rtrim_ws) as $l ({cur: [], out: []};
+    if $l == "" then (if .cur == [] then . else {cur: [], out: (.out + [.cur])} end)
+    else .cur += [$l] end)
+  | (.out + (if .cur == [] then [] else [.cur] end))
+  | [ .[] | select(all(.[]; _is_trailer_line) and any(.[]; _is_key_line)) ]
+  | last // [];
 
 # The value of the trailer block's first `<key>: <value>` line (one token), or null.
 def _trailer($key):
   [ _trailer_block[] | capture("^" + $key + ":[ \t]*(?<v>[^ \t]+)") | .v ] | first // null;
+
+# Line start for the human-authored conventions (see the header): indentation,
+# an optional list bullet, an optional bold opener.
+def _line_lead: "^[ \t]*(?:[-*+][ \t]+)?(?:[*][*])?";
+
+# The rest of a `Depends-on:` line (bold closed before or after the colon).
+def _dep_rest: capture(_line_lead + "Depends-on(?:[*][*])?:(?:[*][*])?(?<rest>.*)").rest;
 
 def gh_kind:
   if _has_label("task") then "task"
@@ -141,12 +164,13 @@ def gh_epic:
 def gh_checklist:
   [ _lines[] | capture("^[ \t]*[-*] \\[[ xX]\\][ \t]*#(?<n>[0-9]+)") | .n ] | _uniq;
 
-# Legacy text edges: every `#N` on a line that starts `Depends-on:` (v0.1.4
-# scanned the rest of each line), minus a trailing `(via: …)` annotation, which
-# names the edge. Unlike v0.1.4, a mid-line `Depends-on:` is prose, not an edge.
+# Legacy text edges: every `#N` on a line that starts `Depends-on:` (see
+# _line_lead; v0.1.4 scanned the rest of each line), minus a trailing
+# `(via: …)` annotation, which names the edge. Unlike v0.1.4, a mid-line
+# `Depends-on:` is prose, not an edge (§2 exception 7).
 def _text_edges:
   [ _lines[]
-    | capture("^Depends-on:(?<rest>.*)").rest
+    | _dep_rest
     | ([ capture("[(]via:[ \t]*(?<v>.*[^ \t])[ \t]*[)][ \t]*$") | .v ] | first // null) as $via
     | sub("[(]via:.*$"; "")
     | scan("#([0-9]+)") | {id: .[0], via: $via} ];
@@ -370,10 +394,10 @@ def gh_has_text_edge($dep; $via):
 
 # --- migrate (task B3) ------------------------------------------------------------
 
-# The epic of a line that starts `Part of epic #E` (§6.2: the legacy parent), or
-# null. Mid-line prose ("not Part of epic #3") names no parent.
+# The epic of a line that starts `Part of epic #E` (see _line_lead; §6.2: the
+# legacy parent), or null. Mid-line prose ("not Part of epic #3") names no parent.
 def _gh_part_of_epic:
-  [ _lines[] | capture("^Part of [Ee]pic #(?<e>[0-9]+)") | .e ] | first // null;
+  [ _lines[] | capture(_line_lead + "Part of [Ee]pic(?:[*][*])? #(?<e>[0-9]+)") | .e ] | first // null;
 
 # The `Depends-on:` refs as migrate reads them: like _text_edges (line start
 # only, via dropped), but a ref with an `owner/repo` prefix is kept apart as
@@ -382,7 +406,7 @@ def _gh_part_of_epic:
 # `other/repo#5` as #5.)
 def _gh_dep_refs:
   [ _lines[]
-    | capture("^Depends-on:(?<rest>.*)").rest
+    | _dep_rest
     | sub("[(]via:.*$"; "")
     | scan("([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#([0-9]+)") | {repo: .[0], id: .[1]} ];
 

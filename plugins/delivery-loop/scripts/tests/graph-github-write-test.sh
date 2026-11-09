@@ -463,7 +463,7 @@ eq "#77 round trip: the node reads back the trailer's values" '["release/x","p/t
   "$(jq -c '[.target_branch, .plan_ref, .promote_to]' <<<"$out")"
 g -- create "$(jq -cn '{kind: "task", title: "no keys", body: "x\n\nDelivery-Plan: other/zzz\n\n"}')"
 n77=$out
-eq "#77 create with no keys set: Delivery-Target: BASE_BRANCH, so the contract's last paragraph is never the trailer" \
+eq "#77 create with no keys set: Delivery-Target: BASE_BRANCH, so the contract's key paragraph is never the trailer" \
   '"x\n\nDelivery-Plan: other/zzz\n\nDelivery-Target: main"' "$(issue "$n77" .body)"
 g -- show "$n77"
 eq "#77 round trip: plan_ref stays null" '["main",null]' "$(jq -c '[.target_branch, .plan_ref]' <<<"$out")"
@@ -474,6 +474,41 @@ eq "#77 link: a via line joins the trailer block (trailing blank lines dropped)"
 g -- show "$n77"
 eq "#77 link: the trailer still reads (target kept, edge with its via)" '["main",null,[{"id":"2","via":"lib/x.jq"}]]' \
   "$(jq -c '[.target_branch, .plan_ref, .deps]' <<<"$out")"
+# #77 review A: prose a human appends below the trailer block (an "Update: …"
+# paragraph, one that names a key in passing, an NBSP-only line) never loses it:
+# plan_ref and target survive, so a re-apply finds the node instead of
+# duplicating it.
+g -- create '{"kind":"task","title":"appended","body":"## Context\nc","target_branch":"release/x","plan_ref":"p/t1"}'
+n77a=$out
+for extra in $'\n\nUpdate: discussed in standup, see #3.' $'\n\nDepends-on: #2\n\nNotes\nDelivery-Plan: other/x\n\n\u00a0'; do
+  jq --argjson n "$n77a" --arg x "$extra" 'map(if .number == $n then .body += $x else . end)' "$st/board.json" > "$st/b" && mv "$st/b" "$st/board.json"
+  g -- show "$n77a"
+  eq "#77 review A: create -> append $(jq -cn --arg x "$extra" '$x') -> show: target and plan_ref survive" \
+    '["release/x","p/t1"]' "$(jq -c '[.target_branch, .plan_ref]' <<<"$out")"
+done
+# #77 review B: create refuses any trailer value that is not one token (or a
+# promote node without promote_to), before any gh issue/api call: a line the
+# read rejects would disqualify the whole block, not just its own key.
+: > "$st/log"
+for bad in '{"kind":"promote","title":"x","target_branch":"release/x","promote_to":"","plan_ref":"p/pr"}' \
+           '{"kind":"promote","title":"x","target_branch":"release/x"}' \
+           '{"kind":"promote","title":"x","target_branch":"release/x","promote_to":"ma in"}' \
+           '{"kind":"promote","title":"x","target_branch":"release/x","promote_to":7}' \
+           '{"kind":"task","title":"x","target_branch":"rel\nx","plan_ref":"p/t3"}' \
+           '{"kind":"task","title":"x","target_branch":"rel x"}' \
+           '{"kind":"task","title":"x","target_branch":""}' \
+           '{"kind":"task","title":"x","target_branch":"rel\u00a0x"}' \
+           '{"kind":"task","title":"x","plan_ref":"p\n/t4"}' \
+           '{"kind":"task","title":"x","plan_ref":"p/t 5"}' \
+           '{"kind":"task","title":"x","plan_ref":"p/t5\t"}' \
+           '{"kind":"task","title":"x","deps":[{"id":"2","via":"a\nb"}]}'; do
+  g -- create "$bad"
+  expect "#77 review B: create refuses $bad (exit 1, no gh issue/api call)" \
+    '[ "$rc" = 1 ] && ! log_has "issue " && ! log_has "api" && grep -qF "create: " <<<"$err"'
+done
+g BASE_BRANCH=$'rel\xc2\xa0x' -- create '{"kind":"task","title":"x"}'
+expect "#77 review B: create refuses an NBSP-carrying BASE_BRANCH as the default target (exit 1, no gh issue/api call)" \
+  '[ "$rc" = 1 ] && ! log_has "issue " && ! log_has "api"'
 
 g -- update 4 '{"status":"ready","module":"forge","size":"S","needs_human":true,"title":"renamed"}'
 eq "update: labels swapped in one edit (module/size replace every other module:/size: label)" \
