@@ -112,12 +112,19 @@ run PATH="$shim_path" DL_FAKE_JQ_VERSION=jq-1.8.2
 expect_rc "jq 1.8.2 -> exit 1, names jqlang/jq#3597" 1 "jqlang/jq#3597"
 expect_rc "jq 1.8.2 -> message names the remedy" 1 "install jq 1.8.1, or 1.8.3 or later"
 
-run PATH="$shim_path" DL_FAKE_JQ_VERSION=jq-1.5
-expect_rc "jq 1.5 (< 1.6) -> exit 1" 1 "needs jq >= 1.6"
+run PATH="$shim_path" DL_FAKE_JQ_VERSION=jq-1.8.2-dirty
+expect_rc "jq 1.8.2-dirty -> exit 1, names jqlang/jq#3597" 1 "jqlang/jq#3597"
 
-for v in jq-1.6 jq-1.7.1 jq-1.8.1 jq-1.8.3; do
+for v in jq-1.5 jq-1.6; do
+  run PATH="$shim_path" DL_FAKE_JQ_VERSION=$v
+  expect_rc "$v (< 1.7) -> exit 1" 1 "needs jq >= 1.7"
+done
+
+# Unparseable (e.g. Alpine's 1.6 build, "jq-master-…") is accepted silently.
+for v in jq-1.7 jq-1.7.1 jq-1.8.1 jq-1.8.3 jq-master-v20210212-7267-g8faac1666b; do
   run PATH="$shim_path" DL_FAKE_JQ_VERSION=$v
   expect_rc "$v -> valid" 0
+  if [ -z "$out" ]; then ok "$v -> no output"; else fail "$v -> no output"; fi
 done
 
 # The refusal is part of --check, so it adds to (not replaces) config problems.
