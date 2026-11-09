@@ -45,6 +45,14 @@
 #                               The run defaults to <host>-<pid>-<epoch>; a
 #                               human claim has none. Exit 0 = owned, 1 = lost
 #                               or not claimable.
+#   transition <id> <to> [--actor agent|human|promote] [--human <name>]
+#                               validates (from, to, actor) with
+#                               lib/transitions.jq (actor default agent;
+#                               `--human <name>` is the human actor) and exits 2
+#                               on an illegal move without writing (GC8, GC47:
+#                               only a human cancels); an `external` node takes
+#                               no transition (exit 2). A legal move is the
+#                               backend's `update <id> {"status": <to>}`.
 #   reconcile [--fix]           lib/reconcile.jq over every node and the forge's
 #                               PRs: `forge.sh pr-list --state open` plus
 #                               `--state merged --since <oldest open node's
@@ -62,13 +70,18 @@
 #                               Each unapplied record is a `warn: not applied`
 #                               line. A record the board outran (backend exit
 #                               4) exits 4, "board changed; re-run reconcile";
-#                               any other backend failure exits 1. The next
-#                               pass re-plans from fresh state.
+#                               a backend that could not take its lock in
+#                               time (exit 75) exits 75, "busy; retry"; any
+#                               other backend failure exits 1. The next pass
+#                               re-plans from fresh state. Wrappers treat 4
+#                               and 75 as retryable.
 #
 # Exit codes: 0 ok · 1 failed / invalid config / not claimable · 2 usage · 3
 # the backend list reached LIST_LIMIT · 4 reconcile --fix: the board changed
 # since the plan (stopped; re-run reconcile) · 5 a backend emitted a node that
-# fails validate_node. A routed write op exits with its backend's status.
+# fails validate_node · 75 the backend's lock was busy (reconcile --fix, claim;
+# retry). A routed write op exits with its backend's status; transition exits 2
+# on an illegal move.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/config.sh
@@ -77,7 +90,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 dl_config_check || exit 1
 
 usage() {
-  echo "usage: graph.sh ready | list | show <id> [--format json|md] [--events] | export | create <node-json> | update <id> <patch-json> | link <id> <dep-id> [via] | flag <id> needs-human on|off | claim <id> <actor> [--run <run>] | claim <id> --human <name> | release <id> <reason> | comment <id> <text> | reconcile [--fix] (docs/delivery_graph_spec.md §6.1)" >&2
+  echo "usage: graph.sh ready | list | show <id> [--format json|md] [--events] | export | create <node-json> | update <id> <patch-json> | link <id> <dep-id> [via] | flag <id> needs-human on|off | claim <id> <actor> [--run <run>] | claim <id> --human <name> | release <id> <reason> | comment <id> <text> | transition <id> <to> [--actor agent|human|promote] [--human <name>] | reconcile [--fix] (docs/delivery_graph_spec.md §6.1)" >&2
   exit 2
 }
 
@@ -86,7 +99,7 @@ op="${1:-}"
 case "$op" in
   ready|list|export) [ $# -eq 0 ] || usage ;;
   reconcile) [ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = --fix ]; } || usage ;;
-  show|claim|create|update|link|flag|release|comment) : ;;
+  show|claim|transition|create|update|link|flag|release|comment) : ;;
   *) usage ;;
 esac
 
@@ -190,6 +203,34 @@ case "$op" in
     rc=0
     bash "$backend" claim "$id" "$actor" "${run:--}" "$by" || rc=$?
     exit "$rc" ;;
+  transition)
+    id="${1:-}" to="${2:-}" actor=agent
+    [ -n "$id" ] && [ "${id#-}" = "$id" ] && [ -n "$to" ] && [ "${to#-}" = "$to" ] || usage
+    shift 2
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --actor) [ $# -ge 2 ] || usage
+                 case "$2" in agent|human|promote) actor="$2" ;; *) usage ;; esac; shift 2 ;;
+        --human) [ $# -ge 2 ] && [ -n "$2" ] || usage; actor=human; shift 2 ;;
+        *) usage ;;
+      esac
+    done
+    # The node as the backend stores it. A backend's `show` serves its delivery
+    # nodes; an id it refuses may still be an `external` node of the list.
+    rc=0
+    bash "$backend" show "$id" > "$tmp/node.json" 2> "$tmp/show.err" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      load_all
+      pjq "$ALL"' | map(select(.id == $id)) | first // empty' "$tmp/nodes.json" -c --arg id "$id" > "$tmp/node.json"
+      if [ ! -s "$tmp/node.json" ]; then cat "$tmp/show.err" >&2; exit "$rc"; fi
+    fi
+    why=$(pjq 'include "node"; include "transitions"; validate_node | transition_error($to; $actor) // empty' \
+      "$tmp/node.json" -r --arg to "$to" --arg actor "$actor")
+    [ -z "$why" ] || { echo "graph.sh: transition refused: $why" >&2; exit 2; }
+    rc=0
+    jq -cn --arg to "$to" '{status: $to}' > "$tmp/patch.json"
+    bash "$backend" update "$id" "$(cat "$tmp/patch.json")" < /dev/null || rc=$?
+    exit "$rc" ;;
   reconcile)
     load_all
     pjq "$ALL" "$tmp/nodes.json" -c > "$tmp/valid.json"
@@ -238,12 +279,14 @@ case "$op" in
       case "$rc" in
         0) echo "fix: $line" ;;
         4) echo "warn: not applied $line: $(cat "$tmp/apply.err")" >&2; status=4 ;;
+        75) echo "warn: not applied $line: $(cat "$tmp/apply.err")" >&2; status=75 ;;
         *) cat "$tmp/apply.err" >&2
            echo "graph.sh: reconcile: failed to apply $line (exit $rc)" >&2; status=1 ;;
       esac
     done < "$tmp/records.jsonl"
     case "$status" in
       4) echo "graph.sh: reconcile: board changed since the plan; stopped applying, re-run reconcile" >&2 ;;
+      75) echo "graph.sh: reconcile: the backend is busy (lock not acquired); stopped applying, retry" >&2 ;;
       1) echo "graph.sh: reconcile: stopped applying after a failed record; fix it, then re-run reconcile" >&2 ;;
     esac
     exit "$status" ;;

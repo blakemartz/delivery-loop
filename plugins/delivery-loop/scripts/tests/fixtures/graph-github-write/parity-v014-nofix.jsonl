@@ -1,0 +1,4 @@
+{"number":3,"title":"merged child","unblocks":0,"size":"S","started":true,"epic":1,"module":"module:a"}
+{"number":6,"title":"open dep","unblocks":1,"size":"M","started":false,"epic":null,"module":"module:b"}
+{"number":4,"title":"blocked, dep done","unblocks":0,"size":"S","started":false,"epic":null,"module":"none"}
+{"number":11,"title":"plain ready","unblocks":0,"size":"S","started":false,"epic":null,"module":"none"}
