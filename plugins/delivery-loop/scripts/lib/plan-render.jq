@@ -5,7 +5,16 @@
 #                  breaks become spaces and every character that Mermaid could
 #                  read as syntax (" [ ] | { } < > ` and # itself) becomes a
 #                  Mermaid entity code (#quot; #91; …). `#` is encoded first so
-#                  a title cannot forge an entity.
+#                  a title cannot forge an entity. Three more, for Mermaid's
+#                  whole-line passes that ignore quoting:
+#                  - `&` becomes #38;, so `&amp;` stays literal text;
+#                  - a `:` not followed by a space becomes #58;, so no line can
+#                    match the `style…:\S*#…;` / `classDef…` pre-pass that
+#                    strips a line's last `;` (the label's own `: ` is safe);
+#                  - the character after `direction` (when not printable ASCII,
+#                    i.e. any whitespace) becomes its code (#32; …), so the
+#                    lexer's `.*direction\s+(TB|BT|RL|LR)` rule, which would
+#                    swallow the line, never matches.
 #   plan_render  — the flowchart, one line per output string:
 #                  - one subgraph per epic, holding one node per task, labeled
 #                    `id: title [module/size]` (the brackets are literal: inside a
@@ -30,7 +39,10 @@ def mermaid_text:
   | gsub("\\|"; "#124;")
   | gsub("\\{"; "#123;") | gsub("\\}"; "#125;")
   | gsub("<"; "#lt;") | gsub(">"; "#gt;")
-  | gsub("`"; "#96;");
+  | gsub("`"; "#96;")
+  | gsub("&"; "#38;")
+  | gsub(":(?! )"; "#58;")
+  | gsub("direction(?<c>[^!-~])"; "direction#\(.c | explode[0]);");
 
 def _mid($prefix): $prefix + gsub("-"; "_");
 
