@@ -24,6 +24,10 @@
 #     one warning is printed per invocation (GC56).
 #   - a `blockedBy` connection whose `totalCount` exceeds its returned `nodes`
 #     is re-read with `gh issue view <n> --json blockedBy` (GC64).
+#   - `gh issue list` returns at most an issue's first 100 comments, with no
+#     total; an issue with 100 is re-read with `gh issue view <n> --json comments`
+#     (complete), so `applied_prs`, `pinged_at` and the claim never truncate (GC74).
+#     One `gh issue view` per short issue fetches every short field at once.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -89,20 +93,23 @@ op_list() {
     echo "graph-github: gh issue list returned $got issues = LIST_LIMIT ($LIST_LIMIT); refusing to truncate (raise LIST_LIMIT)" >&2
     exit 3
   fi
-  if [ "$native" = 1 ]; then
-    # GC64: re-read each overflowing blockedBy connection, then patch them in.
-    echo '{}' > "$tmp/patch.json"
-    local n
-    for n in $(gjq -r 'include "graph-github"; .[] | select(gh_short_blocked) | .number' "$tmp/issues.json"); do
-      gh issue view "$n" --json blockedBy > "$tmp/bb.json" || die "gh issue view $n --json blockedBy failed"
-      jq --arg n "$n" --slurpfile bb "$tmp/bb.json" '.[$n] = $bb[0].blockedBy' \
-        "$tmp/patch.json" > "$tmp/patch.next" && mv "$tmp/patch.next" "$tmp/patch.json"
-    done
-    jq --slurpfile p "$tmp/patch.json" \
-      'map(($p[0][.number | tostring]) as $bb | if $bb != null then .blockedBy = $bb else . end)' \
-      "$tmp/issues.json" > "$tmp/issues.next" && mv "$tmp/issues.next" "$tmp/issues.json"
-    warn_short "$tmp/issues.json"
-  fi
+  # GC64 / GC74: re-read each issue with a short blockedBy connection or a
+  # possibly-truncated comment list, then patch the complete fields in.
+  gjq -r 'include "graph-github"; .[] | gh_reread_fields as $f
+          | select($f != "") | "\(.number) \($f)"' "$tmp/issues.json" > "$tmp/reread.txt"
+  echo '{}' > "$tmp/patch.json"
+  local n fields
+  while read -r n fields; do
+    [ -n "$n" ] || continue
+    gh issue view "$n" --json "$fields" > "$tmp/view.json" \
+      || die "gh issue view $n --json $fields failed"
+    jq --arg n "$n" --slurpfile v "$tmp/view.json" '.[$n] = $v[0]' \
+      "$tmp/patch.json" > "$tmp/patch.next" && mv "$tmp/patch.next" "$tmp/patch.json"
+  done < "$tmp/reread.txt"
+  jq --slurpfile p "$tmp/patch.json" \
+    'map(. + ($p[0][.number | tostring] // {}))' \
+    "$tmp/issues.json" > "$tmp/issues.next" && mv "$tmp/issues.next" "$tmp/issues.json"
+  [ "$native" = 0 ] || warn_short "$tmp/issues.json"
   gjq -c --arg base "$BASE_BRANCH" 'include "graph-github"; gh_nodes($base)' "$tmp/issues.json"
 }
 

@@ -246,7 +246,9 @@ eq "control: the same sweep on a task finds legal moves" true \
        | select(transition_error($t; $a) == null)] | length > 0')"
 
 # The whole table, row by row, plus the edges around it. Each line:
-# <kind> <from> <to> <actor> <legal: 0|1>.
+# <kind> <from> <to> <actor> <legal: 0|1>. ready -> ready is the one identity
+# move: reconcile's stale-claim reclaim on a ready node (claim drift) clears the
+# claim and keeps the status (§5, GC73, issue #52); every other identity is illegal.
 while read -r kind from to actor want; do
   [ -n "$kind" ] || continue
   got=$(jq -n -L "$lib" --arg k "$kind" --arg f "$from" --arg t "$to" --arg a "$actor" \
@@ -289,7 +291,10 @@ task in-review cancelled reconcile 0
 task done cancelled human 0
 task cancelled ready reconcile 0
 task done ready reconcile 0
-task ready ready reconcile 0
+task ready ready reconcile 1
+task ready ready agent 0
+task blocked blocked reconcile 0
+task in-review in-review reconcile 0
 task ready claimed robot 0
 task ready open reconcile 0
 external blocked ready reconcile 0

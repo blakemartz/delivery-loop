@@ -32,8 +32,9 @@
 #   epics/inbox.json      {"schema":1,"epic":null,"nodes":[…]}: nodes with no epic
 #   events.jsonl          append-only journal {ts,actor,run,op,id,from,to,body}
 #   lock/owner            present only while held: "host pid run epoch"
-# Stored nodes omit `pinged_at`: it is derived on read from the newest `comment`
-# event whose body starts `STALE-CLAIM-PING` (§4.1, GC44). A schema other than 1
+# Stored nodes omit `pinged_at` and `applied_prs`, derived on read from journal
+# `comment` events: the newest whose body starts `STALE-CLAIM-PING` (§4.1,
+# GC44), and the PR numbers of those starting `AUTO-CLOSE: PR #<n>` (GC72). A schema other than 1
 # is refused (expected vs found); there are no implicit migrations.
 #
 # Concurrency (§6.3): readers take no lock; every write replaces its file
@@ -376,7 +377,7 @@ gl_ensure_store() {
   [ -f "$GL_EVENTS" ] || : > "$GL_EVENTS"
 }
 
-# Every stored node (pinged_at omitted), one JSON array: per epic file (name
+# Every stored node (pinged_at/applied_prs omitted), one JSON array: per epic file (name
 # order) the epic node then its nodes, then a stable sort by created_at. Each
 # epic file must hold exactly one JSON object: an empty or multi-value file is
 # an error, never "no nodes" (gl_stored rejects empty files by name first).
@@ -411,15 +412,26 @@ gl_stored() {
     || { sed 's/^jq: error (at [^)]*): //' "$GL_TMP/err" >&2; gl_die "cannot read the store at $GL_STATE"; }
 }
 
-# §4.1 nodes: stored nodes + pinged_at from the journal, fields in §4.1 order,
-# each through validate_node, given $ev = the parsed journal events.
+# §4.1 nodes: stored nodes + pinged_at and applied_prs from the journal, fields
+# in §4.1 order, each through validate_node, given $ev = the parsed journal
+# events. applied_prs: per id, the ascending unique PR numbers > 0 that directly
+# follow `AUTO-CLOSE: PR #` in a `comment` body (the gh_applied_prs parse).
 GL_EMIT='include "node";
-  ( $ev[0]
+  def applied_prs:
+    reduce (.[] | select(.op == "comment" and (.id | type) == "string"
+                         and (.body | type) == "string"
+                         and (.body | startswith("AUTO-CLOSE: PR #")))
+              | .id as $id | .body | ltrimstr("AUTO-CLOSE: PR #")
+              | first(match("[0-9]+")) | select(.offset == 0)
+              | .string | tonumber | select(. > 0) | [$id, .]) as $p
+      ({}; .[$p[0]] = (.[$p[0]] + [$p[1]] | unique));
+  ($ev[0] | applied_prs) as $applied
+  | ( $ev[0]
     | reduce (.[] | select(.op == "comment" and (.id | type) == "string"
                            and (.body | type) == "string"
                            and (.body | startswith("STALE-CLAIM-PING")))) as $e
         ({}; .[$e.id] = ([.[$e.id], $e.ts] | max)) ) as $pings
-  | map(. + {pinged_at: ($pings[.id] // null)}
+  | map(. + {pinged_at: ($pings[.id] // null), applied_prs: ($applied[.id] // [])}
         | . as $n | reduce node_fields[] as $k ({}; .[$k] = $n[$k])
         | validate_node)'
 
@@ -478,10 +490,10 @@ gl_put_node() {
       else error("node \($n.id | tojson) is stored \($hits + (if (.epic // {}).id == $n.id then 1 else 0 end)) time(s) in this file (expected exactly 1): nothing replaced") end' "$file"
 }
 
-# gl_validate <stored-node-json>: validate_node with the derived pinged_at.
+# gl_validate <stored-node-json>: validate_node with the derived fields stubbed.
 gl_validate() {
   gl_scratch
-  gl_jq -e 'include "node"; . + {pinged_at: null} | validate_node | true' <<<"$1" > /dev/null 2> "$GL_TMP/err" \
+  gl_jq -e 'include "node"; . + {pinged_at: null, applied_prs: []} | validate_node | true' <<<"$1" > /dev/null 2> "$GL_TMP/err" \
     || { sed 's/^jq: error (at [^)]*): //' "$GL_TMP/err" >&2; gl_die "refusing to store an invalid node"; }
 }
 
@@ -516,7 +528,7 @@ GL_CREATE='
   | if type != "object" then error("node-json must be a JSON object") else . end
   | (keys - allowed) as $bad
   | if ($bad | length) > 0
-    then error("unexpected field(s) \($bad | join(", ")): created_at/updated_at are stamped and pinged_at is derived from the journal")
+    then error("unexpected field(s) \($bad | join(", ")): created_at/updated_at are stamped and pinged_at/applied_prs are derived from the journal")
     else . end
   | if (.kind | type) != "string" then error("`kind` is required (task|epic|promote)")
     elif .kind == "external" then error("the local backend never stores external nodes (§4.1)")
@@ -587,7 +599,7 @@ gl_do_update() {
   old=$(gl_get "$1")
   gl_scratch
   new=$(jq -c --slurpfile p "$(gl_json_file patch "$2")" --arg now "$(gl_now)" '
-    def fixed: ["id", "kind", "epic", "checklist", "created_at", "updated_at", "pinged_at"];
+    def fixed: ["id", "kind", "epic", "checklist", "created_at", "updated_at", "pinged_at", "applied_prs"];
     def allowed: ["title", "module", "size", "deps", "status", "needs_human", "claim",
                   "target_branch", "promote_to", "plan_ref", "body"];
     $p[0] as $p

@@ -37,6 +37,8 @@ def transitions: [
    when: "claim (promote only on kind==promote nodes)"},
   {from: ["claimed"], to: "ready", actors: ["reconcile", "agent", "promote"],
    when: "stale reclaim; claimant releases (promote: red gate, GC50)"},
+  {from: ["in-review", "changes-requested", "approved", "ready"], to: "ready", actors: ["reconcile"],
+   when: "stale agent claim, no open PR (the PR closed unmerged, or claim drift on a ready node): reclaim clears the claim (reconcile rule 5, GC73)"},
   {from: ["claimed"], to: "in-review", actors: ["agent", "reconcile", "promote"],
    when: "PR opened (reconcile: open PR exists, GC43; promote: promotion PR opened, GC51)"},
   {from: ["ready", "blocked"], to: "in-review", actors: ["reconcile"], kinds: ["task", "promote"],

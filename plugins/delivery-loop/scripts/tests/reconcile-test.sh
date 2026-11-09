@@ -5,7 +5,10 @@
 # reconcile side of the `external` node kind, §4.1/§5) and GC69 (§12;
 # §17 row A5, hardened by issue #47), plus the amended §5 rows of
 # lib/transitions.jq that reconcile's records depend on (merged PR -> done from
-# every open status; epic ready -> done; ready/blocked drift -> in-review).
+# every open status; epic ready -> done; ready/blocked drift -> in-review;
+# stale-claim reclaim from in-review/changes-requested/approved/ready), and
+# GC72/GC73 (issue #52: applied_prs respects a reopen; stale agent claims are
+# released from every open status that can hold one).
 #
 # Offline. GC2/GC4/GC6/GC7 reuse the ready fixtures (fixtures/ready/); the other
 # cases are sparse fixtures in fixtures/reconcile/, filled out by expand.jq.
@@ -81,11 +84,36 @@ eq "GC24 reclaim reason keeps the v0.1.4 RECLAIMED text" \
 eq "GC24 records carry exactly {op, id, from, to, reason}" '[["from","id","op","reason","to"]]' \
   "$(jq -c '[.[] | keys] | unique' "$tmp/out")"
 # Any open PR for the node (agent or not) protects the claim (GC33's reaper).
+# Without it, the in-review node's stale claim is released too (GC73).
 run_sparse gc24 '.prs = []'
-eq "GC24 without the PR, the in-review stale claim is reclaimed only if legal" \
-  '["reclaim gc24-stale claimed->ready","reclaim gc24-offset claimed->ready"]' "$(moves)"
-stderr_has "GC24 in-review -> ready is not a reconcile move: warned and skipped" \
-  'skipped reclaim gc24-has-pr: illegal transition "gc24-has-pr": in-review -> ready by reconcile'
+eq "GC24 without the PR, the in-review stale claim is released as well (GC73)" \
+  '["reclaim gc24-stale claimed->ready","reclaim gc24-has-pr in-review->ready","reclaim gc24-offset claimed->ready"]' \
+  "$(moves)"
+eq "GC24 without the PR: no warnings" '' "$(cat "$tmp/err")"
+
+# GC73 (issue #52, O2): v0.1.4 released any stale claim:agent with no open PR,
+# whatever its status label. A stale agent claim on an in-review /
+# changes-requested / approved node (its PR closed unmerged, or none) or on a
+# ready node (claim drift; N-2: a live CLAIM comment with no assignee) is
+# released to ready. An open PR, a fresh claim or a human claim protects it.
+run_sparse gc73
+eq "GC73 stale agent claims released from in-review (closed-unmerged PR), changes-requested, approved, ready" \
+  '["reclaim gc73-in-review in-review->ready","reclaim gc73-changes changes-requested->ready","reclaim gc73-approved approved->ready","reclaim gc73-orphan ready->ready"]' \
+  "$(moves)"
+eq "GC73 every release is a RECLAIMED record (the claim is cleared)" \
+  '["reclaim"]|["RECLAIMED: agent claim was idle >4h with no open PR; task is ready again."]' \
+  "$(jq -c 'map(.op) | unique' "$tmp/out")|$(jq -c 'map(.reason) | unique' "$tmp/out")"
+eq "GC73 no record for the open-PR, fresh and human claims; no warnings" '[]|' \
+  "$(jq -c '[.[] | select(.id == "gc73-open-pr" or .id == "gc73-fresh" or .id == "gc73-human")]' "$tmp/out")|$(cat "$tmp/err")"
+# A released ready node is unclaimed in the working copy: no later rule sees
+# the claim (a reclaim cannot be followed by a ping or a second reclaim).
+run_sparse gc73 '.now += 30 * 24 * 3600'
+eq "GC73 a month later: the same four releases, the human claim gets its one ping" \
+  '["reclaim gc73-in-review in-review->ready","reclaim gc73-changes changes-requested->ready","reclaim gc73-approved approved->ready","reclaim gc73-orphan ready->ready","reclaim gc73-fresh in-review->ready","ping gc73-human in-review->in-review"]' \
+  "$(moves)"
+# needs_human still freezes the claim, from any status.
+run_sparse gc73 '.nodes |= map(.needs_human = true)'
+eq "GC73 needs_human: no release from any status" '[]' "$(jq -c '[.[] | select(.op == "reclaim")]' "$tmp/out")"
 
 # --- rule 3: merged PR -> done ---------------------------------------------------------
 run_sparse gc25
@@ -124,6 +152,23 @@ run_sparse gc42 '.nodes[0] |= (.kind = "promote" | .status = "in-review" | .prom
                  | .prs[0].base = "main"'
 eq "GC42 merged promotion PR into promote_to -> promote node done" \
   '["transition 42 in-review->done"]' "$(moves)"
+
+# GC72 (issue #52, O1): a human reopened task X whose merged PR #172 reconcile
+# already applied (applied_prs) stays open: rule 3 acts once per (node, PR), so
+# the merged-PR feed never re-closes it. The same board without applied_prs
+# closes X and unblocks its dependent, and a newer merged PR still closes X.
+run_sparse gc72
+eq "GC72 reopened task, its merged PR in applied_prs -> no record (dependent stays blocked)" '[]' "$(moves)"
+eq "GC72 skipping an applied PR is a filter, not a warning" '' "$(cat "$tmp/err")"
+run_sparse gc72 '.nodes[0].applied_prs = []'
+eq "GC72 the same board without applied_prs -> 72 done, 73 ready" \
+  '["transition 72 ready->done","transition 73 blocked->ready"]' "$(moves)"
+run_sparse gc72 '.prs += [.prs[0] | .number = 180 | .url = "https://forge.example/pr/180"]'
+eq "GC72 a newer merged PR not yet applied closes the reopened task" \
+  '["PR #180 merged into main"]' "$(jq -c '[.[] | select(.id == "72") | .reason]' "$tmp/out")"
+run_sparse gc72 '.nodes[0].applied_prs = [100, 172]
+                 | .prs = [.prs[0] | ., (.number = 100 | .url = "https://forge.example/pr/100")]'
+eq "GC72 every merged PR already applied -> no record" '[]' "$(moves)"
 
 # --- rule 4: open PR -> in-review --------------------------------------------------------
 run_sparse gc43
@@ -258,10 +303,23 @@ epic ready done human 0
 task ready done agent 0
 task done done reconcile 0
 task cancelled done reconcile 0
+task in-review ready reconcile 1
+task changes-requested ready reconcile 1
+task approved ready reconcile 1
+task ready ready reconcile 1
+promote in-review ready reconcile 1
+task in-review ready agent 0
+task approved ready human 0
+task blocked ready agent 0
+task done ready reconcile 0
 EOF
 eq "the kind-guarded rows: drift repair (task/promote), epic completion (epic)" \
   '[{"from":["ready","blocked"],"to":"in-review","kinds":["task","promote"]},{"from":["ready"],"to":"done","kinds":["epic"]}]' \
   "$(jq -c -n -L "$lib" 'include "transitions"; [transitions[] | select(.kinds) | {from, to, kinds}]')"
+eq "the stale-reclaim rows: claimed (plus claimant release) and every later open status or ready" \
+  '[["claimed"],["approved","changes-requested","in-review","ready"]]' \
+  "$(jq -c -n -L "$lib" 'include "transitions";
+      [transitions[] | select(.to == "ready" and any(.actors[]; . == "reconcile") and (.from != ["blocked"])) | .from | sort]')"
 eq "the merged-PR row covers every open status" \
   '["approved","blocked","changes-requested","claimed","in-review","ready"]' \
   "$(jq -c -n -L "$lib" 'include "transitions";

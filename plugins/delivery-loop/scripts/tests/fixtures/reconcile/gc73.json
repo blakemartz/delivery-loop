@@ -1,0 +1,22 @@
+{"nodes": [
+  {"id": "gc73-in-review", "status": "in-review", "updated_at": "2026-12-01T00:00:00Z",
+   "claim": {"actor": "agent-1", "run": "run-1", "at": "2026-12-01T00:00:00Z", "by": "agent"}},
+  {"id": "gc73-changes", "status": "changes-requested", "updated_at": "2026-12-01T00:00:00Z",
+   "claim": {"actor": "agent-2", "run": "run-2", "at": "2026-12-01T00:00:00Z", "by": "agent"}},
+  {"id": "gc73-approved", "status": "approved", "updated_at": "2026-12-01T00:00:00Z",
+   "claim": {"actor": "agent-3", "run": "run-3", "at": "2026-12-01T00:00:00Z", "by": "agent"}},
+  {"id": "gc73-orphan", "status": "ready", "updated_at": "2026-12-01T00:00:00Z",
+   "claim": {"actor": "agent-4", "run": "host-4-1", "at": "2026-12-01T00:00:00Z", "by": "agent"}},
+  {"id": "gc73-open-pr", "status": "in-review", "updated_at": "2026-12-01T00:00:00Z",
+   "claim": {"actor": "agent-5", "run": "run-5", "at": "2026-12-01T00:00:00Z", "by": "agent"}},
+  {"id": "gc73-fresh", "status": "in-review", "updated_at": "2026-12-31T22:00:00Z",
+   "claim": {"actor": "agent-6", "run": "run-6", "at": "2026-12-31T22:00:00Z", "by": "agent"}},
+  {"id": "gc73-human", "status": "in-review", "updated_at": "2026-12-31T00:00:00Z",
+   "claim": {"actor": "ann", "run": null, "at": null, "by": "human"}}
+ ],
+ "prs": [
+  {"number": 731, "state": "closed", "task_id": "gc73-in-review"},
+  {"number": 735, "state": "open", "task_id": "gc73-open-pr"},
+  {"number": 736, "state": "closed", "task_id": "gc73-fresh"},
+  {"number": 737, "state": "closed", "task_id": "gc73-human"}
+ ]}
