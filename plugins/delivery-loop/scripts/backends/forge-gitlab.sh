@@ -60,7 +60,9 @@
 #     label for any name that does not exist, so the adapter first pages GET
 #     …/labels (project and ancestor-group labels) and exits 1 on an unknown
 #     name before anything is sent: pr-create never creates a label. A name
-#     with a comma is refused too (GitLab label titles cannot hold one).
+#     with a comma is refused too (GitLab label titles cannot hold one), as is
+#     one with a newline or CR, so each --label is exactly one label; both
+#     refusals happen before any request. A repeated name is sent once.
 #   - verdicts and merges pin the head SHA: a pre-read refuses a stale --sha
 #     before any write, the approval carries `sha` and the merge `sha` (409 when
 #     the head moved).
@@ -339,15 +341,26 @@ op_whoami() {
   jq -r '.username' "$tmp/resp"
 }
 
+# check_label_names <name>…: refuse, before any request, a name that would not
+# reach GitLab as exactly one label (`labels` is comma-separated; titles are
+# validated [^,]+) or that holds a line break.
+check_label_names() {
+  local n
+  for n in "$@"; do
+    case "$n" in
+      *,*) die "label names cannot contain ',' on gitlab: $n; nothing created" ;;
+      *$'\n'*|*$'\r'*) die "label names cannot contain a newline or CR: $(printf '%q' "$n"); nothing created" ;;
+    esac
+  done
+}
+
 # resolve_labels <out-file> <name>…: check every name against the project's
 # labels (ancestor-group labels included) and write them as one comma-separated
 # string. An unknown name exits 1 before anything is sent: GitLab would create it.
 resolve_labels() {
   local out="$1" missing
   shift
-  printf '%s\n' "$@" | jq -R . | jq -s . > "$tmp/want.json"
-  jq -e 'any(.[]; test(","))' "$tmp/want.json" >/dev/null \
-    && die "label names cannot contain ',' on gitlab: $(jq -r 'map(select(test(","))) | join(" ")' "$tmp/want.json")"
+  jq -n '$ARGS.positional' --args -- "$@" > "$tmp/want.json"   # argv kept exactly
   paged "$P/labels?include_ancestor_groups=true" "$tmp/labels.json"
   missing=$(jq -r --slurpfile have "$tmp/labels.json" \
               '($have[0] | map(.name)) as $h | map(select(. as $w | $h | index([$w]) | not)) | unique | join(", ")' \
@@ -374,6 +387,7 @@ op_pr_create() {
   [ -n "$head" ] && [ -n "$base" ] && [ -n "$title" ] && [ -f "$body" ] || usage "$u"
   [ -z "$draft" ] || title="Draft: $title"
   if [ "${#names[@]}" -gt 0 ]; then
+    check_label_names "${names[@]}"
     resolve_labels "$tmp/labels.txt" "${names[@]}"
     labels=$(cat "$tmp/labels.txt")
   fi
