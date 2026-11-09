@@ -6,7 +6,8 @@
 #   list        every issue (open and closed) that is a delivery node, plus every
 #               unlabelled issue the graph references (a dep target or an epic
 #               child) as an `external` node (§4.1, §6.2), as one JSON array.
-#   show <id>   one delivery node (the issue number), as one JSON object.
+#   show <id>   one delivery node (the issue number), as one JSON object; warns on
+#               stderr for each key line outside its trailer block (§6.2).
 #   migrate-plan
 #               the native edges `graph.sh migrate` adds (task B3, §6.2): one
 #               JSON array of {id, links, parent, blockers, warnings}, one entry
@@ -16,11 +17,16 @@
 # Write primitives (task B2; ids are issue numbers):
 #   create <node-json>|-          `gh issue create` with the kind/status/module/
 #                                 size/needs-human labels, native `--parent` and
-#                                 `--blocked-by`, and the `Delivery-Target:` /
-#                                 `Delivery-Plan:` / `Delivery-Promote-To:` body
-#                                 lines (the last on promote nodes only); a dep
-#                                 with a `via` also gets its `Depends-on: #<dep>
-#                                 (via: …)` line. Prints the new issue number.
+#                                 `--blocked-by`, and the body's trailer block
+#                                 (§6.2), always appended after a blank line:
+#                                 `Delivery-Target:` (BASE_BRANCH when unset) /
+#                                 `Delivery-Plan:` / `Delivery-Promote-To:`
+#                                 (promote nodes only); a dep with a `via` also
+#                                 gets its `Depends-on: #<dep> (via: …)` line.
+#                                 Every value must be one token and every via
+#                                 one line (gh_trailer_token / gh_via_ok;
+#                                 refused before any gh call).
+#                                 Prints the new issue number.
 #                                 Never creates an `external` node, and refuses
 #                                 an `id` (GitHub numbers issues).
 #   update <id> <patch-json>|- [--actor <name>]
@@ -36,8 +42,10 @@
 #                                 it closes).
 #   link <id> <dep-id> [via]      `gh issue edit --add-blocked-by`; a via (or a
 #                                 gh without native relations) is recorded as a
-#                                 `Depends-on: #<dep> (via: …)` body line.
-#                                 Idempotent.
+#                                 `Depends-on: #<dep> (via: …)` body line. A
+#                                 via must be one line the read takes back
+#                                 whole (gh_via_ok, as for create; refused
+#                                 before any gh call). Idempotent.
 #   parent <id> <epic-id>         `gh issue edit --parent` (task B3). Idempotent;
 #                                 refuses an issue that already has a different
 #                                 parent (re-parenting is a human's call) and a
@@ -280,6 +288,11 @@ op_show() {
   need_n "$1" "show <id>"
   read_issue "$1"
   node_of_issue "$1"
+  # A key line outside the trailer block is prose (§6.2): say so, since a fenced
+  # example or an appended key paragraph below the block can win over it.
+  gjq -r --arg id "$1" 'include "graph-github"; gh_stray_key_lines[]
+      | "graph-github: warning: #\($id): key line outside the trailer block, read as prose: \(.)"' \
+    "$tmp/issue.json" >&2
 }
 
 # --- writes -----------------------------------------------------------------------
@@ -337,8 +350,11 @@ op_create() {
   [ "$in" != - ] || in=$(cat)
   one_object "create: node-json" "$in"
   printf '%s' "$in" > "$tmp/in.json"
-  gjq -e --arg base "$BASE_BRANCH" '
+  gjq -e --arg base "$BASE_BRANCH" 'include "graph-github";
     def str: type == "string" and length > 0;
+    # A trailer value (§6.2): one token, so the line create writes is a valid
+    # trailer line that reads back whole (#77 review B; gh_trailer_token).
+    def tok: gh_trailer_token;
     def allowed: ["kind", "title", "body", "epic", "deps", "module", "size", "status",
                   "needs_human", "target_branch", "promote_to", "plan_ref"];
     if has("id") then error("create: github assigns issue numbers; drop `id`")
@@ -357,28 +373,37 @@ op_create() {
     elif .module != null and ((.module | str | not) or (.module | startswith("module:"))) then
       error("create: module must be a bare module name or null")
     elif (.size as $s | ["S", "M", "L", null] | index($s)) == null then error("create: size must be S|M|L or null")
+    elif any((.deps // [])[]; type == "object" and .via != null and (.via | gh_via_ok | not)) then
+      error("create: a dep via must be a non-empty one-line string with no leading/trailing whitespace")
     elif .promote_to != null and .kind != "promote" then error("create: promote_to is for promote nodes only")
-    elif .plan_ref != null and ((.plan_ref | type) != "string" or (.plan_ref | test("^[^/]+/[^/]+$") | not)) then
-      error("create: plan_ref must be <plan>/<plan-task-id>")
-    elif .target_branch != null and (.target_branch | str | not) then error("create: target_branch must be a non-empty string")
+    elif .kind == "promote" and (.promote_to | tok | not) then
+      error("create: a promote node needs promote_to, one token (no whitespace) (got \(.promote_to | tojson))")
+    elif .plan_ref != null and ((.plan_ref | tok | not) or (.plan_ref | test("^[^/]+/[^/]+$") | not)) then
+      error("create: plan_ref must be <plan>/<plan-task-id>, one token (got \(.plan_ref | tojson))")
+    elif .target_branch != null and (.target_branch | tok | not) then
+      error("create: target_branch must be one token (no whitespace) (got \(.target_branch | tojson))")
+    elif .target_branch == null and ($base | tok | not) then
+      error("create: BASE_BRANCH (the default target_branch) must be one token (got \($base | tojson))")
     else true end' "$tmp/in.json" > /dev/null 2> "$tmp/err" \
     || { sed 's/^jq: error (at [^)]*): //' "$tmp/err" >&2; die "create: invalid node (nothing written)"; }
-  # Body: the contract, then the trailer lines it does not already carry.
-  jq -r --argjson native "$native" '
-    def lines: (.body // "") | split("\n") | map(rtrimstr("\r"));
-    def has_key($k): any(lines[]; test("^" + $k + ":"));
+  # Body: the contract (trailing whitespace dropped), a blank line, then the
+  # trailer block (§6.2), always written whole: the read takes machine keys
+  # from the body's last trailer paragraph only, so a key line in the contract
+  # is prose and never stands in for one here (#77). Delivery-Target is always
+  # written (BASE_BRANCH when unset, as the local backend stores it), so the
+  # block always has a key line and wins over any key paragraph in the contract.
+  jq -r --argjson native "$native" --arg base "$BASE_BRANCH" '
+    def rtrim_ws: if length > 0 and (.[-1:] | test("[ \t\r\n]")) then .[:-1] | rtrim_ws else . end;
     ((.deps // []) | map(if type == "object" then {id: (.id | tostring), via: .via} else {id: tostring, via: null} end)) as $deps
-    | [ (if .target_branch != null and (has_key("Delivery-Target") | not) then "Delivery-Target: \(.target_branch)" else empty end),
-        (if .plan_ref != null and (has_key("Delivery-Plan") | not) then "Delivery-Plan: \(.plan_ref)" else empty end),
-        (if .kind == "promote" and .promote_to != null and (has_key("Delivery-Promote-To") | not)
-         then "Delivery-Promote-To: \(.promote_to)" else empty end),
+    | [ "Delivery-Target: \(.target_branch // $base)",
+        (if .plan_ref != null then "Delivery-Plan: \(.plan_ref)" else empty end),
+        (if .kind == "promote" and .promote_to != null then "Delivery-Promote-To: \(.promote_to)" else empty end),
         (if $native == 0 and .epic != null then "Part of epic #\(.epic)" else empty end),
         ($deps[] | select($native == 0 or .via != null)
-         | "Depends-on: #\(.id)\(if .via != null then " (via: \(.via))" else "" end)") ] as $extra
-    | ((.body // "") | rtrimstr("\n")) as $b
-    | if $extra == [] then $b
-      elif $b == "" then $extra | join("\n")
-      else $b + "\n\n" + ($extra | join("\n")) end' "$tmp/in.json" > "$tmp/body.md"
+         | "Depends-on: #\(.id)\(if .via != null then " (via: \(.via))" else "" end)") ] as $trailer
+    | ((.body // "") | rtrim_ws) as $b
+    | if $b == "" then $trailer | join("\n")
+      else $b + "\n\n" + ($trailer | join("\n")) end' "$tmp/in.json" > "$tmp/body.md"
   jq -r --argjson native "$native" '
     "--title", .title, "--body-file", $ARGS.named.body,
     "--label", .kind, "--label", "status:\(.status // "ready")",
@@ -470,6 +495,10 @@ op_link() {
   local n="$1" dep="$2" via=null
   [ $# -lt 3 ] || via=$(jq -cn --arg v "$3" '$v')
   [ "$via" = null ] || [ "$3" != "" ] || die "link: an empty via (omit it for a legacy edge)"
+  # The via becomes a trailer line: the same check as create's (#77 review B′),
+  # before any gh call.
+  [ "$via" = null ] || gjq -e --argjson v "$via" -n 'include "graph-github"; $v | gh_via_ok' > /dev/null \
+    || die "link: the via must be one line with no leading/trailing whitespace (got $via; nothing written)"
   read_node "$n"
   : > "$tmp/link.args"
   if [ "$native" = 1 ] && ! jq -e --arg d "$dep" 'any((.blockedBy.nodes // [])[]; (.number | tostring) == $d)' "$tmp/issue.json" > /dev/null; then
