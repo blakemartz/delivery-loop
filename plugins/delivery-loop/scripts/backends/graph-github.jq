@@ -28,6 +28,9 @@
 #                      timeline's ClosedEvent closers (GC75) into `_closed_by_prs`.
 #   gh_timeline_closers($repo) — a `gh api graphql` timeline response → the
 #                      numbers of the PRs of repo $repo that closed the issue.
+#   gh_migrate_plan  — a raw issue array → the native edges `graph.sh migrate`
+#                      adds to each open task: its legacy `Depends-on:` refs and
+#                      `Part of epic #E` parent (task B3, §6.2, GC48).
 #
 # Field derivation (github column of §4.1):
 #   kind        `task` label, else `epic`, else `promote` (v0.1.4 listed every
@@ -330,3 +333,41 @@ def gh_link_body($dep; $via):
 # (with exactly $via, when $via is a string).
 def gh_has_text_edge($dep; $via):
   any(_text_edges[]; .id == $dep and ($via == null or .via == $via));
+
+# --- migrate (task B3) ------------------------------------------------------------
+
+# The epic of a `Part of epic #E` body line (§6.2: the legacy parent), or null.
+def _gh_part_of_epic:
+  [ _lines[] | capture("Part of [Ee]pic #(?<e>[0-9]+)") | .e ] | first // null;
+
+# gh_migrate_plan — input: a raw issue array (complete blockedBy). For every open
+# task, the native edits that carry its legacy text edges over (§6.2, GC48):
+#   {id, links: [dep ids with a `Depends-on:` line but no native blocked-by, in
+#    numeric order], parent: the `Part of epic #E` epic when there is no native
+#    parent (else null), blockers: the native blocked-by count once the links
+#    are added, warnings: [text]}.
+# In ascending issue order (gh lists newest first). A task with nothing to add
+# and nothing to warn about is left out, so a
+# migrated board plans []. Text lines are never removed. The parent is set only
+# when it is the epic the node already reads (gh_epic's body fallback), so
+# migrating never changes a node's epic; a self edge is never linked.
+def gh_migrate_plan:
+  [ .[] | select(gh_kind == "task" and .state == "OPEN")
+    | (.number | tostring) as $id
+    | gh_native_deps as $native
+    | ([ _text_edges[].id ] | unique | sort_by(tonumber)) as $text
+    | ([ $text[] | select(. as $d | $d != $id and ($native | index($d)) == null) ]) as $links
+    | (if (.parent | type) == "object" and .parent.number != null then null
+       else _gh_part_of_epic end) as $part
+    | gh_epic as $epic
+    | { id: $id,
+        links: $links,
+        parent: (if $part != null and $part == $epic and $part != $id then $part else null end),
+        blockers: (([ (.blockedBy.totalCount // 0), ($native | length) ] | max) + ($links | length)),
+        warnings: [ (if ($text | index($id)) != null then "#\($id) Depends-on: itself; not linked" else empty end),
+                    (if $part != null and $part == $id then "#\($id) is Part of epic of itself; parent not set"
+                     elif $part != null and $part != $epic
+                     then "#\($id) reads epic #\($epic) but has `Part of epic #\($part)`; parent not set (fix the body)"
+                     else empty end) ] }
+    | select(.links != [] or .parent != null or .warnings != []) ]
+  | sort_by(.id | tonumber);

@@ -1,0 +1,289 @@
+[
+  {
+    "number": 1,
+    "title": "epic E",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_epic",
+        "name": "epic",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "- [ ] #2\n- [ ] #3\n- [ ] #4",
+    "createdAt": "2026-01-01T00:00:01Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 2,
+    "title": "legacy edges and parent",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:blocked",
+        "name": "status:blocked",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size:S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Part of epic #1\n\n## Context\nx\n\nDepends-on: #3\nDepends-on: #9",
+    "createdAt": "2026-01-01T00:00:02Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 3,
+    "title": "already native",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:ready",
+        "name": "status:ready",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size:S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Part of epic #1",
+    "createdAt": "2026-01-01T00:00:03Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": {
+      "number": 1
+    },
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 4,
+    "title": "half native, one via",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:blocked",
+        "name": "status:blocked",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Part of epic #1\nDepends-on: #2, #3 (via: shared config)",
+    "createdAt": "2026-01-01T00:00:04Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [
+        {
+          "number": 2,
+          "state": "OPEN"
+        }
+      ],
+      "totalCount": 1
+    },
+    "parent": {
+      "number": 1
+    },
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 5,
+    "title": "closed task",
+    "state": "CLOSED",
+    "stateReason": "COMPLETED",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Part of epic #1\nDepends-on: #2",
+    "createdAt": "2026-01-01T00:00:05Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 6,
+    "title": "an epic with a dep line",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_epic",
+        "name": "epic",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Depends-on: #2",
+    "createdAt": "2026-01-01T00:00:06Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 7,
+    "title": "depends on itself",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:ready",
+        "name": "status:ready",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Depends-on: #7",
+    "createdAt": "2026-01-01T00:00:07Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 8,
+    "title": "epic text disagrees",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status:ready",
+        "name": "status:ready",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Supersedes epic #6.\nPart of epic #1",
+    "createdAt": "2026-01-01T00:00:08Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 9,
+    "title": "an unlabelled dep target",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [],
+    "assignees": [],
+    "body": "not a delivery issue",
+    "createdAt": "2026-01-01T00:00:09Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  },
+  {
+    "number": 10,
+    "title": "unlabelled, with dep text",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [],
+    "assignees": [],
+    "body": "Depends-on: #2",
+    "createdAt": "2026-01-01T00:00:10Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "closedByPullRequestsReferences": []
+  }
+]
