@@ -20,11 +20,22 @@
 #      removed. Two PRs green on their own can be red together, and a forge
 #      reports a behind PR as clean when nothing requires it to be up to date.
 #      A conflicting or red merged result prints a `rebase` action on stdout
-#      for the tick to dispatch (or, at the patch budget, asks for a human)
+#      for the tick to dispatch and exits 1. At the patch budget it escalates
+#      instead: flags the node needs-human, comments, runs
+#      NOTIFY_ESCALATE_CMD, prints {pr, id, result: "needs-human", reason}
 #      and exits 1.
+#      The gate runs with lib/config.sh's keys unset, so the merged tree's own
+#      .claude/delivery.conf governs it (lib/worktree-gate.sh).
 #   4. origin/<base> must not have moved since the gate ran.
+#      An inherent window remains: the base can still move between this check
+#      and the merge in step 5, and no forge merge API pins the base sha (only
+#      the head). The gate vouches for the merge onto the base it saw, not
+#      for the exact tree that lands; the next gate on that base catches it.
 #   5. `forge.sh pr-merge <pr> --method $TASK_MERGE_METHOD --sha <sha>` (the
-#      forge refuses a moved head), then a re-read must show `merged`.
+#      forge refuses a moved head), then a re-read must show `merged` (at
+#      <sha>). The re-read decides even when pr-merge fails: a merge that
+#      landed before the forge call died (a signal, a lost response) is
+#      reported as merged.
 #   6. `graph.sh reconcile --fix`, so the task goes done (rule 3); a failure
 #      there is a warning only, since the merge has landed.
 # Promotion PRs (PROMOTE_MERGE_METHOD) are a human's to merge (§9): refused.
@@ -33,10 +44,20 @@
 # config combination is validated once, before any I/O (§11).
 #
 # Stdout: one JSON line: {pr, result: "merged", sha}, or the rebase action
-# {action: "rebase", pr, id, reason} for a red or conflicting merged result.
+# {action: "rebase", pr, id, reason} for a red or conflicting merged result,
+# or {pr, id, result: "needs-human", reason} for one at the patch budget.
 # Reasons, gate output and progress go to stderr.
 #
-# Exit codes: 0 merged · 1 refused / not merged / invalid config · 2 usage.
+# Exit codes: 0 merged · 1 refused / not merged / invalid config · 2 usage ·
+# 128+n killed by signal n (the running gate stopped, nothing merged).
+# Signals: one (INT, TERM, HUP) that arrives from the merge request on is held
+# until the merge is settled: a landed merge is reconciled and its `merged`
+# line printed, then the script exits 128+n. Before the merge request a
+# signal exits at once, stopping a running gate.
+# SIGINT cannot be trapped when a non-interactive shell without job control
+# starts this script in the background (`tick-merge.sh … &`): POSIX has such
+# a child ignore INT at entry, so INT is then a no-op. Use TERM, or start it
+# with job control (`set -m`).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/config.sh
@@ -56,14 +77,28 @@ cd "$(git rev-parse --show-toplevel)"
 
 graph() { bash "$SCRIPT_DIR/graph.sh" "$@"; }
 forge() { bash "$SCRIPT_DIR/forge.sh" "$@"; }
-refuse() { echo "tick-merge: refusing PR #$pr: $*" >&2; exit 1; }
+refuse() { echo "tick-merge: refusing PR #$pr: $*" >&2; exit "${pending_sig:-1}"; }
 
 POLLS=3        # extra re-reads past the adapter's own re-polls (§7.3)
 POLL_SLEEP=10
 PATCH_BUDGET=3 # tick-plan.jq patch_budget: rebases stop here (§5 rule 3)
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/dl-tick-merge.XXXXXX")"
-trap 'dl_gate_cleanup; rm -rf "$tmp"' EXIT
+defer=""       # set from the merge request on: a signal waits for the outcome
+pending_sig=""
+# A signal exits through the EXIT trap, which stops the gate and drops its tree.
+on_exit() {
+  local st=$?
+  trap '' INT TERM HUP
+  dl_gate_cleanup
+  rm -rf "$tmp"
+  exit "$st"
+}
+on_signal() { if [ -n "$defer" ]; then pending_sig="$1"; else exit "$1"; fi; }
+trap on_exit EXIT
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+trap 'on_signal 129' HUP
 
 # 1. A fresh read, past a still-computing mergeability.
 forge pr-view "$pr" > "$tmp/pr.json" || refuse "cannot read it (forge.sh pr-view)"
@@ -112,15 +147,35 @@ git cat-file -e "$sha^{commit}" 2>/dev/null \
   || refuse "cannot fetch its head $(f .head)"
 git cat-file -e "$sha^{commit}" 2>/dev/null || refuse "its head $sha is not on origin/$(f .head)"
 
+# rebase_action <reason>: under the patch budget, a rebase action for the tick;
+# at it, a structural escalation (needs-human, comment, notify), as promote.sh
+# does on a red gate. Exits 1 either way.
 rebase_action() {
+  local it
   echo "tick-merge: PR #$pr: $1" >&2
-  if [ "$(f .patch_iteration)" -lt "$PATCH_BUDGET" ]; then
+  it=$(f .patch_iteration)
+  if [ "$it" -lt "$PATCH_BUDGET" ]; then
     jq -cn --argjson pr "$pr" --arg id "$task" --arg r "$1" \
       '{action: "rebase", pr: $pr, id: $id, reason: $r}'
-  else
-    echo "tick-merge: PR #$pr is at patch iteration $(f .patch_iteration)/$PATCH_BUDGET: needs a human update" >&2
+    refuse "$1"
   fi
-  refuse "$1"
+  {
+    echo "MERGE-NEEDS-HUMAN: PR #$pr is at patch iteration $it/$PATCH_BUDGET and still cannot merge: $1"
+    if [ -s "$tmp/gate.log" ]; then
+      echo
+      echo '```'
+      tail -n 60 "$tmp/gate.log"
+      echo '```'
+    fi
+  } > "$tmp/escalate.md"
+  graph flag "$task" needs-human on >&2 || echo "tick-merge: could not flag $task needs-human" >&2
+  graph comment "$task" - < "$tmp/escalate.md" >&2 || echo "tick-merge: could not comment on $task" >&2
+  if [ -n "${NOTIFY_ESCALATE_CMD:-}" ]; then
+    ( eval "$NOTIFY_ESCALATE_CMD" ) >&2 || echo "tick-merge: NOTIFY_ESCALATE_CMD failed" >&2
+  fi
+  jq -cn --argjson pr "$pr" --arg id "$task" --arg r "$1" \
+    '{pr: $pr, id: $id, result: "needs-human", reason: $r}'
+  refuse "$1 (patch budget $PATCH_BUDGET reached: $task flagged needs-human)"
 }
 
 rc=0
@@ -138,13 +193,25 @@ now_base=$(git ls-remote origin "refs/heads/$base" | cut -f1) || now_base=""
 [ "$now_base" = "$gated_base" ] \
   || refuse "origin/$base moved from $gated_base to ${now_base:-?} while the gate ran; re-plan"
 
-# 5. Merge, pinned to the head, then verify.
-forge pr-merge "$pr" --method "$TASK_MERGE_METHOD" --sha "$sha" >&2 \
-  || refuse "forge.sh pr-merge failed (not merged)"
-forge pr-view "$pr" > "$tmp/after.json" || refuse "merged, but the re-read failed: verify it by hand"
+# 5. Merge, pinned to the head, then verify. From the request on, a signal is
+# held until the merge is reported (a landed merge is never left unreported).
+defer=1
+merge_rc=0
+forge pr-merge "$pr" --method "$TASK_MERGE_METHOD" --sha "$sha" >&2 || merge_rc=$?
+if ! forge pr-view "$pr" > "$tmp/after.json"; then
+  [ "$merge_rc" = 0 ] || refuse "forge.sh pr-merge failed (exit $merge_rc), and the re-read failed: verify it by hand"
+  refuse "merged, but the re-read failed: verify it by hand"
+fi
 after=$(jq -r .state "$tmp/after.json")
+if [ "$merge_rc" != 0 ]; then
+  [ "$after" = merged ] && [ "$(jq -r .head_sha "$tmp/after.json")" = "$sha" ] \
+    || refuse "forge.sh pr-merge failed (exit $merge_rc; not merged)"
+  echo "tick-merge: forge.sh pr-merge exited $merge_rc, but PR #$pr is merged at $sha" >&2
+fi
 [ "$after" = merged ] || refuse "the forge reports it $after after the merge, not merged"
 
 # 6. The task goes done (reconcile rule 3).
 graph reconcile --fix >&2 || echo "tick-merge: warn: reconcile --fix failed after merging PR #$pr; the next tick reconciles" >&2
 jq -cn --argjson pr "$pr" --arg sha "$sha" '{pr: $pr, result: "merged", sha: $sha}'
+defer=""
+[ -z "$pending_sig" ] || exit "$pending_sig"

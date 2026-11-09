@@ -15,13 +15,29 @@
 #      NOTIFY_ESCALATE_CMD, release the claim, exit 1; no PR (GC50).
 #   5. Green: open the promotion PR (head T, base P, title `Promote T → P`, a
 #      body listing the plan's done tasks and `Delivery-Task: <id>`) through
-#      `forge.sh pr-create`, or reuse the open PR already on head T into P,
-#      then set the node in-review (GC51).
+#      `forge.sh pr-create --label agent-authored`, or reuse the open PR
+#      already on head T into P, then set the node in-review (GC51).
 # A failure that is not the gate's (git, forge, graph) releases the claim and
-# exits 1 without setting needs-human, so the next tick retries.
+# exits 1 without setting needs-human, so the next tick retries. So does any
+# other exit while the claim is held and no PR exists: a signal (INT, TERM,
+# HUP: exit 128+n, the running gate stopped) or an unplanned `set -e` exit,
+# through the EXIT trap. Once the PR exists the claim is left for reconcile
+# (rule 4: claimed + an open agent PR -> in-review).
+# Signals: one that arrives while `graph claim`, the PR find/create, or the
+# in-review transition runs is held until that step's outcome is known, then
+# honoured (exit 128+n). A signal sent to the whole process group (Ctrl-C, a
+# terminal hangup, `kill -- -pgid`) also kills that step's child, so its
+# outcome is re-read: a claim carrying this run's id is released; once the
+# gate has passed, an open promotion PR (head T into P, `forge.sh pr-find`)
+# keeps the claim. A PR that was opened is still reported on stdout.
+# SIGINT cannot be trapped when a non-interactive shell without job control
+# starts this script in the background (`promote.sh … &`): POSIX has such a
+# child ignore INT at entry, so INT is then a no-op. Use TERM, or start it
+# with job control (`set -m`).
 #
 # The promotion PR is never auto-merged (GC39): a human merges it with
-# PROMOTE_MERGE_METHOD, and reconcile marks the node done (§9).
+# PROMOTE_MERGE_METHOD, and reconcile marks the node done (§9, rule 3). The
+# `agent-authored` label is what makes it an agent PR to reconcile.
 #
 # Every graph and forge call goes through graph.sh / forge.sh (§3 rule 3). The
 # config combination is validated once, before any I/O (§11, GC59).
@@ -30,7 +46,8 @@
 # url?}. Progress, gate output and errors go to stderr.
 #
 # Exit codes: 0 done or promoted · 1 refused / red gate / failed / invalid
-# config · 2 usage.
+# config · 2 usage · 128+n killed by signal n (claim released unless the PR
+# exists).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/config.sh
@@ -48,10 +65,51 @@ cd "$(git rev-parse --show-toplevel)"
 
 graph() { bash "$SCRIPT_DIR/graph.sh" "$@"; }
 forge() { bash "$SCRIPT_DIR/forge.sh" "$@"; }
-die()   { echo "promote: $*" >&2; exit 1; }
+die()   { echo "promote: $*" >&2; exit "${pending_sig:-1}"; }
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/dl-promote.XXXXXX")"
-trap 'dl_gate_cleanup; rm -rf "$tmp"' EXIT
+run="promote-$(uname -n)-$$-$(date +%s)"   # this run's claim id, computed once
+held=""        # set while the claim is held and nothing settles it
+gated=""       # set once the gate passed: from here a promotion PR may exist
+defer=""       # set while a step whose outcome must be known runs
+pending_sig=""
+
+# pr_open: an open promotion PR on head T into P exists (a failed read: no).
+pr_open() {
+  local j
+  j=$(forge pr-find --head "$T" 2>/dev/null) || return 1
+  [ -n "$j" ] && [ "$(jq -r .base <<<"$j")" = "$P" ]
+}
+
+# release_claim <reason>: hand back a claim nothing settled, unless the gate
+# passed and the promotion PR is open (then reconcile rule 4 owns it).
+release_claim() {
+  [ -n "$held" ] || return 0
+  held=""
+  if [ -n "$gated" ] && pr_open; then
+    echo "promote: the promotion PR ($T into $P) is open: $id keeps its claim for reconcile (rule 4)" >&2
+    return 0
+  fi
+  graph release "$id" "promote.sh: $1" >&2 || echo "promote: could not release $id" >&2
+}
+
+# on_exit: stop the gate and drop its worktree, then hand back a claim no
+# planned path settled (a signal, or an unplanned `set -e` exit).
+on_exit() {
+  local st=$?
+  trap '' INT TERM HUP
+  dl_gate_cleanup
+  release_claim "interrupted (exit $st) before opening a PR"
+  rm -rf "$tmp"
+  exit "$st"
+}
+on_signal() { if [ -n "$defer" ]; then pending_sig="$1"; else exit "$1"; fi; }
+# honour: leave a deferred step, then act on a signal it held.
+honour() { defer=""; [ -z "$pending_sig" ] || exit "$pending_sig"; }
+trap on_exit EXIT
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+trap 'on_signal 129' HUP
 
 graph show "$id" > "$tmp/node.json" || die "cannot read node $id (graph.sh show)"
 kind=$(jq -r .kind "$tmp/node.json")
@@ -67,15 +125,28 @@ done
 
 # 1. Claim. graph.sh runs the policy pre-check (ready, unclaimed, not
 # needs-human) before the backend's atomic test-and-set.
-graph claim "$id" promote --run "promote-$(uname -n)-$$-$(date +%s)" >&2 \
-  || die "could not claim $id (lost the race, or not claimable)"
+# A signal during the claim is held until its outcome is known, so a claim
+# that lands is released rather than leaked. A group signal kills graph.sh
+# too, possibly after the backend claim landed: re-read whose claim it is.
+defer=1
+if graph claim "$id" promote --run "$run" >&2; then
+  held=1
+elif [ -n "$pending_sig" ]; then
+  if graph show "$id" 2>/dev/null | jq -e --arg run "$run" '(.claim // {}).run == $run' >/dev/null; then
+    held=1
+  fi
+  exit "$pending_sig"
+else
+  die "could not claim $id (lost the race, or not claimable)"
+fi
+honour
 
 # release_fail <message>: a failure that is not the gate's. Hand the node back
-# for the next tick and exit 1.
+# for the next tick (unless its promotion PR is open) and exit 1.
 release_fail() {
   echo "promote: $1" >&2
-  graph release "$id" "promote.sh: $1" >&2 || echo "promote: could not release $id" >&2
-  exit 1
+  release_claim "$1"
+  exit "${pending_sig:-1}"
 }
 
 # 2. Identical trees: nothing to promote (GC49).
@@ -87,6 +158,7 @@ if git diff --quiet "origin/$P" "origin/$T"; then
   graph comment "$id" "nothing to promote: origin/$T and origin/$P have identical trees." >&2 \
     || release_fail "cannot comment on $id"
   graph transition "$id" done --actor promote >&2 || release_fail "cannot set $id done"
+  held=""
   jq -cn --arg id "$id" '{id: $id, result: "nothing-to-promote"}'
   exit 0
 fi
@@ -112,15 +184,22 @@ case "$rc" in
      fi
      graph release "$id" "promote.sh: gate red on origin/$T; needs a human" >&2 \
        || echo "promote: could not release $id" >&2
+     held=""
      die "gate red on origin/$T: $id flagged needs-human, no PR opened" ;;
   *) release_fail "cannot run the gate on origin/$T (worktree-gate exit $rc)" ;;
 esac
+gated=1
 
-# 5. Green (GC51): open (or reuse) the promotion PR, then in-review.
+# 5. Green (GC51): open (or reuse) the promotion PR, then in-review. A signal
+# from the PR find on is held: the PR's existence decides the claim
+# (release_claim), and an opened PR is still reported.
+defer=1
 pr_json=$(forge pr-find --head "$T") || release_fail "forge pr-find --head $T failed"
 if [ -n "$pr_json" ] && [ "$(jq -r .base <<<"$pr_json")" = "$P" ]; then
+  held=""   # the PR exists: from here reconcile (rule 4) repairs the status
   echo "promote: reusing open PR #$(jq -r .number <<<"$pr_json") ($T into $P)" >&2
 else
+  honour    # no PR yet: a held signal releases the claim
   graph list > "$tmp/nodes.json" || release_fail "cannot list nodes (graph.sh list)"
   # The plan's done tasks: tasks sharing this node's plan (plan_ref prefix),
   # or children of its dep epics.
@@ -145,9 +224,14 @@ else
     echo
     echo "Delivery-Task: $id"
   } > "$tmp/body.md"
-  pr_json=$(forge pr-create --head "$T" --base "$P" --title "Promote $T → $P" --body-file "$tmp/body.md") \
+  # agent-authored: reconcile (rule 3) closes the node once a human merges it.
+  defer=1
+  pr_json=$(forge pr-create --head "$T" --base "$P" --title "Promote $T → $P" \
+              --body-file "$tmp/body.md" --label agent-authored) \
     || release_fail "forge pr-create ($T into $P) failed"
+  held=""   # the PR exists: from here reconcile (rule 4) repairs the status
 fi
 graph transition "$id" in-review --actor promote >&2 \
   || die "PR opened but $id could not be set in-review; reconcile repairs it (rule 4)"
 jq -c --arg id "$id" '{id: $id, result: "promoted", pr: .number, url: .url}' <<<"$pr_json"
+honour

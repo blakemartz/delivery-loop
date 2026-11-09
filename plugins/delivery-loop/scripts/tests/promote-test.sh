@@ -3,8 +3,25 @@
 # golden cases GC49, GC50, GC51, GC52, GC39 (the tick-merge refusal) and GC59
 # (the promote.sh part) — §17 row E4 — plus the merged-result gate of
 # tick-merge (a PR green alone but red merged with its base is not merged: it
-# gets a rebase action), a conflicting merge, the mergeability re-poll, the
-# post-merge re-read, and that no gate worktree is left behind.
+# gets a rebase action; at the patch budget it escalates to needs-human), a
+# conflicting merge, the mergeability re-poll, the post-merge re-read, the
+# base-moved and head-moved-during-the-gate refusals, and that no gate worktree
+# is left behind. Also: promote.sh labels its PR agent-authored (reconcile then
+# closes the node on a merge), releases its claim on SIGTERM during the gate,
+# and both scripts' gates resolve the gated tree's own .claude/delivery.conf,
+# not the caller's exported config.
+# Signal windows: TERM, INT and HUP, each sent to the script's PID alone and
+# to its whole process group (Ctrl-C, a hangup, `kill -- -pgid`), while
+# promote.sh's `graph claim` has landed (the claim is released, not leaked),
+# while its `gh pr create` has recorded the PR (the claim is kept for
+# reconcile, not released), and while tick-merge.sh's `gh pr merge` has landed
+# (the merge is still reconciled and reported). And a gate that ignores TERM
+# is KILLed after a bounded wait, so the caller still exits.
+# The claim window pauses a copy of the engine ($tmp/eng: graph.sh patched to
+# wait on $SHIM_STATE/pause-claim after the backend claim); the gh windows are
+# the shim's pause-create / pause-merge. Each signal run is a job of its own
+# (set -m: its own process group, and INT not ignored at entry) with a private
+# TMPDIR, since a group signal kills helpers before their own cleanup.
 #
 # Offline: a throwaway repo under ${TMPDIR:-/tmp} clones a bare local "origin".
 # The graph is GRAPH_BACKEND=local (a private STATE_DIR per case); the forge is
@@ -45,33 +62,50 @@ git init -q "$tmp/seed"
   git checkout -q -b task/x--ok fork;   echo ok > ok-file;   git add ok-file;   git commit -q -m ok
   git checkout -q -b task/y--red fork;  echo b > conflict-b; git add conflict-b; git commit -q -m red-with-main
   git checkout -q -b task/z--conf fork; echo zzz > f;        git commit -q -am conflicting
+  git checkout -q -b task/c--cnf fork;  mkdir .claude; echo 'MODULES="from-tree"' > .claude/delivery.conf
+  git add .claude; git commit -q -m tree-conf
   git checkout -q main
   echo main2 > f; echo a > conflict-a; git add f conflict-a; git commit -q -m main2
   git branch rel/same
   git checkout -q -b release/x; echo feat > feature; git add feature; git commit -q -m feature
   git remote add origin "$tmp/origin.git"
-  git push -q origin main rel/same release/x task/x--ok task/y--red task/z--conf
+  git push -q origin main rel/same release/x task/x--ok task/y--red task/z--conf task/c--cnf
 )
 git clone -q "$tmp/origin.git" "$tmp/repo"
 repo="$tmp/repo"
 mkdir -p "$repo/.claude"
-echo 'BASE_BRANCH=main' > "$repo/.claude/delivery.conf"
+printf 'BASE_BRANCH=main\nSPEC_SOURCES=from-caller-conf\n' > "$repo/.claude/delivery.conf"
 sha() { git -C "$repo" rev-parse "origin/$1"; }
 main_sha=$(sha main); rel_sha=$(sha release/x)
-x_sha=$(sha task/x--ok); y_sha=$(sha task/y--red); z_sha=$(sha task/z--conf)
+x_sha=$(sha task/x--ok); y_sha=$(sha task/y--red); z_sha=$(sha task/z--conf); c_sha=$(sha task/c--cnf)
 
-# The gate: records where it ran, red when $tmp/gate-red exists or when both
+# The gate: records where it ran, runs $tmp/gate-hook when present (a race
+# injected mid-gate), hangs while $tmp/gate-hang exists (its pid in
+# $tmp/gate-pid; 60 s cap; ignoring TERM while $tmp/gate-trap-term exists),
+# and is red when $tmp/gate-red exists or when both
 # conflict-a (main's) and conflict-b (task y's) are in the tree.
 cat > "$tmp/gate.sh" <<EOF
 #!/usr/bin/env bash
 echo "\$(pwd) \$(git rev-parse HEAD) \$(git rev-parse --verify --quiet HEAD^2 || echo -)" >> "$tmp/gate-runs"
+[ ! -f "$tmp/gate-trap-term" ] || trap '' TERM
+[ ! -f "$tmp/gate-hook" ] || bash "$tmp/gate-hook"
+if [ -f "$tmp/gate-hang" ]; then
+  echo \$\$ > "$tmp/gate-pid"; i=0
+  while [ -f "$tmp/gate-hang" ] && [ \$i -lt 600 ]; do command -p sleep 0.1; i=\$((i + 1)); done
+fi
 if [ -f "$tmp/gate-red" ]; then echo "boom: the gate is red"; exit 1; fi
 if [ -f conflict-a ] && [ -f conflict-b ]; then echo "conflict-a and conflict-b together"; exit 1; fi
 echo "gate green"
 EOF
 : > "$tmp/gate-runs"
 printf '#!/usr/bin/env bash\ntouch "%s"\n' "$tmp/notified" > "$tmp/notify.sh"
-chmod +x "$tmp/gate.sh" "$tmp/notify.sh"
+# The conf gate: what lib/config.sh resolves inside the gated tree.
+cat > "$tmp/conf-gate.sh" <<EOF
+#!/usr/bin/env bash
+. "$scripts/lib/config.sh"
+printf '%s|%s|%s|%s\n' "\$MODULES" "\$GRAPH_BACKEND" "\$STATE_DIR" "\$SPEC_SOURCES" > "$tmp/conf-seen"
+EOF
+chmod +x "$tmp/gate.sh" "$tmp/notify.sh" "$tmp/conf-gate.sh"
 
 ENV_CLEAR="-u GRAPH_BACKEND -u FORGE -u FORGE_URL -u FORGE_REPO -u BASE_BRANCH -u LIST_LIMIT
   -u GITLAB_TOKEN -u GITEA_TOKEN -u GH_TOKEN -u GH_REPO -u GH_HOST -u GATE_CMD -u PROMOTE_GATE_CMD
@@ -166,6 +200,8 @@ r promote.sh "$S" -- rel-promote
 expect "GC51: exits 0" '[ "$rc" = 0 ]'
 expect "GC51: PR head T base P, titled Promote T → P" \
   'log_has "gh pr create --head release/x --base main --title Promote release/x → main --body-file"'
+expect "GC51: the PR is opened with --label agent-authored" \
+  'grep "^gh pr create " "$tmp/shim/log" | grep -q -- "--label agent-authored"'
 expect "GC51: body contains Delivery-Task: <id>" 'grep -qx "Delivery-Task: rel-promote" "$tmp/shim/create-body"'
 expect "GC51: body lists the plan's done tasks only" \
   'grep -q "e1-1: first task" "$tmp/shim/create-body" && ! grep -q stray "$tmp/shim/create-body"'
@@ -173,6 +209,14 @@ eq "GC51: node in-review" '"in-review"' "$(field "$S" rel-promote .status)"
 eq "GC51: stdout names the PR" '{"result":"promoted","pr":150}' "$(jq -c '{result, pr}' <<<"$out")"
 eq "GC51: GATE_CMD (PROMOTE_GATE_CMD empty) ran on origin/release/x" "$rel_sha -" "$(last_gate | cut -d" " -f2-)"
 eq "GC51: the gate worktree is removed" 1 "$(worktrees)"
+eq "the forge recorded the promotion PR labelled agent-authored" '["agent-authored"]' \
+  "$(jq -c '.["150"].labels | map(.name)' "$tmp/shim/prs.json")"
+# A human merges it; reconcile (rule 3) closes the promote node.
+jq '.["150"].state = "MERGED" | .["150"].mergedAt = (now | todate)' "$tmp/shim/prs.json" > "$tmp/shim/prs.new"
+mv "$tmp/shim/prs.new" "$tmp/shim/prs.json"
+r graph.sh "$S" -- reconcile --fix
+expect "reconcile --fix after the merge exits 0" '[ "$rc" = 0 ]'
+eq "a merged labelled promotion PR moves the promote node to done" '"done"' "$(field "$S" rel-promote .status)"
 
 # An open promotion PR already on head T into P is reused, not duplicated.
 S="$tmp/s51b"; board "$S"
@@ -185,9 +229,43 @@ r promote.sh "$S" -- rel-promote
 expect "an existing promotion PR is reused (no pr create)" '[ "$rc" = 0 ] && ! log_has "pr create"'
 eq "reused PR: stdout and in-review" '140 "in-review"' "$(jq -c .pr <<<"$out") $(field "$S" rel-promote .status)"
 
+# --- promote.sh: SIGTERM during the gate releases the claim ---------------------------
+S="$tmp/sterm"; board "$S"
+rm -f "$tmp/gate-pid"; touch "$tmp/gate-hang"; : > "$tmp/shim/log"
+# shellcheck disable=SC2086
+( cd "$repo" && exec env $ENV_CLEAR GRAPH_BACKEND=local FORGE=github STATE_DIR="$S" \
+    GATE_CMD="bash $tmp/gate.sh" PATH="$tmp/bin:$PATH" SHIM_STATE="$tmp/shim" \
+    bash "$scripts/promote.sh" rel-promote > "$tmp/out" 2> "$tmp/err" ) &
+bg=$!
+i=0
+while [ ! -s "$tmp/gate-pid" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+gate_pid=$(cat "$tmp/gate-pid" 2>/dev/null || echo none)
+expect "TERM case: the gate started" '[ "$gate_pid" != none ]'
+eq "TERM case: the node is claimed while the gate runs" '"claimed"' "$(field "$S" rel-promote .status)"
+kill -TERM "$bg"
+wait "$bg" && rc=0 || rc=$?
+rm -f "$tmp/gate-hang"
+out=$(cat "$tmp/out"); err=$(cat "$tmp/err")
+eq "TERM case: promote.sh exits 143" 143 "$rc"
+eq "TERM case: the claim is released" 'null' "$(field "$S" rel-promote .claim)"
+eq "TERM case: the node is back to ready, not flagged" '"ready" false' \
+  "$(field "$S" rel-promote .status) $(field "$S" rel-promote '.needs_human // false')"
+expect "TERM case: no PR" '! log_has "pr create"'
+expect "TERM case: the gate process is stopped" '! kill -0 "$gate_pid" 2>/dev/null'
+eq "TERM case: the gate worktree is removed" 1 "$(worktrees)"
+
+# --- promote.sh: the gate resolves the gated tree's own config --------------------------
+S="$tmp/sconf"; board "$S"
+g "$S" create '{"id":"conf-promote","kind":"promote","title":"Promote c","target_branch":"task/c--cnf","promote_to":"main"}'
+echo '{}' > "$tmp/shim/prs.json"; rm -f "$tmp/conf-seen"
+r promote.sh "$S" GATE_CMD="$tmp/conf-gate.sh" MODULES=from-caller -- conf-promote
+expect "conf case (promote): exits 0" '[ "$rc" = 0 ]'
+eq "conf case (promote): the tree's conf wins; caller env/conf values do not leak" \
+  'from-tree|github||docs/*_spec.md' "$(cat "$tmp/conf-seen" 2>/dev/null)"
+
 # --- tick-merge ---------------------------------------------------------------------
 M="$tmp/sm"
-for t in x y z w h v; do
+for t in x y z w h v c b m p; do
   g "$M" create "{\"id\":\"$t\",\"kind\":\"task\",\"title\":\"task $t\",\"size\":\"S\",\"status\":\"approved\"}"
 done
 g "$M" create '{"id":"pp","kind":"promote","title":"Promote release/x","target_branch":"release/x","promote_to":"main","status":"in-review"}'
@@ -213,6 +291,12 @@ mkpr 204 task/x--ok "$x_sha" main FAILURE w
 mkpr 205 release/x "$rel_sha" main SUCCESS pp
 mkpr 206 task/x--ok "$x_sha" main SUCCESS h needs-human
 mkpr 207 task/x--ok "$x_sha" main SUCCESS v
+mkpr 208 task/c--cnf "$c_sha" main SUCCESS c
+mkpr 209 task/x--ok "$x_sha" main SUCCESS b
+mkpr 210 task/x--ok "$x_sha" main SUCCESS m
+mkpr 211 task/y--red "$y_sha" main SUCCESS p
+jq '.["211"].comments = [{body: "Patch iteration: 3/3", author: {login: "agent"}}]' "$tmp/shim/prs.json" > "$tmp/shim/prs.new"
+mv "$tmp/shim/prs.new" "$tmp/shim/prs.json"
 
 runs0=$(gate_runs)
 r tick-merge.sh "$M" -- 201 "$y_sha"
@@ -246,6 +330,47 @@ expect "a conflicting merge -> exit 1, rebase action, no merge request" \
 eq "a conflicting merge runs no gate" "$runs1" "$(gate_runs)"
 eq "the conflicted worktree is removed" 1 "$(worktrees)"
 
+rm -f "$tmp/notified"
+r tick-merge.sh "$M" NOTIFY_ESCALATE_CMD="$tmp/notify.sh" -- 211 "$y_sha"
+expect "patch budget: a red merged result at 3/3 -> exit 1, no merge request" '[ "$rc" = 1 ] && ! log_has "pr merge"'
+eq "patch budget: stdout is the needs-human result, not a rebase" '{"pr":211,"id":"p","result":"needs-human"}' \
+  "$(jq -c '{pr, id, result}' <<<"$out")"
+expect "patch budget: stdout carries the reason" '[ -n "$(jq -r ".reason // empty" <<<"$out")" ]'
+eq "patch budget: the node is flagged needs-human" 'true' "$(field "$M" p .needs_human)"
+expect "patch budget: the node carries an escalation comment with the gate output" \
+  'grep "\"op\":\"comment\"" "$M/events.jsonl" | grep "MERGE-NEEDS-HUMAN" | grep -q "conflict-a and conflict-b together"'
+expect "patch budget: NOTIFY_ESCALATE_CMD ran" '[ -f "$tmp/notified" ]'
+
+# The base moves while the gate runs: refused, no merge request.
+cat > "$tmp/gate-hook" <<EOF
+git --git-dir="$tmp/origin.git" update-ref refs/heads/main \
+  "\$(git --git-dir="$tmp/origin.git" commit-tree "$main_sha^{tree}" -p "$main_sha" -m moved)"
+EOF
+r tick-merge.sh "$M" -- 209 "$x_sha"
+rm -f "$tmp/gate-hook"
+git --git-dir="$tmp/origin.git" update-ref refs/heads/main "$main_sha"
+expect "base moved during the gate -> exit 1, refused" '[ "$rc" = 1 ] && grep -q "origin/main moved from $main_sha" <<<"$err"'
+expect "base moved during the gate -> no merge request" '! log_has "pr merge"'
+eq "base moved: node stays approved" '"approved"' "$(field "$M" b .status)"
+
+# The head moves while the gate runs: the forge's head pin refuses the merge.
+cat > "$tmp/gate-hook" <<EOF
+jq '.["210"].headRefOid = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"' "$tmp/shim/prs.json" > "$tmp/shim/prs.hook"
+mv "$tmp/shim/prs.hook" "$tmp/shim/prs.json"
+EOF
+r tick-merge.sh "$M" -- 210 "$x_sha"
+rm -f "$tmp/gate-hook"
+expect "head moved during the gate -> exit 1, not merged" '[ "$rc" = 1 ] && grep -q "pr-merge failed" <<<"$err"'
+expect "head moved during the gate -> gh pr merge never called" '! log_has "gh pr merge"'
+eq "head moved: node stays approved" '"approved"' "$(field "$M" m .status)"
+
+# The merged result's own .claude/delivery.conf governs its gate.
+rm -f "$tmp/conf-seen"
+r tick-merge.sh "$M" GATE_CMD="$tmp/conf-gate.sh" MODULES=from-caller -- 208 "$c_sha"
+expect "conf case (tick-merge): merged, exit 0" '[ "$rc" = 0 ]'
+eq "conf case (tick-merge): the merged tree's conf wins; caller env/conf values do not leak" \
+  'from-tree|github||docs/*_spec.md' "$(cat "$tmp/conf-seen" 2>/dev/null)"
+
 touch "$tmp/shim/merge-noop"
 r tick-merge.sh "$M" -- 207 "$x_sha"
 rm -f "$tmp/shim/merge-noop"
@@ -263,5 +388,113 @@ expect "the gate ran on origin/main merged with the head" \
 eq "stdout reports the merge" '{"pr":201,"result":"merged"}' "$(jq -c '{pr, result}' <<<"$out")"
 eq "reconciled: the task is done" '"done"' "$(field "$M" x .status)"
 eq "no gate worktree left behind" 1 "$(worktrees)"
+
+# --- signal windows ------------------------------------------------------------------
+# The engine copy whose graph.sh pauses after the backend claim has landed.
+eng="$tmp/eng"
+mkdir -p "$eng"
+cp "$scripts"/*.sh "$eng/"
+cp -R "$scripts/lib" "$scripts/backends" "$eng/"
+awk '{ print }
+  /^    bash "\$backend" claim "\$id" "\$actor"/ {
+    print "    if [ -f \"$SHIM_STATE/pause-claim\" ]; then echo $$ > \"$SHIM_STATE/pause-claim.at\"; i=0"
+    print "      while [ -f \"$SHIM_STATE/pause-claim\" ] && [ $i -lt 1200 ]; do command -p sleep 0.05; i=$((i + 1)); done; fi"
+  }' "$scripts/graph.sh" > "$eng/graph.sh"
+grep -q pause-claim "$eng/graph.sh" || { echo "FAIL - could not patch the claim pause into graph.sh" >&2; exit 1; }
+
+# sig_run <script> <state-dir> <pause> <SIG> <pid|group> <args…>: start the
+# script (from the engine copy) as its own job, wait until it sits at
+# $SHIM_STATE/pause-<pause>, send SIG to its PID or its process group, lift the
+# pause and wait. Sets $rc, $out, $err, $paused.
+sig_run() {
+  local script="$1" st="$2" pause="$3" sig="$4" to="$5" bg i=0; shift 5
+  : > "$tmp/shim/log"
+  rm -rf "$tmp/sigtmp" "$tmp/shim/pause-$pause.at"; mkdir -p "$tmp/sigtmp"
+  touch "$tmp/shim/pause-$pause"
+  set -m
+  # shellcheck disable=SC2086
+  ( cd "$repo" && exec env $ENV_CLEAR GRAPH_BACKEND=local FORGE=github STATE_DIR="$st" \
+      GATE_CMD="bash $tmp/gate.sh" PATH="$tmp/bin:$PATH" SHIM_STATE="$tmp/shim" TMPDIR="$tmp/sigtmp" \
+      bash "$eng/$script" "$@" > "$tmp/out" 2> "$tmp/err" < /dev/null ) &
+  bg=$!
+  set +m
+  while [ ! -s "$tmp/shim/pause-$pause.at" ] && [ "$i" -lt 300 ]; do command -p sleep 0.1; i=$((i + 1)); done
+  if [ -s "$tmp/shim/pause-$pause.at" ]; then paused=yes; else paused=no; fi
+  if [ "$to" = group ]; then kill "-$sig" -- "-$bg" 2>/dev/null || true
+  else kill "-$sig" "$bg" 2>/dev/null || true; fi
+  rm -f "$tmp/shim/pause-$pause"
+  wait "$bg" 2>/dev/null && rc=0 || rc=$?
+  out=$(cat "$tmp/out"); err=$(cat "$tmp/err")
+}
+signum() { case "$1" in INT) echo 2 ;; HUP) echo 1 ;; TERM) echo 15 ;; esac; }
+releases() { grep -c '"op":"release"' "$1/events.jsonl" || true; }
+
+for sig in TERM INT HUP; do
+  code=$((128 + $(signum "$sig")))
+  for to in pid group; do
+    c="$sig to the $to"
+
+    # B: promote.sh, the claim has landed when the signal comes.
+    S="$tmp/sc-$sig-$to"; board "$S"; echo '{}' > "$tmp/shim/prs.json"
+    sig_run promote.sh "$S" claim "$sig" "$to" rel-promote
+    eq "claim window, $c: paused after the backend claim" yes "$paused"
+    eq "claim window, $c: promote.sh exits $code" "$code" "$rc"
+    eq "claim window, $c: the claim is released, the node ready" 'null "ready"' \
+      "$(field "$S" rel-promote .claim) $(field "$S" rel-promote .status)"
+    expect "claim window, $c: no gate, no PR" '! log_has "pr create" && [ "$(jq length "$tmp/shim/prs.json")" = 0 ]'
+
+    # A: promote.sh, the PR is recorded when the signal comes.
+    S="$tmp/sp-$sig-$to"; board "$S"; echo '{}' > "$tmp/shim/prs.json"
+    sig_run promote.sh "$S" create "$sig" "$to" rel-promote
+    eq "create window, $c: paused inside gh pr create" yes "$paused"
+    eq "create window, $c: promote.sh exits $code" "$code" "$rc"
+    eq "create window, $c: the promotion PR exists" '"OPEN"' "$(jq -c '.["150"].state' "$tmp/shim/prs.json")"
+    eq "create window, $c: the claim is not released" 0 "$(releases "$S")"
+    st_now=$(field "$S" rel-promote .status)
+    expect "create window, $c: the node is claimed or in-review, not ready ($st_now)" \
+      '[ "$st_now" = "\"claimed\"" ] || [ "$st_now" = "\"in-review\"" ]'
+    if [ "$to" = pid ]; then
+      eq "create window, $c: the PR is still reported, the node in-review" '150 "in-review"' \
+        "$(jq -c .pr <<<"$out") $st_now"
+    fi
+
+    # tick-merge.sh, the merge has landed when the signal comes.
+    M="$tmp/sm-$sig-$to"
+    g "$M" create '{"id":"x","kind":"task","title":"task x","size":"S","status":"approved"}'
+    echo '{}' > "$tmp/shim/prs.json"; mkpr 201 task/x--ok "$x_sha" main SUCCESS x
+    sig_run tick-merge.sh "$M" merge "$sig" "$to" 201 "$x_sha"
+    eq "merge window, $c: paused inside gh pr merge" yes "$paused"
+    eq "merge window, $c: tick-merge.sh exits $code" "$code" "$rc"
+    eq "merge window, $c: the landed merge is reported on stdout" '{"pr":201,"result":"merged"}' \
+      "$(jq -c '{pr, result}' <<<"$out" 2>/dev/null)"
+    eq "merge window, $c: reconciled, the task done" '"done"' "$(field "$M" x .status)"
+  done
+done
+eq "signal windows: no gate worktree left behind" 1 "$(worktrees)"
+
+# --- dl_gate_cleanup: a gate that ignores TERM is KILLed after a bounded wait ---------
+S="$tmp/skill"; board "$S"; echo '{}' > "$tmp/shim/prs.json"
+rm -f "$tmp/gate-pid"; touch "$tmp/gate-hang" "$tmp/gate-trap-term"; : > "$tmp/shim/log"
+rm -rf "$tmp/sigtmp"; mkdir -p "$tmp/sigtmp"
+# shellcheck disable=SC2086
+( cd "$repo" && exec env $ENV_CLEAR GRAPH_BACKEND=local FORGE=github STATE_DIR="$S" \
+    GATE_CMD="bash $tmp/gate.sh" PATH="$tmp/bin:$PATH" SHIM_STATE="$tmp/shim" TMPDIR="$tmp/sigtmp" \
+    bash "$scripts/promote.sh" rel-promote > "$tmp/out" 2> "$tmp/err" ) &
+bg=$!
+i=0
+while [ ! -s "$tmp/gate-pid" ] && [ "$i" -lt 300 ]; do command -p sleep 0.1; i=$((i + 1)); done
+gate_pid=$(cat "$tmp/gate-pid" 2>/dev/null || echo none)
+expect "TERM-ignoring gate: the gate started" '[ "$gate_pid" != none ]'
+t0=$(date +%s)
+kill -TERM "$bg"
+wait "$bg" && rc=0 || rc=$?
+elapsed=$(( $(date +%s) - t0 ))
+rm -f "$tmp/gate-hang" "$tmp/gate-trap-term"
+out=$(cat "$tmp/out"); err=$(cat "$tmp/err")
+eq "TERM-ignoring gate: promote.sh exits 143" 143 "$rc"
+expect "TERM-ignoring gate: the exit is bounded (${elapsed}s, under 20s; the gate would hang 60s)" '[ "$elapsed" -lt 20 ]'
+expect "TERM-ignoring gate: the gate was KILLed" '! kill -0 "$gate_pid" 2>/dev/null && grep -q "sending KILL" <<<"$err"'
+eq "TERM-ignoring gate: the claim is released" 'null' "$(field "$S" rel-promote .claim)"
+eq "TERM-ignoring gate: the gate worktree is removed" 1 "$(worktrees)"
 
 exit "$fails"
