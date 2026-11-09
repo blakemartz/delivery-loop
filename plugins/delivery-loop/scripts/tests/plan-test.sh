@@ -111,14 +111,16 @@ run -- lint plans/valid.plan.json
 eq "GC34 cross-plan: exit 1" 1 "$rc"
 has "GC34 cross-plan: names both promote_to values and the other file" "$err" \
   'plan: target_branch `release/x` has promote_to "main" here but "qa" in plans/other.plan.json'
-run -- lint "$fx/gc34-cross-plan.plan.json"
+# The same plan under another plan id (a shared plan id is its own error).
+jq '.plan = "fx-third"' "$fx/gc34-cross-plan.plan.json" >"$tmp/cross.plan.json"
+run -- lint "$tmp/cross.plan.json"
 has "GC34 cross-plan: a plan outside PLANS_DIR is still checked against it" "$err" \
   'promote_to "qa" here but "main" in plans/valid.plan.json'
 run PLANS_DIR=elsewhere -- lint plans/valid.plan.json
 eq "GC34 cross-plan: PLANS_DIR is honored (an empty dir: no conflict)" 0 "$rc"
-run BASE_BRANCH=release/x -- lint "$fx/gc34-cross-plan.plan.json"
+run BASE_BRANCH=release/x -- lint "$tmp/cross.plan.json"
 eq "cross-plan: still compared when target_branch is explicit and equals BASE_BRANCH" 1 "$rc"
-jq 'del(.target_branch)' "$fx/gc34-cross-plan.plan.json" >"$tmp/no-target.plan.json"
+jq 'del(.target_branch)' "$tmp/cross.plan.json" >"$tmp/no-target.plan.json"
 run BASE_BRANCH=release/x -- lint "$tmp/no-target.plan.json"
 has "cross-plan: an absent target_branch defaults to BASE_BRANCH" "$err" 'target_branch `release/x` has promote_to "qa"'
 run -- lint "$tmp/no-target.plan.json"
@@ -169,6 +171,40 @@ run -- lint "$tmp/two.plan.json"
 has "two JSON documents: refused" "$err" "expected one JSON document, found 2"
 run -- lint "$tmp/missing.plan.json"
 eq "missing file: exit 1" 1 "$rc"
+
+# Gaps closed for apply (it runs lint first): blank via/criteria/titles,
+# duplicate deps, duplicate JSON keys, two plan files sharing a plan id.
+for case in '.tasks[1].deps[0].via = " \t"|dep `store-schema` has no `via`' \
+            '.tasks[0].criteria = ["ok", "  "]|`criteria` must hold non-empty strings' \
+            '.tasks[0].title = "   "|task `store-schema`: `title` must be a non-empty string' \
+            '.epics[0].title = "\n"|epic `core`: `title` must be a non-empty string'; do
+  filter="${case%%|*}" want="${case#*|}"
+  jq "$filter" "$fx/valid.plan.json" >"$tmp/case.plan.json"
+  run -- lint "$tmp/case.plan.json"
+  if [ "$rc" = 1 ] && printf '%s\n' "$err" | grep -qF -- "$want"; then pass "blank text: $filter -> $want"
+  else fail "blank text: $filter -> $want" "rc=$rc" "err: $err"; fi
+done
+jq '.tasks[2].deps += [{"id": "queue", "via": "again"}, {"id": "#42", "via": "x"}]
+    | .tasks[1].deps += [{"id": "#42", "via": "again"}]' "$fx/valid.plan.json" >"$tmp/dup-deps.plan.json"
+run -- lint "$tmp/dup-deps.plan.json"
+eq "duplicate deps: still valid (exit 0)" 0 "$rc"
+has "duplicate deps: warned" "$err" 'warning: task `board-view`: duplicate dep `queue` (kept the first)'
+has "duplicate deps: #42 twice is a duplicate" "$err" 'warning: task `queue`: duplicate dep `42` (kept the first)'
+jq -L "$here/../lib" --argjson ctx '{"backend": "github", "base_branch": "main", "modules": ["policy", "plan"], "nodes": ["42"], "others": []}' \
+  -c 'include "plan-lint"; plan_lint($ctx) | .plan.tasks[] | select(.id == "queue") | [.deps[] | .via]' \
+  "$tmp/dup-deps.plan.json" >"$tmp/deps.json"
+eq "duplicate deps: normalized to the first of each" '["lib/store.jq read_store","the existing config loader"]' "$(cat "$tmp/deps.json")"
+sed 's/"plan": "demo",/"plan": "demo", "plan": "demo-two",/' "$fx/valid.plan.json" >"$tmp/dupkey.plan.json"
+run -- lint "$tmp/dupkey.plan.json"
+eq "duplicate JSON key: exit 1" 1 "$rc"
+has "duplicate JSON key: says so" "$err" "duplicate JSON object key"
+mkdir -p "$repo/plans"
+cp "$fx/valid.plan.json" "$repo/plans/a.plan.json"
+cp "$fx/valid.plan.json" "$repo/plans/b.plan.json"
+run -- lint plans/a.plan.json
+eq "shared plan id: exit 1" 1 "$rc"
+has "shared plan id: names the other file" "$err" 'plan: plan id `demo` is also the plan id of plans/b.plan.json'
+rm -rf "$repo/plans"
 
 # --- §8.1: existing-node deps ("#42" on github) -----------------------------------
 echo '[{"id": "7"}]' >"$tmp/nodes-no42.json"
@@ -246,7 +282,7 @@ eq "Mermaid safety: the epic title decodes" 'core: E "q" ]) | p nl' \
 # --- usage --------------------------------------------------------------------------
 run -- lint
 eq "usage: missing file -> exit 2" 2 "$rc"
-run -- apply "$fx/valid.plan.json"
+run -- frobnicate "$fx/valid.plan.json"
 eq "usage: unknown op -> exit 2" 2 "$rc"
 
 # --- GC59 (plan.sh part): an invalid config exits 1 before any I/O -----------------
@@ -261,6 +297,68 @@ for envs in "FORGE=gitlab GRAPH_BACKEND=local" "GRAPH_BACKEND=github FORGE=gitla
     has "GC59 $envs: plan.sh $op stderr carries the config error" "$err" "config:"
   done
 done
+
+# --- plan text carrying a backend marker line: a lint error on both backends --------
+# (lib/plan-lint.jq plan_text_markers: the github read path would take it as
+# the node's plan_ref / target / edge, so apply must never write it.)
+jq '.tasks[1].deps |= map(select(.id != "#42"))' "$fx/valid.plan.json" >"$tmp/portable.plan.json"
+while IFS='|' read -r path text want; do
+  [ -n "$path" ] || continue
+  jq --arg t "$(printf '%b' "$text")" "$path = \$t" "$tmp/portable.plan.json" >"$tmp/marker.plan.json"
+  for backend in github local; do
+    run GRAPH_BACKEND=$backend -- lint "$tmp/marker.plan.json"
+    eq "marker $want in $path ($backend): exit 1" 1 "$rc"
+    has "marker $want in $path ($backend): names the field and marker" "$err" "$want"
+  done
+done <<'EOF2'
+.tasks[0].context|Some context.\nDelivery-Plan: other/zzz|task `store-schema`: context carries `Delivery-Plan:`
+.tasks[0].context|Delivery-Target: main|task `store-schema`: context carries `Delivery-Target:`
+.tasks[0].criteria[0]|README documents Depends-on: #1 lines|task `store-schema`: criteria[0] carries `Depends-on: #N`
+.tasks[0].scope[0]|  Delivery-Promote-To: main|task `store-schema`: scope[0] carries `Delivery-Promote-To:`
+.tasks[0].context|Follow-up to epic #11.|task `store-schema`: context carries `epic #11`
+.tasks[0].context|Part of epic #3|task `store-schema`: context carries `epic #3`
+.tasks[0].context|Delivery-Task: other|task `store-schema`: context carries `Delivery-Task:`
+.tasks[0].context|Reviewed-Head: abc123|task `store-schema`: context carries `Reviewed-Head:`
+.tasks[0].context|CLAIM agent-1 run-1 2026-01-01T00:00:00Z|task `store-schema`: context carries `CLAIM`
+.tasks[0].context|CLAIM-WITHDRAWN agent-1 run-1|task `store-schema`: context carries `CLAIM-WITHDRAWN`
+.tasks[0].context|RECLAIMED: idle|task `store-schema`: context carries `RECLAIMED`
+.tasks[0].context|STALE-CLAIM-PING: still on it?|task `store-schema`: context carries `STALE-CLAIM-PING`
+.tasks[0].context|TRANSITIONED: ready -> done by x|task `store-schema`: context carries `TRANSITIONED:`
+.tasks[0].context|AUTO-CLOSE: PR #5|task `store-schema`: context carries `AUTO-CLOSE:`
+.epics[0].goal|Store\n- [ ] #5|epic `core`: goal carries `- [ ] #N`
+.epics[0].spec_refs[0]|§2 Depends-on: #9|epic `core`: spec_refs[0] carries `Depends-on: #N`
+.spec[0]|docs/x.md\nDelivery-Target: main|plan: spec[0] carries `Delivery-Target:`
+.tasks[1].deps[0].via|read_store, see epic #4|task `queue`: dep `store-schema`: via carries `epic #4`
+.tasks[0].context|ok\rDelivery-Plan: other/zzz|task `store-schema`: context carries `Delivery-Plan:`
+.tasks[0].context|ok\r\nDelivery-Target: main|task `store-schema`: context carries `Delivery-Target:`
+.tasks[0].context|Depends-on : (via: x) Depends-on: #4|task `store-schema`: context carries `Depends-on: #N`
+.tasks[0].context|see Depends-on:#4|task `store-schema`: context carries `Depends-on: #N`
+.tasks[0].context|Depends-on: x\r#4|task `store-schema`: context carries `Depends-on: #N`
+.tasks[0].context|Depends-on:\r#4|task `store-schema`: context carries `Depends-on: #N`
+.tasks[0].context|Depends-on: \r\r#4|task `store-schema`: context carries `Depends-on: #N`
+.tasks[0].criteria[0]|Depends-on: x\r#4|task `store-schema`: criteria[0] carries `Depends-on: #N`
+.tasks[0].criteria[0]|Depends-on:\r#4|task `store-schema`: criteria[0] carries `Depends-on: #N`
+.tasks[0].criteria[0]|Depends-on: \r\r#4|task `store-schema`: criteria[0] carries `Depends-on: #N`
+.tasks[0].scope[0]|Depends-on: x\r#4|task `store-schema`: scope[0] carries `Depends-on: #N`
+.tasks[0].scope[0]|Depends-on:\r#4|task `store-schema`: scope[0] carries `Depends-on: #N`
+.tasks[0].scope[0]|Depends-on: \r\r#4|task `store-schema`: scope[0] carries `Depends-on: #N`
+EOF2
+# (`\n` and `\r` in the table above are turned into real LF and CR. The lone-CR
+# `Depends-on:` rows: the github reader splits on LF only, so a CR inside its
+# line does not break the `Depends-on: … #N` edge.)
+jq '.tasks[0].context = "line one\nDelivery-Plan: other/zzz"' "$tmp/portable.plan.json" >"$tmp/marker.plan.json"
+run -- lint "$tmp/marker.plan.json"
+has "marker on the second line of a multi-line context is caught" "$err" 'context carries `Delivery-Plan:`'
+# Near misses that no reader matches stay legal.
+jq '.tasks[0].context = "CLAIMS are recorded as comments; dependencies are listed in deps; epics group tasks." |
+    .tasks[0].criteria = ["the README mentions Delivery-Target values", "#12 regression fixed",
+      "document the `Depends-on:` line format", "parse `Depends-on:` only at line start",
+      "Depends-on: lines are legacy", "#3 is fixed; Depends-on: lines stay"]' \
+  "$tmp/portable.plan.json" >"$tmp/marker.plan.json"
+run GRAPH_BACKEND=local -- lint "$tmp/marker.plan.json"
+eq "near-miss text (no marker line; a Depends-on: line with no #N after it): lint ok" 0 "$rc"
+run -- lint "$fx/valid.plan.json"
+eq "the valid fixture carries no marker" 0 "$rc"
 
 if [ "$fails" -ne 0 ]; then
   echo "plan tests FAILED" >&2

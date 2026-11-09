@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "plan": "other",
+  "target_branch": "release/x",
+  "promote_to": "main",
+  "epics": [{"id": "extras", "title": "Extras"}],
+  "tasks": [
+    {"id": "store-schema", "epic": "extras", "title": "Another store schema", "module": "plan", "size": "S",
+     "criteria": ["it reuses an id of plan demo"]}
+  ]
+}

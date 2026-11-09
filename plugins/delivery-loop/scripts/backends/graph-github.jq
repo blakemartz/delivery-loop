@@ -115,7 +115,9 @@
 # "graph-github"`, on an issue or any {body}): gh_trailer_block (its lines),
 # gh_trailer_keys ({target_branch, plan_ref, promote_to, task}, raw, null when
 # absent), gh_text_edges ([{id, via}]), gh_stray_key_lines (key lines outside
-# the block); and the writers' value checks gh_trailer_token / gh_via_ok.
+# the block); the writers' value checks gh_trailer_token / gh_via_ok;
+# gh_create_errors, create's input check; and gh_create_body, the body create
+# writes.
 #
 # Line-oriented matches split the body on "\n" first: jq's Oniguruma `^`/`$` do
 # not reliably anchor at line boundaries.
@@ -437,6 +439,30 @@ def gh_link_body($dep; $via):
     else ($ls | until(length == 0 or (.[-1] | _is_blank | not); .[:-1]) | join("\n")) as $b
          | (if $b == "" then $line else $b + "\n" + $line end) end;
 
+# gh_create_body($native; $base) — input: a `create` node-json (already
+# validated by create). The issue body create writes: the contract (`.body`,
+# trailing whitespace dropped), a blank line, then the trailer block (§6.2),
+# always whole: `Delivery-Target:` (BASE_BRANCH when unset) first, then
+# `Delivery-Plan:`, `Delivery-Promote-To:` (promote nodes), and the text edges
+# — with $native == 0 (gh < 2.94, no native relations) `Part of epic #E` and a
+# `Depends-on: #N` line per dep; with $native == 1 only a dep with a via gets
+# its `Depends-on: #N (via: …)` line (the parent and blocked-by are native).
+# The only definition of that body: create writes it, and `plan.sh apply` reads
+# it back through gh_node before any write (composed-body validation).
+def _gh_rtrim_body: if length > 0 and (.[-1:] | test("[ \t\r\n]")) then .[:-1] | _gh_rtrim_body else . end;
+
+def gh_create_body($native; $base):
+  ((.deps // []) | map(if type == "object" then {id: (.id | tostring), via: .via} else {id: tostring, via: null} end)) as $deps
+  | [ "Delivery-Target: \(.target_branch // $base)",
+      (if .plan_ref != null then "Delivery-Plan: \(.plan_ref)" else empty end),
+      (if .kind == "promote" and .promote_to != null then "Delivery-Promote-To: \(.promote_to)" else empty end),
+      (if $native == 0 and .epic != null then "Part of epic #\(.epic)" else empty end),
+      ($deps[] | select($native == 0 or .via != null)
+       | "Depends-on: #\(.id)\(if .via != null then " (via: \(.via))" else "" end)") ] as $trailer
+  | ((.body // "") | _gh_rtrim_body) as $b
+  | if $b == "" then $trailer | join("\n")
+    else $b + "\n\n" + ($trailer | join("\n")) end;
+
 # gh_has_text_edge($dep; $via) — the body already records the edge to $dep
 # (with exactly $via, when $via is a string).
 def gh_has_text_edge($dep; $via):
@@ -459,6 +485,48 @@ def gh_via_ok:
   type == "string" and length > 0
   and (test("[\r\n\f\u000b\u0085\u2028\u2029]") | not)
   and (. as $v | {body: ("Depends-on: #1 (via: " + $v + ")")} | _text_edges == [{id: "1", via: $v}]);
+
+# gh_create_errors($base) — input: a `create` node-json object. Every refusal
+# of `create`'s input check, as [message] (the first failing check, in create's
+# order) or [] when create accepts it. The only definition of that check:
+# `create` refuses with it before any gh call, and `plan.sh apply` runs it on
+# every node to create before any write (composed-artifact validation), so a
+# node apply accepts is one create accepts (#76 A1: no half-applied plan).
+def gh_create_errors($base):
+  def str: type == "string" and length > 0;
+  # A trailer value (§6.2): one token, so the line create writes is a valid
+  # trailer line that reads back whole (#77 review B; gh_trailer_token).
+  def tok: gh_trailer_token;
+  def allowed: ["kind", "title", "body", "epic", "deps", "module", "size", "status",
+                "needs_human", "target_branch", "promote_to", "plan_ref"];
+  [ if has("id") then "create: github assigns issue numbers; drop `id`"
+    elif ((keys - allowed) | length) > 0 then
+      "create: unsupported field(s) \((keys - allowed) | join(", ")) (github create takes \(allowed | join(", ")))"
+    elif (.kind as $k | ["task", "epic", "promote"] | index($k)) == null then
+      "create: kind must be task|epic|promote (never external) (got \(.kind | tojson))"
+    elif (.title | str | not) or (.title | test("[\r\n]")) then "create: title must be a non-empty one-line string"
+    elif .body != null and (.body | type) != "string" then "create: body must be a string"
+    elif (.status // "ready" | . as $s | ["ready", "blocked"] | index($s)) == null then
+      "create: status must be ready or blocked (got \(.status | tojson))"
+    elif .epic != null and ((.epic | tostring) | test("^[1-9][0-9]*$") | not) then
+      "create: epic must be an issue number (got \(.epic | tojson))"
+    elif any((.deps // [])[]; (if type == "object" then .id else . end | tostring | test("^[1-9][0-9]*$")) | not) then
+      "create: every dep must be an issue number"
+    elif .module != null and ((.module | str | not) or (.module | startswith("module:"))) then
+      "create: module must be a bare module name or null"
+    elif (.size as $s | ["S", "M", "L", null] | index($s)) == null then "create: size must be S|M|L or null"
+    elif any((.deps // [])[]; type == "object" and .via != null and (.via | gh_via_ok | not)) then
+      "create: a dep via must be a non-empty one-line string with no leading/trailing whitespace"
+    elif .promote_to != null and .kind != "promote" then "create: promote_to is for promote nodes only"
+    elif .kind == "promote" and (.promote_to | tok | not) then
+      "create: a promote node needs promote_to, one token (no whitespace) (got \(.promote_to | tojson))"
+    elif .plan_ref != null and ((.plan_ref | tok | not) or (.plan_ref | test("^[^/]+/[^/]+$") | not)) then
+      "create: plan_ref must be <plan>/<plan-task-id>, one token (got \(.plan_ref | tojson))"
+    elif .target_branch != null and (.target_branch | tok | not) then
+      "create: target_branch must be one token (no whitespace) (got \(.target_branch | tojson))"
+    elif .target_branch == null and ($base | tok | not) then
+      "create: BASE_BRANCH (the default target_branch) must be one token (got \($base | tojson))"
+    else empty end ];
 
 # --- migrate (task B3) ------------------------------------------------------------
 

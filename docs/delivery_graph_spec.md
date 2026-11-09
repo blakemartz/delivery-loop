@@ -853,6 +853,15 @@ anything (GC35).
   4. then `graph.sh reconcile --fix`.
 - On github, tasks are sub-issues of their epic issue and carry native blocked-by
   links (GC36).
+- **Composed-artifact validation.** Before any write, apply renders each node it
+  would create exactly as the backend's `create` writes it (github: the issue body,
+  in both the native-relations and the gh < 2.94 text-edge forms; local: the stored
+  node) and reads it back with that backend's own reader. If the read-back deps,
+  epic, target_branch, plan_ref or promote_to differ from the plan (on github also
+  an epic checklist, or anything `graph.sh migrate` would plan), apply exits 1
+  naming the node and field, and writes nothing. Lint's per-string marker check
+  is a fast first pass; this check covers what composing adds (joined lines, list
+  items) and every form the reader accepts.
 - **Missing target branch.** If `target_branch` doesn't exist on the remote, apply
   creates it from `origin/<promote_to or BASE_BRANCH>` and pushes it, printing the
   exact `git push` first (GC53). This is the only branch-creating step.

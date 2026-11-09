@@ -21,12 +21,22 @@
 #   nodes        existing node ids (`graph.sh list`), or null to skip
 #                existing-node resolution (render needs structure only).
 #   others       the other plans in PLANS_DIR, as
-#                [{file, target_branch, promote_to}] (raw values).
+#                [{file, plan, target_branch, promote_to}] (raw values): a
+#                shared target_branch must agree on promote_to, and a shared
+#                plan id is an error (plan_ref keys would collide, §8.3).
+#
+# Beyond §8.2, whitespace-only titles, vias and criteria count as empty, and a
+# task's duplicate deps (same resolved id: "#42" and "42" on github) are a
+# warning; normalization keeps the first. Plan text that becomes node body text
+# (context, criteria, scope, epic goal and spec_refs, the plan's spec, a dep's
+# via) must carry no line a backend reads back as a marker (plan_text_markers),
+# on every backend, so a plan stays portable.
+# Titles are not checked: no reader parses an issue title.
 #
 # Normalized plan: target_branch defaulted to base_branch, promote_to to null,
 # optional fields filled (goal "", spec_refs [], spec [], deps [], context "",
 # scope []), and each dep as {id, via, ref} where ref is "task" (a task of this
-# plan) or "node" (an existing node; "#42" → id "42").
+# plan) or "node" (an existing node; "#42" → id "42"), deduplicated.
 #
 # Usage: jq -L scripts/lib --argjson ctx "$ctx" 'include "plan-lint"; plan_lint($ctx)' plan.json
 
@@ -44,6 +54,60 @@ def plan_dep_id($backend):
 def _objs: if type == "array" then map(select(type == "object")) else [] end;
 
 def _has_str($s): any(.[]; . == $s);
+
+# A string with at least one non-whitespace character (a whitespace-only `via`,
+# criterion or title says nothing; `test("\\S")` avoids Oniguruma's per-line
+# `^`/`$`).
+def _is_text: type == "string" and test("\\S");
+
+# plan_text_markers — input: one plan text string (a context, criterion, scope
+# entry, epic goal, spec ref or via). Output: each marker some line of it
+# carries that a backend reads back from node text, so text written into a
+# github issue body would rewrite the node: steal its plan_ref (a duplicate on
+# every re-apply), retarget it, or add an edge. Derived from what the readers
+# match:
+#   backends/graph-github.jq  _trailer: a line starting `Delivery-Target:`,
+#                             `Delivery-Plan:`, `Delivery-Promote-To:` (the
+#                             first such line wins over the appended trailer);
+#                             _text_edges: every `#N` after `Depends-on:` on a
+#                             line (so a `Depends-on:` line with no `#N` after
+#                             it is no edge and passes); gh_epic: `[Ee]pic #N` anywhere in
+#                             the body (so `Part of epic #N` too); gh_checklist:
+#                             a `- [ ] #N` / `* [x] #N` line (an epic's members).
+#   backends/forge-github.jq  `Delivery-Task:` and `Reviewed-Head:` lines.
+#   the comment ledger        (lib/claim-ledger.jq, graph-github.jq comments,
+#                             reconcile.jq, graph-github.sh transition) `CLAIM`,
+#                             `CLAIM-WITHDRAWN`, `RECLAIMED`, `STALE-CLAIM-PING`,
+#                             `AUTO-CLOSE:`, `TRANSITIONED:`: read from comments
+#                             only today, refused anyway so plan text never
+#                             reads as a protocol record wherever it is copied.
+# Start-anchored markers also match after leading whitespace, and
+# `Depends-on:` refuses any `#N` after it, even inside a `(via: …)` (stricter
+# than the readers, never looser). Lines are split first (Oniguruma `^` does
+# not reliably anchor at line boundaries), and every marker is checked against
+# the union of two splittings: the readers' own lines (`_lines`: LF, with a
+# trailing CR trimmed), which keep a lone CR inside a line, so the unanchored
+# `Depends-on: … #N` check sees `Depends-on: x\r#4` whole, as the reader does;
+# and LF, CRLF and lone-CR lines, so a start-anchored marker after a lone CR is
+# refused too (a lone CR normalised to LF anywhere would start a new line).
+def plan_text_markers:
+  ((split("\n") | map(rtrimstr("\r"))) + [splits("[\r\n]")])[] as $l
+  | ( ($l | capture("^[ \t]*(?<m>Delivery-Target|Delivery-Plan|Delivery-Promote-To|Delivery-Task|Reviewed-Head|AUTO-CLOSE|TRANSITIONED)[ \t]*:") | "\(.m):"),
+      ($l | capture("^[ \t]*(?<m>CLAIM-WITHDRAWN|CLAIM|RECLAIMED|STALE-CLAIM-PING)([ \t:]|$)") | .m),
+      ($l | select(test("Depends-on[ \t]*:.*#[0-9]")) | "Depends-on: #N"),
+      ($l | capture("(?<m>[Ee]pic #[0-9]+)") | .m),
+      ($l | select(test("^[ \t]*[-*] \\[[ xX]\\][ \t]*#[0-9]+")) | "- [ ] #N") );
+
+# Error strings for the markers in one field's text: a string, or an array
+# whose string entries are checked one by one (other types are reported by the
+# field's own type check).
+def _marker_errors($w; $field):
+  def msg($f): "\($w): \($f) carries `\(.)`, which the github backend would read back from the issue body as node metadata or a protocol record (stealing the plan_ref, retargeting the node or adding an edge): reword it";
+  if type == "string" then [plan_text_markers] | unique[] | msg($field)
+  elif type == "array" then
+    to_entries[] | select(.value | type == "string") | .key as $k
+    | [.value | plan_text_markers] | unique[] | msg("\($field)[\($k)]")
+  else empty end;
 
 def plan_external_deps($backend):
   (if type == "object" then . else {} end) as $p
@@ -77,9 +141,11 @@ def _epic_errors:
     else _where("epic"; $i) as $w
       | _field_errors($w; ["id", "title"]; ["goal", "spec_refs"]),
         _malformed($w; "id"),
-        _typed($w; "title"; is_nonempty_string; "must be a non-empty string"),
+        _typed($w; "title"; _is_text; "must be a non-empty string"),
         _typed($w; "goal"; type == "string"; "must be a string"),
-        _typed($w; "spec_refs"; is_string_array; "must be an array of strings")
+        _typed($w; "spec_refs"; is_string_array; "must be an array of strings"),
+        (.goal | _marker_errors($w; "goal")),
+        (.spec_refs | _marker_errors($w; "spec_refs"))
     end;
 
 def _dep_errors($w; $backend; $tids; $eids; $nodes):
@@ -93,9 +159,10 @@ def _dep_errors($w; $backend; $tids; $eids; $nodes):
       | ($raw | plan_dep_id($backend)) as $id
       | "\($w): dep `\($raw)`" as $d
       | ((keys - ["id", "via"])[] | "\($d): unexpected field `\(.)`"),
-        (if (.via == null) or (.via == "") then "\($d) has no `via` (plan deps require one)"
+        (if (.via == null) or ((.via | type) == "string" and (.via | _is_text | not))
+         then "\($d) has no `via` (plan deps require one; a whitespace-only via counts as none)"
          elif (.via | type) != "string" then "\($d): `via` must be a string (got \(.via | tojson))"
-         else empty end),
+         else .via | _marker_errors($d; "via") end),
         (if ($id | is_node_id | not) then "\($d): malformed dep id (want \(_id_rule)\(if $backend == "github" then ", or #N" else "" end))"
          elif ($raw | _is_existing_ref($backend)) then
            (if $nodes != null and ($nodes | _has_str($id) | not)
@@ -113,9 +180,12 @@ def _task_errors($backend; $modules; $tids; $eids; $nodes):
       | _field_errors($w; ["id", "epic", "title", "module", "size", "criteria"];
                           ["deps", "context", "scope"]),
         _malformed($w; "id"),
-        _typed($w; "title"; is_nonempty_string; "must be a non-empty string"),
+        _typed($w; "title"; _is_text; "must be a non-empty string"),
         _typed($w; "context"; type == "string"; "must be a string"),
         _typed($w; "scope"; is_string_array; "must be an array of strings"),
+        (.context | _marker_errors($w; "context")),
+        (.criteria | _marker_errors($w; "criteria")),
+        (.scope | _marker_errors($w; "scope")),
         (if has("epic") then
            if (.epic | type) != "string" then "\($w): `epic` must be a string (got \(.epic | tojson))"
            elif (.epic as $e | $eids | _has_str($e) | not) then "\($w): epic `\(.epic)` is not an epic in this plan"
@@ -132,7 +202,7 @@ def _task_errors($backend; $modules; $tids; $eids; $nodes):
         (if has("criteria") then
            if (.criteria | type) != "array" then "\($w): `criteria` must be an array of strings (got \(.criteria | tojson))"
            elif (.criteria | length) == 0 then "\($w): `criteria` is empty"
-           elif (.criteria | all(.[]; is_nonempty_string) | not) then "\($w): `criteria` must hold non-empty strings"
+           elif (.criteria | all(.[]; _is_text) | not) then "\($w): `criteria` must hold non-empty strings (not whitespace-only)"
            else empty end
          else empty end),
         (if has("deps") then
@@ -166,6 +236,7 @@ def plan_lint($ctx):
           (if has("plan") and (.plan | is_node_id | not)
            then "plan: malformed plan id \(.plan | tojson) (want \(_id_rule))" else empty end),
           _typed("plan"; "spec"; is_string_array; "must be an array of strings"),
+          (.spec | _marker_errors("plan"; "spec")),
           _typed("plan"; "target_branch"; is_nonempty_string; "must be a non-empty string"),
           _typed("plan"; "promote_to"; . == null or is_nonempty_string; "must be a non-empty string or null"),
           (if $promote != null and $promote == $target
@@ -181,10 +252,19 @@ def plan_lint($ctx):
           ($ctx.others // [] | .[]
            | select((.target_branch // $ctx.base_branch) == $target
                     and (.promote_to // null) != $promote)
-           | "plan: target_branch `\($target)` has promote_to \($promote | tojson) here but \(.promote_to // null | tojson) in \(.file)")
+           | "plan: target_branch `\($target)` has promote_to \($promote | tojson) here but \(.promote_to // null | tojson) in \(.file)"),
+          ($ctx.others // [] | .[]
+           | select(.plan != null and .plan == $p.plan)
+           | "plan: plan id `\($p.plan)` is also the plan id of \(.file) (plan_ref idempotency keys would collide)")
         ] as $errors
-      | [ $tasks[] | select(.size == "L")
+      | ( [ $tasks[] | select(.size == "L")
           | "\(.id // "?" | if type == "string" then "task `\(.)`" else "task" end): size L is a placeholder: split it before it can be claimed" ]
+        + [ $tasks[] | select(.id | type == "string") | .id as $tid
+            | [.deps | _objs[] | .id | strings
+               | {id: plan_dep_id($backend),
+                  task: ((_is_existing_ref($backend) | not) and (plan_dep_id($backend) as $i | $tids | _has_str($i)))}]
+            | group_by(.)[] | select(length > 1)
+            | "task `\($tid)`: duplicate dep `\(.[0].id)` (kept the first)" ] )
         as $warnings
       | { errors: $errors,
           warnings: $warnings,
@@ -198,11 +278,12 @@ def plan_lint($ctx):
                    epics: [$epics[] | {id, title, goal: (.goal // ""), spec_refs: (.spec_refs // [])}],
                    tasks: [ $tasks[]
                      | {id, epic, title, module, size,
-                        deps: [ .deps // [] | .[]
+                        deps: ([ .deps // [] | .[]
                                 | (.id | _is_existing_ref($backend)) as $ext
                                 | (.id | plan_dep_id($backend)) as $id
                                 | {id: $id, via,
-                                   ref: (if ($ext | not) and ($tids | _has_str($id)) then "task" else "node" end)} ],
+                                   ref: (if ($ext | not) and ($tids | _has_str($id)) then "task" else "node" end)} ]
+                              | reduce .[] as $d ([]; if any(.[]; .id == $d.id and .ref == $d.ref) then . else . + [$d] end)),
                         context: (.context // ""),
                         criteria,
                         scope: (.scope // [])} ]
