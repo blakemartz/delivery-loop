@@ -5,7 +5,9 @@
 #
 #   gh_pr($graph_backend)  — one `gh pr view --json …` object → a §4.2 PR, built
 #                            field by field and passed through validate_pr.
-#   gh_reviews             — `gh pr view --json reviews` → [{author, verdict, body, at, commit}]
+#   gh_reviews             — `gh pr view --json reviews,comments` → [{author, verdict, body, at, commit}]:
+#                            every formal review, then every verdict-headed comment
+#                            (forge-verdict.jq).
 #   gh_comments            — `gh pr view --json comments` → [{author, body, at, url}]
 #   gh_merged_since($t)    — keep list elements whose `mergedAt` ≥ ISO-8601 $t
 #
@@ -13,6 +15,7 @@
 # reliably anchor at line boundaries.
 include "pr";
 include "shape";
+include "forge-verdict";
 
 def _lines: (. // "") | split("\n") | map(rtrimstr("\r"));
 
@@ -104,7 +107,9 @@ def gh_reviews:
                    "PENDING": "pending"}[.state] // (.state | ascii_downcase)),
         body: (.body // ""),
         at: .submittedAt,
-        commit: (.commit.oid // null) } ];
+        commit: (.commit.oid // null) } ]
+  + ([ (.comments // [])[] | {author: (.author | _login), body: (.body // ""), at: .createdAt} ]
+     | verdict_comments);
 
 def gh_comments:
   [ (.comments // [])[]

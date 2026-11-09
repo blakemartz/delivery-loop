@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for lib/tick-plan.jq and tick-plan.sh (docs/delivery_graph_spec.md §5
-# `tick-plan.jq`, §9): golden cases GC12–GC20, GC39 (plan assertion), GC62, GC70
-# and the `tick-plan.sh` part of GC59 (§12; §17 row A6, hardened by issue #47).
+# `tick-plan.jq`, §9): golden cases GC12–GC20, GC39 (plan assertion), GC62, GC70,
+# the inert `external` node kind (§4.1/§5) and the `tick-plan.sh` part of GC59 (§12; §17 row A6, hardened by issue #47).
 #
 # Offline. The plan cases run tick_plan over the sparse fixtures in
 # fixtures/tick-plan/ (expand.jq fills in the §4.1/§4.2 defaults). The script
@@ -179,6 +179,20 @@ eq "mode: serial by default, parallel N, clamped at 16" \
 eq "board counts task and promote nodes per status, every status keyed" \
   '{"blocked":0,"ready":1,"claimed":0,"in-review":0,"changes-requested":0,"approved":0,"done":0,"cancelled":0}' \
   "$(plan gc19 .board)"
+
+# External nodes (§4.1) are inert (§5): no action (not started, their agent PRs
+# are neither merged nor reviewed, even with a needs-human label), no `board`
+# count, no `waiting` line. A done external satisfies t-free's dep; an open one
+# keeps t-wait blocked.
+eq "externals produce no actions (a done external dep frees t-free)" '["start t-free"]' \
+  "$(acts externals)"
+eq "externals are absent from board counts" \
+  '{"blocked":1,"ready":1,"claimed":0,"in-review":0,"changes-requested":0,"approved":0,"done":0,"cancelled":0}' \
+  "$(plan externals .board)"
+eq "externals are absent from waiting" '["1 task(s) blocked on deps"]' "$(plan externals .waiting)"
+eq "control: the same board as tasks counts and acts on them" true \
+  "$(plan externals '(.board | add) > 2 and (.actions | length) > 1' \
+       '.nodes |= map(if .kind == "external" then .kind = "task" | .size = "S" else . end)')"
 
 # Inputs are validated: a malformed PR, node or flag fails fast.
 for bad in '.prs[0].mergeable = "MERGEABLE"' '.nodes[0].status = "open"' '.flags.parallel = "3"'; do

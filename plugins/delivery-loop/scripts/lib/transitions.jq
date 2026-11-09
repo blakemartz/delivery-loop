@@ -5,7 +5,10 @@
 # own fix records both go through it, so there is exactly one definition of a
 # legal move. The table's "When" column (deps done, PR merged, …) is the
 # caller's guard; this module checks only that the move itself is allowed.
-# needs_human is a flag, not a status, so it never appears here. Pure: no I/O.
+# needs_human is a flag, not a status, so it never appears here. The table
+# covers task, epic and promote nodes; an `external` node (§4.1) has no legal
+# transition at all: its status changes only when its issue is closed or
+# reopened outside the loop (§5). Pure: no I/O.
 #
 #   transition_actors — the actor kinds: agent | human | promote | reconcile.
 #   transitions       — the table: [{from: [status], to, actors: [actor], when}],
@@ -73,6 +76,8 @@ def transition_error($to; $actor):
       "unknown actor \($actor | tojson) (expected \(transition_actors | join("|")))"
     elif any(node_statuses[]; . == $to) | not then
       "unknown status \($to | tojson) (expected \(node_statuses | join("|")))"
+    elif $kind == "external" then
+      "illegal transition \($move): an external node takes no transition"
     elif $actor == "promote" and ($promote_node | not) then
       "illegal transition \($move): the promote actor acts only on promote nodes"
     elif any(transitions[]; _row_allows($from; $to; $actor; $kind)) then null

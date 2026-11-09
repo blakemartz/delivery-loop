@@ -6,13 +6,15 @@
 #
 #   is_ready($idx)  — the input node is ready; $idx is `index_by_id` of all nodes.
 #   started_epic($epic; $idx) — epic id $epic (input: all nodes) has >= 1 child
-#                     that is done or cancelled.
+#                     that is done or cancelled (external children included, §5).
 #   ready_set       — [{id, title, unblocks, size, started, epic, module,
 #                     target_branch}], best first.
 #   ready           — ready_set as a stream (one JSON line each with `jq -c`).
 #
-# Ready iff: a task; not done/cancelled; deps_done (graph.jq: every dep exists and is done; a
-# cancelled or unknown dep never satisfies readiness, GC2/GC7); unclaimed (a
+# Ready iff: a task (never an epic, promote or external node); not
+# done/cancelled; deps_done (graph.jq: every dep exists and is done; a
+# cancelled or unknown dep never satisfies readiness, GC2/GC7; an external dep
+# counts only when done, GC68); unclaimed (a
 # human assignee is a `by: "human"` claim, §4.1); size is not L; not needs_human.
 # The status label is a cache (design spec §5.1), so it is deliberately not
 # consulted: a `blocked` task whose deps are now done is ready, as in v0.1.4.
