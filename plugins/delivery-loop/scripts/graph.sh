@@ -77,6 +77,29 @@
 #                               other backend failure exits 1. The next pass
 #                               re-plans from fresh state. Wrappers treat 4
 #                               and 75 as retryable.
+#   migrate [--apply]           github only (§6.2, GC48): for every open task,
+#                               a native blocked-by for each legacy
+#                               `Depends-on:` ref and the native parent from
+#                               `Part of epic #E` (the backend's migrate-plan).
+#                               Text lines stay in place. Without --apply it is
+#                               a dry run: each planned edit is printed as one
+#                               JSON object per line ({op: "link", id, dep} or
+#                               {op: "parent", id, epic}) and nothing is
+#                               written. With --apply each edit goes through
+#                               the backend's idempotent `link` / `parent` and
+#                               is printed as `migrate: link <id> blocked-by
+#                               <dep>` / `migrate: parent <id> -> <epic>`, so a
+#                               second run plans and issues 0 edits. Before any
+#                               write (dry run too), an issue that would exceed
+#                               50 blockers (GitHub's per-relationship cap), or
+#                               a dep that would block more than 50 issues, is
+#                               named and the run exits 1 with nothing
+#                               written. A ref GitHub would reject (not an
+#                               issue in this repo, a PR, cross-repo
+#                               `owner/repo#N`, a self edge) is never planned,
+#                               so --apply cannot wedge on it. A plan warning
+#                               goes to stderr as `warn: …`; the summary line
+#                               goes to stderr.
 #
 # Exit codes: 0 ok · 1 failed / invalid config / not claimable · 2 usage · 3
 # the backend list reached LIST_LIMIT · 4 reconcile --fix: the board changed
@@ -92,7 +115,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 dl_config_check || exit 1
 
 usage() {
-  echo "usage: graph.sh ready | list | show <id> [--format json|md] [--events] | export | create <node-json> | update <id> <patch-json> | link <id> <dep-id> [via] | flag <id> needs-human on|off | claim <id> <actor> [--run <run>] | claim <id> --human <name> | release <id> <reason> | comment <id> <text> | transition <id> <to> [--actor agent|human|promote] [--human <name>] | reconcile [--fix] (docs/delivery_graph_spec.md §6.1)" >&2
+  echo "usage: graph.sh ready | list | show <id> [--format json|md] [--events] | export | create <node-json> | update <id> <patch-json> | link <id> <dep-id> [via] | flag <id> needs-human on|off | claim <id> <actor> [--run <run>] | claim <id> --human <name> | release <id> <reason> | comment <id> <text> | transition <id> <to> [--actor agent|human|promote] [--human <name>] | reconcile [--fix] | migrate [--apply] (docs/delivery_graph_spec.md §6.1)" >&2
   exit 2
 }
 
@@ -101,9 +124,13 @@ op="${1:-}"
 case "$op" in
   ready|list|export) [ $# -eq 0 ] || usage ;;
   reconcile) [ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = --fix ]; } || usage ;;
+  migrate) [ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = --apply ]; } || usage ;;
   show|claim|transition|create|update|link|flag|release|comment) : ;;
   *) usage ;;
 esac
+
+[ "$op" != migrate ] || [ "$GRAPH_BACKEND" = github ] || {
+  echo "graph.sh: migrate is github only (GRAPH_BACKEND=$GRAPH_BACKEND has no legacy text edges, §6.2)" >&2; exit 1; }
 
 backend="$SCRIPT_DIR/backends/graph-$GRAPH_BACKEND.sh"
 [ -f "$backend" ] || { echo "graph.sh: no backend for GRAPH_BACKEND=$GRAPH_BACKEND ($backend missing)" >&2; exit 1; }
@@ -237,6 +264,52 @@ case "$op" in
     [ -z "$name" ] || set -- "$@" --actor "$name"
     bash "$backend" "$@" < /dev/null || rc=$?
     exit "$rc" ;;
+  migrate)
+    # GitHub links at most 50 issues per relationship type (changelog
+    # 2025-08-21; not in the REST reference, so enforced defensively, §6.2).
+    cap=50
+    bash "$backend" migrate-plan > "$tmp/migrate.json" || exit $?
+    jq -e 'type == "array"' "$tmp/migrate.json" > /dev/null 2>&1 || {
+      echo "graph.sh: migrate: backend $GRAPH_BACKEND emitted no plan array" >&2; exit 1; }
+    jq -r '.[].warnings[] | "warn: \(.)"' "$tmp/migrate.json" >&2
+    over=$(jq -r --argjson cap "$cap" '.[] | select(.links != [] and .blockers > $cap)
+      | "graph.sh: migrate: #\(.id) would have \(.blockers) blockers; GitHub links at most \($cap) per issue"' "$tmp/migrate.json")
+    # The cap likely binds the blocking side too: refuse a dep that would block
+    # more than $cap issues (the backend's `blocking` count; a lower bound).
+    over_b=$(jq -r --argjson cap "$cap" '[ .[] | (.blocking // {}) | to_entries[] | select(.value > $cap) ]
+      | unique_by(.key | tonumber)[]
+      | "graph.sh: migrate: #\(.key) would block \(.value) issues; GitHub links at most \($cap) per issue"' "$tmp/migrate.json")
+    over=$(printf '%s\n%s' "$over" "$over_b" | sed '/^$/d')
+    if [ -n "$over" ]; then
+      printf '%s\n' "$over" >&2
+      echo "graph.sh: migrate: refusing to exceed $cap blockers / blocked issues per issue; split those dependencies, then re-run (nothing written)" >&2
+      exit 1
+    fi
+    jq -c '.[] | (.id as $id | (.links[] | {op: "link", id: $id, dep: .}),
+                 (select(.parent != null) | {op: "parent", id: $id, epic: .parent}))' \
+      "$tmp/migrate.json" > "$tmp/edits.jsonl"
+    edits=$(wc -l < "$tmp/edits.jsonl" | tr -d ' ')
+    if [ $# -eq 0 ]; then
+      cat "$tmp/edits.jsonl"
+      echo "graph.sh: migrate: $edits edit(s) planned (dry run; pass --apply to write them)" >&2
+      exit 0
+    fi
+    done_n=0
+    while IFS= read -r e; do
+      id=$(jq -r .id <<<"$e")
+      case "$(jq -r .op <<<"$e")" in
+        link) dep=$(jq -r .dep <<<"$e")
+              bash "$backend" link "$id" "$dep" < /dev/null || {
+                echo "graph.sh: migrate: link $id blocked-by $dep failed after $done_n of $edits edit(s); re-run (it is idempotent)" >&2; exit 1; }
+              echo "migrate: link $id blocked-by $dep" ;;
+        parent) epic=$(jq -r .epic <<<"$e")
+              bash "$backend" parent "$id" "$epic" < /dev/null || {
+                echo "graph.sh: migrate: parent $id -> $epic failed after $done_n of $edits edit(s); re-run (it is idempotent)" >&2; exit 1; }
+              echo "migrate: parent $id -> $epic" ;;
+      esac
+      done_n=$((done_n + 1))
+    done < "$tmp/edits.jsonl"
+    echo "graph.sh: migrate: $done_n edit(s) applied" >&2 ;;
   reconcile)
     load_all
     pjq "$ALL" "$tmp/nodes.json" -c > "$tmp/valid.json"

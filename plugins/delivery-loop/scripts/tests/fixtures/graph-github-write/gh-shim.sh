@@ -20,7 +20,8 @@
 # Like real gh: `--json a,b` keeps only those fields; `--jq` filters; `issue list`
 # defaults to `--state open --limit 30` and cuts each issue's comments to its
 # first 100 (2.96.0); `issue view` returns them all; `pr list` defaults to
-# `--state open --limit 30`; `issue close --comment` posts the comment first.
+# `--state open --limit 30`; `issue close --comment` posts the comment first;
+# `issue edit --add-blocked-by|--parent <n>` fails when #n is not an issue.
 # Behaviour switches (files in $SHIM_STATE):
 #   fail-<group>-<cmd>   that call fails with exit 1 (e.g. fail-issue-comment);
 #                        the file's content, when non-empty, is a count of
@@ -166,6 +167,8 @@ case "$group $cmd" in
     echo "https://github.com/$repo/issues/$pos#issuecomment-1" ;;
   "issue edit")
     issue_exists "$pos" || no_issue "$pos"
+    # Like GitHub: a blocked-by or parent target must be an issue of the repo.
+    for t in $(jq -r '.[]' <<<"$blocked") $parent; do issue_exists "$t" || no_issue "$t"; done
     ts=$(tick)
     jq --argjson n "$pos" --arg ts "$ts" --argjson add "$adds" --argjson rm "$removes" \
        --argjson aa "$add_as" --argjson ra "$rm_as" --argjson bl "$blocked" \

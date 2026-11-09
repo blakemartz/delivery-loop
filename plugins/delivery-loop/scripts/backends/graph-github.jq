@@ -28,6 +28,9 @@
 #                      timeline's ClosedEvent closers (GC75) into `_closed_by_prs`.
 #   gh_timeline_closers($repo) — a `gh api graphql` timeline response → the
 #                      numbers of the PRs of repo $repo that closed the issue.
+#   gh_migrate_plan  — a raw issue array → the native edges `graph.sh migrate`
+#                      adds to each open task: its legacy `Depends-on:` refs and
+#                      `Part of epic #E` parent (task B3, §6.2, GC48).
 #
 # Field derivation (github column of §4.1):
 #   kind        `task` label, else `epic`, else `promote` (v0.1.4 listed every
@@ -330,3 +333,76 @@ def gh_link_body($dep; $via):
 # (with exactly $via, when $via is a string).
 def gh_has_text_edge($dep; $via):
   any(_text_edges[]; .id == $dep and ($via == null or .via == $via));
+
+# --- migrate (task B3) ------------------------------------------------------------
+
+# The epic of a `Part of epic #E` body line (§6.2: the legacy parent), or null.
+def _gh_part_of_epic:
+  [ _lines[] | capture("Part of [Ee]pic #(?<e>[0-9]+)") | .e ] | first // null;
+
+# The `Depends-on:` refs as migrate reads them: like _text_edges (via dropped),
+# but a ref with an `owner/repo` prefix is kept apart as cross-repo, {repo, id},
+# so migrate never turns `other/repo#5` into a local native edge. (_text_edges
+# itself keeps v0.1.4's reading, so `list` is unchanged.)
+def _gh_dep_refs:
+  [ _lines[]
+    | capture("Depends-on:(?<rest>.*)").rest
+    | sub("[(]via:.*$"; "")
+    | scan("([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#([0-9]+)") | {repo: .[0], id: .[1]} ];
+
+# gh_migrate_plan — input: a raw issue array: every issue of the repo
+# (`--state all`, complete blockedBy). For every open task, the native edits that
+# carry its legacy text edges over (§6.2, GC48):
+#   {id, links: [dep ids with a `Depends-on:` line but no native blocked-by, in
+#    numeric order], parent: the `Part of epic #E` epic when there is no native
+#    parent (else null), blockers: the native blocked-by count once the links
+#    are added, blocking: {dep: the number of issues that dep blocks once every
+#    planned link is added} for each of its links, warnings: [text]}.
+# In ascending issue order (gh lists newest first). A task with nothing to add
+# and nothing to warn about is left out, so a migrated board plans []. Text
+# lines are never removed. The parent is set only when it is the epic the node
+# already reads (gh_epic's body fallback), so migrating never changes a node's
+# epic. Never planned (each warned about instead, so --apply cannot wedge on an
+# edit GitHub rejects): a self edge; a dep or epic that is not an issue in the
+# read (a dangling ref, GC7; a PR number; a deleted or transferred issue); a
+# cross-repo `owner/repo#N` dep.
+# `blocking` is a lower bound: it counts the native blocked-by edges of issues
+# in this read only (not other repos' issues blocked by the dep, nor nodes
+# beyond a short blockedBy of an unlabelled issue, which is not re-read).
+def gh_migrate_plan:
+  . as $all
+  | ([ $all[] | .number | tostring ]) as $known
+  | ([ $all[] | gh_native_deps[] ]) as $native_blocking
+  | [ $all[] | select(gh_kind == "task" and .state == "OPEN")
+      | (.number | tostring) as $id
+      | gh_native_deps as $native
+      | _gh_dep_refs as $refs
+      | ([ $refs[] | select(.repo == null) | .id ] | unique | sort_by(tonumber)) as $text
+      | ([ $refs[] | select(.repo != null) | "\(.repo)#\(.id)" ] | unique) as $cross
+      | ([ $text[] | select(. as $d | $d != $id and ($native | index($d)) == null) ]) as $cand
+      | ([ $cand[] | select(. as $d | ($known | index($d)) != null) ]) as $links
+      | ([ $cand[] | select(. as $d | ($known | index($d)) == null) ]) as $unknown
+      | ((.parent | type) == "object" and .parent.number != null) as $has_parent
+      | _gh_part_of_epic as $text_part
+      | (if $has_parent then null else $text_part end) as $part
+      | gh_epic as $epic
+      | (if $part != null and $part == $epic and $part != $id then $part else null end) as $want_parent
+      | { id: $id,
+          links: $links,
+          parent: (if $want_parent != null and ($known | index($want_parent)) != null then $want_parent else null end),
+          blockers: (([ (.blockedBy.totalCount // 0), ($native | length) ] | max) + ($links | length)),
+          warnings: [ (if ($text | index($id)) != null then "#\($id) Depends-on: itself; not linked" else empty end),
+                      ($unknown[] | "#\($id) Depends-on: #\(.), which is not an issue in this repo; not linked"),
+                      ($cross[] | "#\($id) Depends-on: \(.) is in another repo; not linked (migrate links this repo's issues only)"),
+                      (if $has_parent and $text_part != null and $text_part != (.parent.number | tostring)
+                       then "#\($id) has native parent #\(.parent.number) but `Part of epic #\($text_part)`; parent left as is (fix the body)"
+                       elif $part != null and $part == $id then "#\($id) is Part of epic of itself; parent not set"
+                       elif $part != null and $part != $epic
+                       then "#\($id) reads epic #\($epic) but has `Part of epic #\($part)`; parent not set (fix the body)"
+                       elif $want_parent != null and ($known | index($want_parent)) == null
+                       then "#\($id) Part of epic #\($want_parent), which is not an issue in this repo; parent not set"
+                       else empty end) ] } ]
+  | (reduce ($native_blocking[], .[].links[]) as $d ({}; .[$d] += 1)) as $blocks
+  | map(.blocking = (.links | map({key: ., value: $blocks[.]}) | from_entries)
+        | select(.links != [] or .parent != null or .warnings != []))
+  | sort_by(.id | tonumber);
