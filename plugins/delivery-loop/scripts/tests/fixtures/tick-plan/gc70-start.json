@@ -1,0 +1,4 @@
+{"flags": {"parallel": 3},
+ "nodes": [{"id": "t-drift", "status": "ready"},
+           {"id": "t-free", "created_at": "2026-01-02T00:00:00Z"}],
+ "prs": [{"number": 70, "task_id": "t-drift"}]}

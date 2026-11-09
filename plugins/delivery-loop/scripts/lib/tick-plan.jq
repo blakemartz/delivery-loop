@@ -30,6 +30,12 @@
 # ("needs-human items: never act on them"): a node with `needs_human`, or a PR
 # labeled needs-human, produces no action, only a `waiting` line.
 #
+# Hardening (GC70): a merge needs the PR's base to equal the node's
+# target_branch, and a task gets at most one merge per tick (the lowest PR
+# number; the others wait for a human). A node with an open agent PR is never
+# started, whatever its status: drift (a cleared claim, a `ready` label) must
+# not spawn a duplicate implementation; reconcile rule 4 repairs the status.
+#
 # Usage: jq -L scripts/lib 'include "tick-plan"; tick_plan' input.json
 include "node";
 include "pr";
@@ -63,7 +69,9 @@ def _pr_rule($n; $auto):
             {wait: "\($ref) is approved but conflicting at \($iter): needs a human rebase"}
           end
         elif .mergeable == "clean" and (.checks == "success" or .checks == "none") then
-          if $auto then
+          if $auto and .base != $n.target_branch then
+            {wait: "\($ref) is approved but targets \(.base), not the node's target \($n.target_branch): awaiting a human"}
+          elif $auto then
             {action: "merge", pr: .number, id: $n.id, sha: .head_sha,
              reason: "approved, mergeable clean, checks \(.checks)"}
           else
@@ -130,7 +138,13 @@ def tick_plan:
      | . as $pr | $idx[.task_id] as $node | $pr | _pr_rule($node; $auto)]
     | sort_by(.pr) as $pr_out
   | [$nodes[] | _promote_rule($idx)] as $promote_out
-  | [$pr_out[] | select(.action == "merge")] as $merges
+  # At most one merge per task (GC70): the lowest PR number merges; the rest
+  # wait, and once the task is done they no longer match any rule.
+  | ([$pr_out[] | select(.action == "merge")] | group_by(.id)) as $merge_groups
+  | ($merge_groups | map(.[0]) | sort_by(.pr)) as $merges
+  | [$merge_groups[] | .[0].pr as $first | .[1:][]
+     | "PR #\(.pr) (\(.id)) is approved too, but PR #\($first) merges for the task: awaiting a human"]
+    as $dup_waits
   | [$promote_out[] | select(.action == "promote")] as $promotes
   | [("patch", "rebase", "review") as $a | $pr_out[] | select(.action == $a)] as $pr_agent
   # In-flight (§5 batch rules): open agent PRs, approved-unmerged included,
@@ -140,7 +154,14 @@ def tick_plan:
   | ([($open[] | .task_id // empty | $idx[.] // empty), $claimed[]]
      | map(select(.module != null) | [.target_branch, .module]) | unique) as $locks
   | (if $mode.name == "serial" then 2 else $n end) as $cap
-  | ($nodes | ready_set) as $ready
+  # Never start a node with an open agent PR, whatever its status (GC70).
+  | ([$open[] | .task_id // empty] | unique) as $pr_ids
+  | ($nodes | ready_set
+     | map(.id as $id | .open_pr = any($pr_ids[]; . == $id))) as $ready_all
+  | [$ready_all[] | select(.open_pr | not) | del(.open_pr)] as $ready
+  | [$ready_all[] | select(.open_pr) | .id as $id
+     | "\($id) is not started: it has an open agent PR (\([$open[] | select(.task_id == $id) | "#\(.number)"] | join(", "))); reconcile repairs its status"]
+    as $pr_held
   | (if $mode.name == "serial" then $ready[0:1] else $ready end) as $candidates
   | ($candidates | _starts([$cap - $in_flight, 0] | max; $locks)) as $sel
   | ($pr_agent + $sel.starts) as $agent_all
@@ -156,6 +177,8 @@ def tick_plan:
         [$nodes[] | select((.kind == "task" or .kind == "promote") and is_open and .needs_human)
          | "\(.id) needs-human"]
         + [$pr_out[], $promote_out[] | .wait // empty]
+        + $dup_waits
+        + $pr_held
         + (if $sel.capped > 0 then ["start capped: \($in_flight) in flight of cap \($cap)"] else [] end)
         + $sel.waits
         + (if ($ready | length) == 0 then ["no ready tasks"] else [] end)

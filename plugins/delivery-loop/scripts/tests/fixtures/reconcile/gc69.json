@@ -1,0 +1,12 @@
+{"nodes": [
+  {"id": "gc69-ready", "status": "ready"},
+  {"id": "gc69-blocked", "status": "blocked", "deps": ["gc69-done"]},
+  {"id": "gc69-ready-unmet", "status": "ready", "deps": ["gc69-dep"]},
+  {"id": "gc69-human-pr", "status": "ready"},
+  {"id": "gc69-done", "status": "done"},
+  {"id": "gc69-dep", "status": "ready"}
+ ],
+ "prs": [{"number": 69, "task_id": "gc69-ready"},
+         {"number": 70, "task_id": "gc69-blocked"},
+         {"number": 71, "task_id": "gc69-ready-unmet"},
+         {"number": 72, "task_id": "gc69-human-pr", "labels": []}]}
