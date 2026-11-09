@@ -12,8 +12,8 @@
 include "shape";
 
 def node_fields:
-  ["id", "kind", "title", "epic", "checklist", "pinged_at", "module", "size",
-   "deps", "status", "needs_human", "claim", "target_branch", "promote_to",
+  ["id", "kind", "title", "epic", "checklist", "pinged_at", "applied_prs", "module",
+   "size", "deps", "status", "needs_human", "claim", "target_branch", "promote_to",
    "plan_ref", "body", "created_at", "updated_at"];
 
 def node_kinds: ["task", "epic", "promote", "external"];
@@ -81,6 +81,10 @@ def node_errors:
     check("epic"; . == null or is_node_id; "must be a node id or null"),
     check("checklist"; type == "array" and all(.[]; is_node_id); "must be an array of node ids"),
     check("pinged_at"; is_iso8601_or_null; "must be an ISO-8601 timestamp or null"),
+    # PR numbers whose merge reconcile rule 3 already applied (§4.1, §5): an
+    # external node keeps it free, since rule 3 never acts on one.
+    check("applied_prs"; type == "array" and all(.[]; is_int and . > 0);
+          "must be an array of positive integers (PR numbers)"),
     # Bare name: adapters strip the `module:` label prefix (a bare `module:`
     # label maps to null).
     check("module"; . == null or (is_nonempty_string and (startswith("module:") | not));

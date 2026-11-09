@@ -6,6 +6,7 @@
     "epic": null,
     "checklist": [],
     "pinged_at": null,
+    "applied_prs": [],
     "module": null,
     "size": "S",
     "deps": [
@@ -31,6 +32,7 @@
     "epic": null,
     "checklist": [],
     "pinged_at": null,
+    "applied_prs": [],
     "module": null,
     "size": "S",
     "deps": [],

@@ -2,7 +2,8 @@
 # Tests for backends/graph-local.sh (store, lock, journal, list/show/create/
 # update/link/flag) and graph.sh list/show/ready over it (docs/delivery_graph_spec.md
 # §4.1, §6.1, §6.3): golden cases GC22 (a-d), GC23, GC27, GC66 and GC44
-# (`pinged_at` derivation) — §17 row C1.
+# (`pinged_at` derivation) — §17 row C1 — and GC72 (local `applied_prs`
+# derivation) — §17 row A5b.
 #
 # Runs in a throwaway git repo under ${TMPDIR:-/tmp}, so the host repo's
 # .claude/delivery.conf and git dir never leak in. Lock waits are shortened with
@@ -211,6 +212,42 @@ eq "GC44: show derives pinged_at the same way" '"2026-10-06T00:00:00Z"' "$(jq -c
 gl "$repo" STATE_DIR="$P" -- update hum-1 '{"pinged_at":null}'
 expect "GC44: pinged_at is derived, never patched" '[ "$rc" = 1 ]'
 expect "GC44: stored nodes carry no pinged_at" '[ "$(jq "[.nodes[] | has(\"pinged_at\")] | any" "$P/epics/inbox.json")" = false ]'
+
+# --- GC72: applied_prs derivation (local) ------------------------------------------
+# applied_prs = per node, the ascending unique PR numbers > 0 directly after
+# `AUTO-CLOSE: PR #` in its journal `comment` events (the gh_applied_prs parse).
+# A torn line and a NUL line sit right beside a marker: each is skipped on its
+# own and hides neither neighbour.
+A="$tmp/s-applied"
+gl "$repo" STATE_DIR="$A" -- create '{"id":"ac-1","kind":"task","title":"reopened","status":"ready"}'
+gl "$repo" STATE_DIR="$A" -- create '{"id":"ac-2","kind":"task","title":"no marker","status":"ready"}'
+ev() { printf '{"ts":"2026-10-0%sT00:00:00Z","actor":"loop","run":null,"op":"%s","id":"%s","from":null,"to":null,"body":"%s"}\n' "$1" "$2" "$3" "$4"; }
+{ ev 1 comment ac-1 'AUTO-CLOSE: PR #12'
+  ev 2 comment ac-1 'AUTO-CLOSE: PR #7 merged'
+  ev 3 comment ac-1 'AUTO-CLOSE: PR #12'
+  printf '{"ts":"2026-10-04T00:00:00Z","op":"comment","id":"ac-1","body":"AUTO-CLOSE: PR #4\n'
+  ev 5 comment ac-1 'AUTO-CLOSE: PR #30'
+  printf '{"ts":"2026-10-06T00:00:00Z","actor":"loop","run":null,"op":"comment","id":"ac-1","from":null,"to":null,"body":"AUTO-CLOSE: PR #6"}\0\0\n'
+  ev 7 comment ac-1 'AUTO-CLOSE: PR #0'
+  ev 7 comment ac-1 'AUTO-CLOSE: PR #x9'
+  ev 7 comment ac-1 'AUTO-CLOSE: PR #'
+  ev 8 comment ac-1 're: AUTO-CLOSE: PR #99'
+  ev 8 transition ac-1 'AUTO-CLOSE: PR #98'
+  ev 9 comment ac-3 'AUTO-CLOSE: PR #97'
+} >> "$A/events.jsonl"
+g "$repo" STATE_DIR="$A" -- list
+expect "GC72: list survives a torn and a NUL journal line beside a marker and validates" \
+  '[ "$rc" = 0 ] && valid && grep -q "skipping unparsable journal 2 line(s)" <<<"$err"'
+eq "GC72: applied_prs = ascending unique AUTO-CLOSE: PR #<n> comment numbers > 0 (torn/NUL lines skipped alone)" \
+  '[7,12,30]' "$(node ac-1 .applied_prs)"
+eq "GC72: no AUTO-CLOSE comment event (other ids' markers do not leak) -> applied_prs []" '[]' "$(node ac-2 .applied_prs)"
+g "$repo" STATE_DIR="$A" -- show ac-1
+eq "GC72: show derives applied_prs the same way" '[7,12,30]' "$(jq -c .applied_prs <<<"$out")"
+gl "$repo" STATE_DIR="$A" -- update ac-1 '{"applied_prs":[1]}'
+expect "GC72: applied_prs is derived, never patched" '[ "$rc" = 1 ] && grep -q "applied_prs" <<<"$err"'
+gl "$repo" STATE_DIR="$A" -- create '{"id":"ac-4","kind":"task","title":"x","applied_prs":[1]}'
+expect "GC72: create refuses applied_prs as input" '[ "$rc" = 1 ] && grep -q "applied_prs" <<<"$err"'
+expect "GC72: stored nodes carry no applied_prs" '[ "$(jq "[.nodes[] | has(\"applied_prs\")] | any" "$A/epics/inbox.json")" = false ]'
 
 # --- GC22: the lock -----------------------------------------------------------------
 # fresh_state <dir>: a store holding one node, `t`.

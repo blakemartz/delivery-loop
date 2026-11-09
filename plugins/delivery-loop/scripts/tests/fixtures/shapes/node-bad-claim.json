@@ -5,6 +5,7 @@
   "epic": "7",
   "checklist": [],
   "pinged_at": null,
+  "applied_prs": [],
   "module": "policy",
   "size": "S",
   "deps": [

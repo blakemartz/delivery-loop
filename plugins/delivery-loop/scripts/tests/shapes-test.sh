@@ -56,6 +56,24 @@ reject node validate_node node-bad-timestamp.json         '`updated_at` must be 
 reject node validate_node node-bad-checklist-on-task.json '`checklist` is for epic nodes only'
 reject node validate_node node-bad-extra-field.json       'unexpected field `labels`'
 
+# `applied_prs` (§4.1, issue #52): required, an array of positive PR numbers.
+while IFS='|' read -r edit expect; do
+  [ -n "$edit" ] || continue
+  if got=$(jq -c -L "$lib" "include \"node\"; .[0] | $edit | validate_node" \
+             "$fx/node-valid.json" 2>&1); then
+    fail "node with $edit rejected" "accepted"
+  else
+    case "$got" in *"$expect"*) pass "node with $edit rejected ($expect)" ;;
+      *) fail "node with $edit rejected" "expected: $expect" "got: $got" ;; esac
+  fi
+done <<'EOF'
+del(.applied_prs)|missing field `applied_prs`
+.applied_prs = null|`applied_prs` must be an array of positive integers
+.applied_prs = ["12"]|`applied_prs` must be an array of positive integers
+.applied_prs = [0]|`applied_prs` must be an array of positive integers
+.applied_prs = [1.5]|`applied_prs` must be an array of positive integers
+EOF
+
 # `external` (§4.1): open -> blocked, closed -> done | cancelled; every
 # label-derived field is fixed, so a claimed external is malformed.
 accept node validate_node node-external-valid.json
