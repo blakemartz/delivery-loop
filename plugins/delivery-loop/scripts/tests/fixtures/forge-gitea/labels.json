@@ -1,0 +1,13 @@
+{
+  "repo": [
+    {"id": 11, "name": "bug", "exclusive": false, "is_archived": false, "color": "ee0701", "description": "", "url": "https://gitea.example.com/api/v1/repos/example/repo/labels/11"},
+    {"id": 12, "name": "agent-authored", "exclusive": false, "is_archived": false, "color": "ededed", "description": "Produced by an agent", "url": "https://gitea.example.com/api/v1/repos/example/repo/labels/12"},
+    {"id": 13, "name": "task", "exclusive": false, "is_archived": false, "color": "1d76db", "description": "", "url": "https://gitea.example.com/api/v1/repos/example/repo/labels/13"}
+  ],
+  "orgs": {
+    "example": [
+      {"id": 91, "name": "promote", "exclusive": false, "is_archived": false, "color": "5319e7", "description": "org label", "url": "https://gitea.example.com/api/v1/orgs/example/labels/91"},
+      {"id": 92, "name": "agent-authored", "exclusive": false, "is_archived": false, "color": "ededed", "description": "org duplicate", "url": "https://gitea.example.com/api/v1/orgs/example/labels/92"}
+    ]
+  }
+}

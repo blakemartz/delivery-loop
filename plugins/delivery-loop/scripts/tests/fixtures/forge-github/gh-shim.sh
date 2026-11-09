@@ -18,6 +18,11 @@
 #   fail-comment       — `pr comment` fails (no URL, exit 1), as on a
 #                        permissions or network error.
 #   many-merged        — the merged list is 1200 PRs, all merged in the window.
+#   unknown-label      — `pr create --label …` fails before creating, as gh does
+#                        when a name resolves to no label (no URL, exit 1).
+#   fail-label-update  — `pr create --label …` creates the PR, prints its URL,
+#                        then fails the label step, as gh does when its second
+#                        (updatePullRequest) request fails (exit 1).
 set -euo pipefail
 
 : "${SHIM_FX:?}" "${SHIM_STATE:?}"
@@ -58,7 +63,14 @@ case "${1:-} ${2:-}" in
       'if $many then .merged = [[range(1200) | {number: (2000 + .), headRefName: "task/bulk-\(.)", mergedAt: "2026-11-08T12:00:00Z"}]] else . end
        | [(.[$s] // [])[][] | select($h == "" or .headRefName == $h)] | .[0:$lim]' "$SHIM_FX/lists.json" \
       | jq -c --arg f "$fields" 'map(. as $o | reduce ($f | split(","))[] as $k ({}; .[$k] = $o[$k]))' ;;
-  "pr create") echo "https://github.com/example/repo/pull/150" ;;
+  "pr create")
+    if [ -n "$(opt --label "$@")" ] && [ -f "$SHIM_STATE/unknown-label" ]; then
+      echo "could not add label: '$(opt --label "$@")' not found" >&2; exit 1
+    fi
+    echo "https://github.com/example/repo/pull/150"
+    if [ -n "$(opt --label "$@")" ] && [ -f "$SHIM_STATE/fail-label-update" ]; then
+      echo "pull request update failed: GraphQL: Something went wrong (updatePullRequest)" >&2; exit 1
+    fi ;;
   "pr review")
     cp "$(opt --body-file "$@")" "$SHIM_STATE/review-body"
     if [ -f "$SHIM_STATE/reject-self-review" ] && [ -z "${GH_TOKEN:-}" ]; then

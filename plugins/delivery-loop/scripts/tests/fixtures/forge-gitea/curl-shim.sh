@@ -12,6 +12,8 @@
 #                  `state` and `total_count` over the returned page only.
 #   reviews.json   {"<n>": [<PullReview>]}      comments.json {"<n>": [<Comment>]}
 #   files.json     {"<n>": [<ChangedFile>]}
+#   labels.json    {"repo": [<Label>], "orgs": {"<org>": [<Label>]}}  (an owner
+#                  missing from `orgs` is a user: GET /orgs/<it>/labels → 404)
 #                  An issue comment POSTed since the last reset is appended to the
 #                  GET of that PR's comments ($SHIM_STATE/posted-comments-<n>.json),
 #                  so a comment-form verdict can round-trip through pr-reviews.
@@ -102,6 +104,11 @@ else
     "GET /user") respond 200 '{"id":2,"login":"shim-user","full_name":"","email":"shim-user@noreply.gitea.example.com"}' ;;
     "GET /settings/api")
       respond 200 '{"max_response_items":2,"default_paging_num":2,"default_git_trees_per_page":1000,"default_max_blob_size":10485760}' ;;
+    "GET labels") page "$(jq -c '.repo' "$SHIM_FX/labels.json")" link ;;
+    GET\ /orgs/*/labels)
+      o="${route#/orgs/}"; o="${o%/labels}"
+      ls=$(jq -c --arg o "$o" '.orgs[$o] // empty' "$SHIM_FX/labels.json")
+      if [ -n "$ls" ]; then page "$ls" link; else err 404 "GetOrgByName"; fi ;;
     "GET pulls")
       st=$(qp state)
       page "$(jq -c --arg s "${st:-open}" --slurpfile prs "$SHIM_FX/prs.json" \
