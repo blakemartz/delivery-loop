@@ -33,7 +33,7 @@ The reviewer must be a **fresh agent with no implementer context**. You spawn it
 
 3. **Iterations exhausted.** No approval after 3 review/patch rounds: **escalate** with a concise summary of the remaining reviewer/patcher disagreement, and STOP (spec §9).
 
-**Escalate** = persist it, don't just report it: write the summary to `"$TMPDIR/escalation.md"`, post it with `bash "$S/forge.sh" pr-comment <pr> --body-file "$TMPDIR/escalation.md"`, then `bash "$S/graph.sh" flag <id> needs-human on` and `bash "$S/graph.sh" comment <id> "<one-line summary> (PR #<pr>)"`, and run `NOTIFY_ESCALATE_CMD` if it is set.
+**Escalate** = persist it, don't just report it: write the summary to `"$TMPDIR/escalation.md"`, post it with `bash "$S/forge.sh" pr-comment <pr> --body-file "$TMPDIR/escalation.md"`, then `bash "$S/graph.sh" flag <id> needs-human on` and `bash "$S/graph.sh" comment <id> "Escalated to needs-human: see PR #<pr>"`, and run `NOTIFY_ESCALATE_CMD` if it is set. The summary lives only on the PR. The node gets just that pointer, never the summary, because a later reviewer reads every free-text node comment as contract (`review-task` step 2) and would take one side of the disagreement as the orchestrator's instruction.
 
 ## Exit condition
 
