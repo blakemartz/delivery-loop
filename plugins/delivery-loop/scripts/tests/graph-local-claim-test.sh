@@ -265,6 +265,7 @@ for bad in '{"op":"close","id":"y","from":"ready","to":"done","reason":"x","upda
            '{"op":"transition","id":"y","from":"ready","to":"done","reason":"x"}' \
            '{"op":"transition","id":"Y Y","from":"ready","to":"done","reason":"x","updated_at":"x"}' \
            '{"op":"transition","id":"y","from":"ready","to":"done","reason":"x","updated_at":"x","extra":1}' \
+           '{"op":"transition","id":"y","from":"ready","to":"done","reason":"x","updated_at":"x","pr":"7"}' \
            '[]'; do
   gl "$A" -- reconcile "$bad"
   eq "reconcile refuses the malformed record $bad (exit 1)" 1 "$rc"

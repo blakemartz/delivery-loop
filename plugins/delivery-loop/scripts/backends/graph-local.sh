@@ -783,6 +783,7 @@ GL_RECORD='
   elif (.op as $op | ["transition", "reclaim", "ping"] | index($op)) == null
   then error("record: unknown op \(.op | tojson) (transition|reclaim|ping)")
   elif .op == "ping" and .from != .to then error("record: a ping moves nothing (from must equal to)")
+  elif (.pr | . == null or type == "number" | not) then error("record: pr must be null or a number")
   else . end'
 
 # gl_autoclose_marker <record-file> <node-json>: the §5 rule-3 evidence comment
