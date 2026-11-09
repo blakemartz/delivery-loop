@@ -8,6 +8,9 @@
 # names checked with `git check-ref-format --branch` before any write,
 # whitespace-only via/criteria refused, `#N` deps resolved only against
 # `graph.sh list`, duplicate JSON keys refused; plus the promote node (§9).
+# #81: GitHub's title/body limits and NUL titles (create and apply, gh 2.96
+# and 2.93), the 100-sub-issue cap per epic, no false body drift from CR in
+# plan text, and the local stale-lock message.
 #
 # Offline, under the caller's TMPDIR:
 #   - origin is a bare repo in the test's temp dir, and the work repo a clone;
@@ -606,6 +609,208 @@ for edit in '.deps[0].via = "x\fy"' '.deps[0].via = "x\u000by"' '.deps[0].via = 
      | plan_verify_github({base: $base, nodes: [{id: "7"}, {id: "8"}]}) | length > 0' 2>&1 || true)
   eq "guard [$edit]: the composed check refuses it too" true "$got"
 done
+
+# --- GitHub's hard limits (#81): refused by create's own check, before any write --
+# GitHub refuses (HTTP 422) a title over 256 characters and a body over 65536;
+# the shim does not, so these show the refusal is ours, before any gh call:
+# github create refuses the node with no gh issue/api call, and apply (which
+# runs the same gh_create_errors) refuses the plan with zero writes, on gh 2.96
+# (native relations) and gh 2.93 (text edges). A NUL in a title is refused too
+# (gh issue create's argv cannot carry it).
+gwrite='^gh (issue (create|edit|close|comment|reopen)|label|api .*(mutation|--method|-X))'
+# body_len <native> <node-json>: the body create writes for that node, in that form.
+body_len() { jq -n -L "$scripts/lib" -L "$scripts/backends" --argjson n "$2" --argjson v "$1" \
+  'include "graph-github"; $n | gh_create_body($v; "main") | length'; }
+lim_base='{"kind": "task", "title": "t", "body": "", "status": "ready", "epic": "7",
+  "deps": [{"id": "8", "via": "v"}, "9"], "target_branch": "release/x", "plan_ref": "demo/t"}'
+# The contract length at which the longer (gh < 2.94 text-edge) body is exactly
+# the limit, and at which only the native body still fits. The limit counts the
+# body file create writes: the composed body + its final newline.
+pad_text=$(( 65536 - 1 - $(body_len 0 "$(jq -c '.body = "x"' <<<"$lim_base")") + 1 ))
+pad_native=$(( 65536 - 1 - $(body_len 1 "$(jq -c '.body = "x"' <<<"$lim_base")") + 1 ))
+for ver in 2.96.0 2.93.0; do
+  fresh_repo
+  gh_board
+  for case in "title 257 chars|.title = (\"t\" * 257)|create: title is 257 characters; GitHub's limit is 256" \
+              "title 257 non-ASCII chars|.title = (\"é\" * 257)|create: title is 257 characters; GitHub's limit is 256" \
+              "title with NUL|.title = \"a\\u0000b\"|create: title must not contain NUL" \
+              "body over 65536|.body = (\"x\" * 65537)|GitHub's limit is 65536" \
+              "native body fits, text-edge body does not|.body = (\"x\" * $pad_native)|GitHub's limit is 65536" \
+              "text-edge body one over|.body = (\"x\" * ($pad_text + 1))|GitHub's limit is 65536"; do
+    name="${case%%|*}" rest="${case#*|}"; edit="${rest%%|*}" want="${rest#*|}"
+    jq -c "$lim_base | $edit" <<<'null' >"$tmp/l.node.json"
+    : >"$st/log"
+    run SHIM_GH_VERSION="$ver" -- "$graph" create - <"$tmp/l.node.json"
+    eq "limits (gh $ver) create [$name]: exit 1" 1 "$rc"
+    has "limits (gh $ver) create [$name]: says why" "$err" "$want"
+    eq "limits (gh $ver) create [$name]: no gh issue/api call" "" "$(grep -E '^gh (issue|api)' "$st/log" || true)"
+  done
+  # At the limits exactly, create accepts (both body files <= 65536, title 256).
+  for case in "title 256 chars|.title = (\"t\" * 256)" \
+              "text-edge body file exactly 65536|.body = (\"x\" * $pad_text)"; do
+    name="${case%%|*}" edit="${case#*|}"
+    jq -c "$lim_base | $edit" <<<'null' >"$tmp/l.node.json"
+    run SHIM_GH_VERSION="$ver" -- "$graph" create - <"$tmp/l.node.json"
+    eq "limits (gh $ver) create [$name]: accepted" 0 "$rc"
+  done
+  eq "limits: the text-edge body at the boundary is 65535 (65536 with the final newline)" 65535 \
+    "$(body_len 0 "$(jq -c ".body = (\"x\" * $pad_text)" <<<"$lim_base")")"
+  eq "limits: the 'native fits' case: native body 65535 (+ newline: 65536), text-edge body longer" "65535 1" \
+    "$(body_len 1 "$(jq -c ".body = (\"x\" * $pad_native)" <<<"$lim_base")") $(( pad_native > pad_text ))"
+
+  # apply: board-view (created after both epics and two tasks) carries the
+  # over-limit field, so a check after any write would leave a half-applied plan.
+  for case in "title 257 chars|.tasks[2].title = (\"t\" * 257)|create: title is 257 characters" \
+              "title with NUL|.tasks[2].title = \"a\\u0000b\"|create: title must not contain NUL" \
+              "body over 65536|.tasks[2].context = (\"x\" * 65600)|GitHub's limit is 65536" \
+              "epic goal over 65536|.epics[1].goal = (\"x\" * 65600)|GitHub's limit is 65536" \
+              "promote_to node title over 256|.promote_to = (\"m\" * 250)|create: title is"; do
+    name="limits apply [${case%%|*}] (gh $ver)" rest="${case#*|}"; edit="${rest%%|*}" want="${rest#*|}"
+    fresh_repo release/x
+    gh_board
+    cp "$st/board.json" "$tmp/board.before"
+    jq "$edit" "$here/fixtures/plan/valid.plan.json" >"$tmp/c.plan.json"
+    : >"$st/log"
+    run SHIM_GH_VERSION="$ver" -- "$plan" apply "$tmp/c.plan.json"
+    eq "$name: exit 1" 1 "$rc"
+    has "$name: names create's refusal" "$err" "the github backend's create would refuse this node ("
+    has "$name: says why" "$err" "$want"
+    has "$name: refused before any write" "$err" "apply refused (nothing written)"
+    eq "$name: no gh write" "" "$(grep -E "$gwrite" "$st/log" || true)"
+    eq "$name: board unchanged" "$(cat "$tmp/board.before")" "$(cat "$st/board.json")"
+    eq "$name: no push, ls-remote or fetch" "" "$(grep -E '^git (push|ls-remote|fetch)' "$tmp/git.log" || true)"
+  done
+done
+
+# --- the body limit holds for the issue numbers GitHub really assigns (#84 review) --
+# Apply cannot know a new node's number before create, and GitHub's is often
+# wider than `graph.sh list`'s highest + 1 (PRs share the sequence; list omits
+# unlabelled issues). On gh_board, list's highest is #42, so a count made with
+# list-based numbers sees 43.., while the shim assigns 100.. (after #99). Pad
+# board-view (created 5th; 3 references to new nodes in the gh < 2.94 body:
+# its epic and two deps) so that its longer composed body with 2-digit numbers,
+# plus the body file's final newline, is exactly 65536: real 3-digit numbers
+# push it over at create. Apply must refuse it before any write (no half-apply).
+fresh_repo release/x
+gh_board
+jq '.tasks[2].context = "x"' "$here/fixtures/plan/valid.plan.json" >"$tmp/w.plan.json"
+run SHIM_GH_VERSION=2.93.0 -- "$plan" apply "$tmp/w.plan.json"
+eq "wide numbers: the probe apply succeeds" "0 7" "$rc $(created)"
+# The body create wrote (the shim stores the body file, final newline included).
+bvbody='[.[] | select(.title == "Board view")][0].body | rtrimstr("\n")'
+wide_refs=$(jq "$bvbody"' | [match("#1[0-9][0-9](?![0-9])"; "g")] | length' "$st/board.json")
+eq "wide numbers: board-view's text-edge body has 3 references to new (3-digit) issues" 3 "$wide_refs"
+# Its length with each of those references one digit narrower (43.. instead of
+# 100..); the pad makes that length + 1 (the final newline) exactly 65536.
+small_len=$(( $(jq "$bvbody | length" "$st/board.json") - wide_refs ))
+wpad=$(( 65536 - small_len ))
+for ver in 2.96.0 2.93.0; do
+  name="wide numbers (gh $ver)"
+  fresh_repo release/x
+  gh_board
+  cp "$st/board.json" "$tmp/board.before"
+  jq --argjson n "$wpad" '.tasks[2].context = ("x" * $n)' "$here/fixtures/plan/valid.plan.json" >"$tmp/w.plan.json"
+  : >"$st/log"
+  run SHIM_GH_VERSION="$ver" -- "$plan" apply "$tmp/w.plan.json"
+  eq "$name: exit 1" 1 "$rc"
+  eq "$name: 0 created" 0 "$(created)"
+  has "$name: names create's refusal" "$err" "the github backend's create would refuse this node ("
+  has "$name: refused before any write" "$err" "apply refused (nothing written)"
+  eq "$name: no gh write" "" "$(grep -E "$gwrite" "$st/log" || true)"
+  eq "$name: board unchanged" "$(cat "$tmp/board.before")" "$(cat "$st/board.json")"
+  eq "$name: no push, ls-remote or fetch" "" "$(grep -E '^git (push|ls-remote|fetch)' "$tmp/git.log" || true)"
+done
+
+# --- GitHub's sub-issue cap (#81): 100 per parent issue, before any write ---------
+# An epic the plan already created (plan_ref demo/core, issue 1) with 99
+# existing children; the plan adds 2 more tasks under it -> 101.
+cap_board() {  # cap_board <children>
+  jq -n --argjson k "$1" "$B"' [ (i(1; "Core engine"; ["epic", "status:ready"];
+      "Store and queue\n\nDelivery-Target: release/x\nDelivery-Plan: demo/core"; "OPEN")),
+    (range(2; 2 + $k) as $n | i($n; "child \($n)"; ["task", "status:ready", "size:S"];
+      "x\n\nDelivery-Target: release/x\nPart of epic #1"; (if $n % 2 == 0 then "OPEN" else "CLOSED" end))
+      | .parent = {number: 1}) ]' >"$st/board.json"
+}
+jq '{schema, plan, target_branch, epics: [.epics[0]],
+     tasks: [{id: "t1", epic: "core", title: "T1", module: "plan", size: "S", criteria: ["c"]},
+             {id: "t2", epic: "core", title: "T2", module: "plan", size: "S", criteria: ["c"]}]}' \
+  "$here/fixtures/plan/valid.plan.json" >"$tmp/cap.plan.json"
+for ver in 2.96.0 2.93.0; do
+  name="sub-issue cap (gh $ver)"
+  fresh_repo release/x
+  cap_board 99
+  cp "$st/board.json" "$tmp/board.before"
+  : >"$st/log"
+  run SHIM_GH_VERSION="$ver" -- "$plan" apply "$tmp/cap.plan.json"
+  eq "$name: 99 existing + 2 new: exit 1" 1 "$rc"
+  has "$name: says why" "$err" "epic \`core\`: 101 sub-issues (99 existing + 2 to create) exceed GitHub's 100 per parent issue"
+  has "$name: refused before any write" "$err" "apply refused (nothing written)"
+  eq "$name: no gh write" "" "$(grep -E "$gwrite" "$st/log" || true)"
+  eq "$name: board unchanged" "$(cat "$tmp/board.before")" "$(cat "$st/board.json")"
+  eq "$name: no push, ls-remote or fetch" "" "$(grep -E '^git (push|ls-remote|fetch)' "$tmp/git.log" || true)"
+done
+# 98 existing + 2 new = 100: accepted (the cap is inclusive).
+fresh_repo release/x
+cap_board 98
+apply_gh "$tmp/cap.plan.json"
+eq "sub-issue cap: 98 existing + 2 new = 100: exit 0, 2 created" "0 2" "$rc $(created)"
+# A new epic with 101 plan tasks (pure preflight: plan_apply on the normalized plan).
+got=$(jq -c -L "$scripts/lib" 'include "plan-apply";
+  .tasks = [range(101) as $k | .tasks[0] | .id = "t\($k)" | .deps = [] | .context = "" | .scope = []]
+  | .spec = [] | .epics |= map(.goal = "" | .spec_refs = []) | .promote_to = null
+  | plan_apply({backend: "github", nodes: []}).errors' "$tmp/cap.plan.json" 2>&1 || true)
+has "sub-issue cap: a new epic with 101 plan tasks is refused" "$got" 'epic `core`: 101 sub-issues (0 existing + 101 to create)'
+got=$(jq -c -L "$scripts/lib" 'include "plan-apply";
+  .tasks = [range(101) as $k | .tasks[0] | .id = "t\($k)" | .deps = [] | .context = "" | .scope = []]
+  | .spec = [] | .epics |= map(.goal = "" | .spec_refs = []) | .promote_to = null
+  | plan_apply({backend: "local", nodes: []}).errors' "$tmp/cap.plan.json" 2>&1 || true)
+hasnt "sub-issue cap: not a local limit" "$got" 'sub-issues'
+
+# --- CR in plan text (#81): no false body drift on re-apply -----------------------
+# The stored github body is compared line by line with CRs dropped; the plan's
+# own CRs must be normalized the same way, or every re-apply reports body drift.
+for ver in 2.96.0 2.93.0; do
+  name="CRLF plan (gh $ver)"
+  fresh_repo release/x
+  gh_board
+  jq '.tasks[0].context = "Define\r\nthe store.\r\n" | .tasks[0].criteria = ["passes\r\nall"]
+      | .tasks[1].context = "a\rb" | .epics[0].goal = "Store and queue\r\n"' \
+    "$here/fixtures/plan/valid.plan.json" >"$tmp/crlf.plan.json"
+  run SHIM_GH_VERSION="$ver" -- "$plan" apply "$tmp/crlf.plan.json"
+  eq "$name: first apply exit 0, 7 created" "0 7" "$rc $(created)"
+  : >"$st/log"
+  run SHIM_GH_VERSION="$ver" -- "$plan" apply "$tmp/crlf.plan.json"
+  eq "$name: re-apply exit 0" 0 "$rc"
+  eq "$name: re-apply reports 0 drift lines" 0 "$(printf '%s\n' "$err" | grep -c '^drift:' || true)"
+  has "$name: re-apply summary" "$out" "applied (0 created, 7 existing, 0 drift)"
+  eq "$name: re-apply makes no gh write" "" "$(grep -E "$gwrite" "$st/log" || true)"
+done
+# Real drift in a CRLF plan is still reported.
+jq --argjson n "$(jq '[.[] | select(.title == "Store schema")][0].number' "$st/board.json")" \
+  'map(if .number == $n then .body = "Edited by a human.\n\n" + .body else . end)' "$st/board.json" >"$st/b" \
+  && mv "$st/b" "$st/board.json"
+run -- "$plan" apply "$tmp/crlf.plan.json"
+eq "CRLF plan: a human body edit is still drift" "drift: store-schema body" "$(printf '%s\n' "$err" | grep '^drift:' || true)"
+
+# --- the local lock, held by a dead process (#81): when a re-run succeeds --------
+# A holder killed while it held the lock leaves it behind; the backend breaks
+# it only once it is older than LOCK_STALE_SECONDS. apply's message says so.
+fresh_repo release/x
+dead=$(sh -c 'exit 0' & p=$!; wait "$p" || true; echo "$p")
+lockd="$repo/.git/delivery/lock"
+mkdir -p "$lockd"
+printf '%s %s %s %s\n' "$(uname -n)" "$dead" dead-run "$(( $(date +%s) - 5 ))" >"$lockd/owner"
+jq '.tasks[1].deps |= map(select(.id != "#42"))' "$here/fixtures/plan/valid.plan.json" >"$tmp/lock.plan.json"
+apply_local LOCK_WAIT_SECONDS=1 LOCK_STALE_SECONDS=120 -- "$tmp/lock.plan.json"
+eq "dead holder's lock (5s old, LOCK_STALE_SECONDS=120): exit 1, 0 created" "1 0" "$rc $(created)"
+has "dead holder's lock: says the lock is busy" "$err" "the local store's lock is busy (exit 75)"
+has "dead holder's lock: says when a re-run succeeds" "$err" \
+  "once the lock is older than LOCK_STALE_SECONDS (120s from when it was taken)"
+has "dead holder's lock: names the manual remedy" "$err" "graph-local.sh unlock --force"
+hasnt "dead holder's lock: not a bare re-run" "$err" "re-run plan.sh apply: it finds"
+# Once the lock is older than LOCK_STALE_SECONDS, the same re-run succeeds.
+apply_local LOCK_WAIT_SECONDS=1 LOCK_STALE_SECONDS=2 -- "$tmp/lock.plan.json"
+eq "dead holder's lock older than LOCK_STALE_SECONDS: the re-run succeeds" "0 7" "$rc $(created)"
 
 # --- usage --------------------------------------------------------------------------
 run -- "$plan" apply

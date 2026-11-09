@@ -24,10 +24,12 @@
 #                       `refs/…` or `origin/…`;
 #                    3. lib/plan-apply.jq preflight: plan_ref collisions, local
 #                       id reuse across plans (GC35), the promote id, one-line
-#                       titles, the 50-blocker cap on github;
+#                       titles, the 50-blocker cap and the 100-sub-issue cap
+#                       per epic on github;
 #                    3b. composed-body validation (lib/plan-verify.jq):
 #                       each node to create must pass the backend's own
-#                       create input check (github: gh_create_errors; local:
+#                       create input check (github: gh_create_errors, which
+#                       includes GitHub's title and body length limits; local:
 #                       GL_CREATE + validate_node), and is rendered as the backend's
 #                       create writes it (github: gh_create_body, native and
 #                       gh < 2.94 forms; local: its GL_CREATE normalizer) and
@@ -282,6 +284,14 @@ case "$rc" in
   *) die "cannot read origin (git ls-remote exit $rc; nothing written)" ;;
 esac
 
+# lock_busy: why a local write exited 75, and when a re-run will succeed. The
+# local store's lock was not acquired within LOCK_WAIT_SECONDS; the backend
+# breaks a lock only when its holder is dead and the lock is older than
+# LOCK_STALE_SECONDS (§6.3), so re-running sooner just waits and exits 75 again.
+lock_busy() {
+  printf '%s' "the local store's lock is busy (exit 75). A re-run succeeds once the lock is released (a live holder finishes) or, if its holder died, once the lock is older than LOCK_STALE_SECONDS (${LOCK_STALE_SECONDS}s from when it was taken), when the backend breaks it; to clear it sooner, check that no process holds it, then run: bash $SCRIPT_DIR/backends/graph-local.sh unlock --force"
+}
+
 # Create what is missing, in step order; $tmp/map.json maps plan ids to node ids.
 jq -c '[.steps[] | select(.exists) | {key: .pid, value: .id}] | from_entries' "$tmp/apply.json" >"$tmp/map.json"
 jq -c '.steps[]' "$tmp/apply.json" >"$tmp/steps.jsonl"
@@ -298,6 +308,8 @@ while IFS= read -r step; do
   rc=0
   id="$(bash "$SCRIPT_DIR/graph.sh" create - <"$tmp/node.json")" || rc=$?
   id="$(printf '%s\n' "$id" | tail -n 1)"
+  [ "$rc" -ne 75 ] || [ "$GRAPH_BACKEND" != local ] \
+    || die "graph.sh create failed for $kind $pid after $created created: $(lock_busy). Re-running plan.sh apply finds existing nodes by plan_ref"
   if [ "$rc" -ne 0 ] || [ -z "$id" ]; then
     die "graph.sh create failed for $kind $pid (exit $rc) after $created created; re-run plan.sh apply: it finds existing nodes by plan_ref"
   fi
@@ -308,5 +320,7 @@ done <"$tmp/steps.jsonl"
 
 rc=0
 bash "$SCRIPT_DIR/graph.sh" reconcile --fix </dev/null || rc=$?
+[ "$rc" -ne 75 ] || [ "$GRAPH_BACKEND" != local ] \
+  || die "every node exists ($created created), but graph.sh reconcile --fix: $(lock_busy). Then re-run graph.sh reconcile --fix"
 [ "$rc" -eq 0 ] || die "every node exists ($created created), but graph.sh reconcile --fix exited $rc: re-run it"
 echo "plan.sh: $file: applied ($created created, $existing existing, $(jq '.drift | length' "$tmp/apply.json") drift)"

@@ -492,6 +492,35 @@ def gh_via_ok:
 # `create` refuses with it before any gh call, and `plan.sh apply` runs it on
 # every node to create before any write (composed-artifact validation), so a
 # node apply accepts is one create accepts (#76 A1: no half-applied plan).
+#
+# GitHub's own hard limits are checked here too, so a node GitHub would refuse
+# (HTTP 422) is refused before any gh call, not after earlier nodes of a plan
+# were created (#81). Lengths are in characters (Unicode codepoints, jq
+# `length`), as GitHub counts them. GitHub's REST reference for "Create an
+# issue" (https://docs.github.com/en/rest/issues/issues#create-an-issue) states
+# no maximum for `title` or `body`; the limits GitHub enforces, observed as its
+# 422 validation errors ("is too long (maximum is N characters)"), are
+# catalogued at https://github.com/dead-claudia/github-limits:
+#   - issue title: 1 to 256 characters (_gh_title_max);
+#   - issue body: at most 65536 codepoints (_gh_body_max). The body checked is
+#     the one create writes (gh_create_body), in both forms (native relations,
+#     and gh < 2.94 text edges, which is longer), so a plan accepted under one
+#     gh version is accepted under the other. Its length counts one more
+#     character: create writes the body file with `jq -r`, which ends it with a
+#     newline, and `gh issue create --body-file` sends the file as it is. That
+#     the newline is counted (rather than not written, `jq -j`) is the
+#     conservative choice: it holds whether or not gh or GitHub strips it, and
+#     leaves every body create writes, and so every read and drift compare,
+#     unchanged; it costs at most one character of headroom.
+# A NUL in the title is refused as well: create passes the title to `gh issue
+# create` as an argument, read line by line through bash, which cannot carry
+# NUL, so the issue would be created with a different title (#76 review).
+def _gh_title_max: 256;
+def _gh_body_max: 65536;
+# The longer of the two bodies create can write for this node, as the body
+# file create writes (+ 1: `jq -r`'s final newline).
+def _gh_body_len($base): ([gh_create_body(1; $base), gh_create_body(0; $base) | length] | max) + 1;
+
 def gh_create_errors($base):
   def str: type == "string" and length > 0;
   # A trailer value (§6.2): one token, so the line create writes is a valid
@@ -505,6 +534,9 @@ def gh_create_errors($base):
     elif (.kind as $k | ["task", "epic", "promote"] | index($k)) == null then
       "create: kind must be task|epic|promote (never external) (got \(.kind | tojson))"
     elif (.title | str | not) or (.title | test("[\r\n]")) then "create: title must be a non-empty one-line string"
+    elif any(.title | explode[]; . == 0) then "create: title must not contain NUL (gh issue create cannot carry it)"
+    elif (.title | length) > _gh_title_max then
+      "create: title is \(.title | length) characters; GitHub's limit is \(_gh_title_max)"
     elif .body != null and (.body | type) != "string" then "create: body must be a string"
     elif (.status // "ready" | . as $s | ["ready", "blocked"] | index($s)) == null then
       "create: status must be ready or blocked (got \(.status | tojson))"
@@ -526,6 +558,8 @@ def gh_create_errors($base):
       "create: target_branch must be one token (no whitespace) (got \(.target_branch | tojson))"
     elif .target_branch == null and ($base | tok | not) then
       "create: BASE_BRANCH (the default target_branch) must be one token (got \($base | tojson))"
+    elif _gh_body_len($base) > _gh_body_max then
+      "create: the issue body create writes is \(_gh_body_len($base)) characters (contract + trailer block + final newline); GitHub's limit is \(_gh_body_max)"
     else empty end ];
 
 # --- migrate (task B3) ------------------------------------------------------------

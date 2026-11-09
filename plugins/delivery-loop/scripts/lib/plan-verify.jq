@@ -84,13 +84,22 @@ def plan_verify_github($ctx):
   | ([ $steps[] | select(.exists) | {key: .pid, value: .id} ] | from_entries) as $found
   | [ $steps[] | select(.exists | not) | .pid ] as $new
   | ([ ($ctx.nodes // [])[] | .id | select(test("^[0-9]+$")) | tonumber ] | max // 0) as $hi
-  | ($found + ($new | to_entries | map({key: .value, value: ($hi + 1 + .key | tostring)}) | from_entries)) as $map0
   # create's own input check first (gh_create_errors, the function create
-  # runs; any issue number passes it): a node create would refuse is an error
-  # here, before any write, instead of a half-applied plan. The read-back
-  # below runs only on nodes create accepts (well-formed by then).
+  # runs): a node create would refuse is an error here, before any write,
+  # instead of a half-applied plan. The read-back below runs only on nodes
+  # create accepts (well-formed by then).
+  #
+  # The check measures the composed body, which names new nodes' numbers
+  # (`Part of epic #N`, `Depends-on: #N`), and those are not known yet: the
+  # number GitHub assigns can be wider than any guess from `graph.sh list` (PRs
+  # share the sequence; list omits unlabelled issues). So every node not yet
+  # created gets a number of the widest form an issue number can take (10
+  # digits: GitHub's are int32), 1000000000 + k: a body that fits here fits
+  # with any real numbers (#84 review). This numbering is for the check only;
+  # the read-back uses its own two (below).
+  | ($found + ($new | to_entries | map({key: .value, value: (1000000000 + .key | tostring)}) | from_entries)) as $wide
   | [ $steps[] | select(.exists | not) | .pid as $pid
-      | (.node | plan_apply_resolve($map0)) | gh_create_errors($ctx.base)[]
+      | (.node | plan_apply_resolve($wide)) | gh_create_errors($ctx.base)[]
       | "`\($pid)`: the github backend's create would refuse this node (\(.)): nothing written" ]
   | if . != [] then .
     else [ ($hi + 1000000, $hi + 2000000 + ($new | length)) as $off
