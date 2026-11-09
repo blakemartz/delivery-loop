@@ -48,8 +48,17 @@
 # The journal has no `update` op, so update and flag journal as `transition`
 # (from/to = the node's status before/after; body = the patch).
 #
+# Input: every node-json and patch-json must be exactly one JSON object
+# (`{…}{…}` or `[…]` is refused before the lock, nothing written). Every id
+# that names a file or is stored is a §4.1 slug (^[a-z0-9]+(-[a-z0-9]+)*$, at
+# most 40 chars). update/link/flag fail unless they replace exactly one stored
+# node. Each mutation builds and checks its journal line before it commits
+# the epic file, so a failure leaves store and journal unchanged.
+#
+# Requires jq >= 1.6 (`--rawfile`; `--slurpfile` is 1.5): checked at startup.
+#
 # Exit codes: 0 ok · 1 failed (unknown node, invalid input or node, schema
-# mismatch) · 2 usage · 75 lock not acquired within LOCK_WAIT_SECONDS.
+# mismatch, jq too old) · 2 usage · 75 lock not acquired within LOCK_WAIT_SECONDS.
 #
 # Sourcing this file (tests) defines the gl_* functions without running a primitive.
 set -euo pipefail
@@ -74,8 +83,28 @@ gl_now()   { date -u +%Y-%m-%dT%H:%M:%SZ; }
 gl_host()  { uname -n; }
 gl_jq()    { jq -L "$GL_LIB" "$@"; }
 
+# gl_is_id <s>: a §4.1 slug, ^[a-z0-9]+(-[a-z0-9]+)*$, at most 40 chars. Pure
+# glob (no grep: grep matches per line, so "e<newline>e" would pass); the
+# letters are spelled out so no locale's collation can widen a range.
 gl_is_id() {
-  [ "${#1}" -le 40 ] && printf '%s' "$1" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$'
+  [ -n "$1" ] && [ "${#1}" -le 40 ] || return 1
+  case "$1" in
+    *[!abcdefghijklmnopqrstuvwxyz0123456789-]*|-*|*-|*--*) return 1 ;;
+  esac
+}
+
+# gl_one_object <what> <json>: refuse anything but exactly one JSON object
+# (`jq -e .` alone accepts `{…}{…}`, which would commit two nodes).
+gl_one_object() {
+  printf '%s' "$2" | jq -e -s 'length == 1 and (.[0] | type) == "object"' > /dev/null 2>&1 \
+    || gl_die "$1 must be exactly one JSON object (got invalid JSON, several values, or a non-object): nothing written"
+}
+
+# gl_check_jq: jq >= 1.6 (`--rawfile`). Probed by feature, reported by version.
+gl_check_jq() {
+  command -v jq > /dev/null 2>&1 || gl_die "jq not found on PATH (the local backend needs jq >= 1.6)"
+  jq -n --rawfile x /dev/null 'true' > /dev/null 2>&1 \
+    || gl_die "jq >= 1.6 required (for --rawfile/--slurpfile); found $(jq --version 2>&1 || echo unknown)"
 }
 
 gl_resolve_state() {
@@ -190,27 +219,42 @@ EOF
   [ $(( $(date +%s) - epoch )) -gt "$LOCK_STALE_SECONDS" ]
 }
 
-# gl_event <op> <id> <from> <to> <body>: append one journal line (empty -> null).
-# Called with the lock held (or, for lock-broken, with lock.break held while the
-# dead holder's lock still exists), so no other appender runs concurrently. The
-# line is built whole in scratch first (body via a file: no argv ceiling); if
-# the journal ends in a torn line (a crash mid-append), a newline is written
-# first so the torn line cannot swallow this event.
-gl_event() {
+# gl_event_build <op> <id> <from> <to> <body>: build one journal line (empty
+# -> null) into $GL_TMP/ev-line and check it is exactly one JSON object on one
+# line. Mutations call it BEFORE committing their epic file, so a failed build
+# leaves everything unchanged (a retried id-less create cannot duplicate).
+# The body goes through a file: no argv ceiling.
+gl_event_build() {
   gl_scratch
-  mkdir -p "$GL_STATE"
   printf '%s' "$5" > "$GL_TMP/ev-body"
   jq -nc --arg ts "$(gl_now)" --arg actor "$GL_ACTOR" --arg run "$GL_RUN" \
     --arg op "$1" --arg id "$2" --arg from "$3" --arg to "$4" --rawfile body "$GL_TMP/ev-body" '
     def n: if . == "" then null else . end;
     {ts: $ts, actor: $actor, run: ($run | n), op: $op, id: ($id | n),
      from: ($from | n), to: ($to | n), body: ($body | n)}' > "$GL_TMP/ev-line" \
-    || gl_die "cannot build the $1 journal event for '${2:-}'"
-  if [ -s "$GL_EVENTS" ] && [ -n "$(tail -c 1 "$GL_EVENTS")" ]; then
+    || gl_die "cannot build the $1 journal event for '${2:-}' (nothing written)"
+  if [ "$(wc -l < "$GL_TMP/ev-line")" -ne 1 ] \
+     || ! jq -e -s 'length == 1 and (.[0] | type) == "object"' "$GL_TMP/ev-line" > /dev/null 2>&1; then
+    gl_die "the $1 journal event for '${2:-}' is not one JSON object on one line (nothing written)"
+  fi
+}
+
+# gl_event_append: append the line gl_event_build made. Called with the lock
+# held (or, for lock-broken, with lock.break held while the dead holder's lock
+# still exists), so no other appender runs concurrently. If the journal's last
+# byte is not a newline (a torn tail: a crash mid-append, or NUL padding after
+# a power loss), a newline is written first so the tail cannot swallow this
+# event. `wc -l` counts only \n bytes; $(tail -c 1) would drop a NUL.
+gl_event_append() {
+  mkdir -p "$GL_STATE"
+  if [ -s "$GL_EVENTS" ] && [ "$(tail -c 1 "$GL_EVENTS" | wc -l)" -eq 0 ]; then
     printf '\n' >> "$GL_EVENTS"
   fi
   cat "$GL_TMP/ev-line" >> "$GL_EVENTS"
 }
+
+# gl_event <op> <id> <from> <to> <body>: build and append (no commit between).
+gl_event() { gl_event_build "$@"; gl_event_append; }
 
 # gl_reap_break <judged-line>: remove a stale lock.break, itself serialized by
 # lock.break.reap and re-checked against the same owner line.
@@ -310,10 +354,22 @@ gl_check_store() {
     || gl_die "store schema mismatch in $GL_STORE: expected $GL_SCHEMA, found $found (no implicit migrations)"
 }
 
+# gl_orphan_epics: die if store.json is missing while epic files exist (a lost
+# or deleted store.json must not read as an empty graph, nor be recreated).
+gl_orphan_epics() {
+  local files
+  shopt -s nullglob
+  files=("$GL_EPICS"/*.json)
+  shopt -u nullglob
+  [ "${#files[@]}" -eq 0 ] \
+    || gl_die "$GL_STORE is missing but ${#files[@]} epic file(s) exist under $GL_EPICS: refusing to treat the store as empty (restore store.json)"
+}
+
 # Under the lock: create the store on first write.
 gl_ensure_store() {
   mkdir -p "$GL_EPICS"
   if [ ! -f "$GL_STORE" ]; then
+    gl_orphan_epics
     gl_write_cmd "$GL_STORE" jq -n --argjson s "$GL_SCHEMA" --arg now "$(gl_now)" '{schema: $s, created_at: $now}'
   fi
   gl_check_store
@@ -340,7 +396,7 @@ GL_READ='reduce inputs as $d ({}; .[input_filename] += [$d])
       | (.epic // empty), .nodes[] ] | sort_by(.created_at)'
 
 gl_stored() {
-  [ -f "$GL_STORE" ] || { echo '[]'; return 0; }
+  [ -f "$GL_STORE" ] || { gl_orphan_epics; echo '[]'; return 0; }
   gl_check_store
   local files f
   shopt -s nullglob
@@ -368,10 +424,13 @@ GL_EMIT='include "node";
         | validate_node)'
 
 # The journal, one line per event: {bad: [line numbers], ev: [events]}. A line
-# that is not one JSON object (a torn tail, a crash mid-append) is skipped on
-# its own, so it can never hide the events after it.
+# that is not one JSON object, or holds a NUL byte (a torn tail, a crash
+# mid-append, NUL padding), is skipped on its own, so it can never hide the
+# events after it.
 GL_JOURNAL='[inputs] | to_entries | map(select(.value | test("\\S")))
-  | map(.n = .key + 1 | .e = (.value | try fromjson catch null))
+  | map(.n = .key + 1
+        | .e = (if .value | contains("\u0000") then null
+                else .value | try fromjson catch null end))
   | {bad: map(select((.e | type) != "object") | .n),
      ev:  map(select((.e | type) == "object") | .e)}'
 
@@ -394,23 +453,29 @@ gl_nodes() {
     || { sed 's/^jq: error (at [^)]*): //' "$GL_TMP/err" >&2; gl_die "stored nodes fail validate_node (§4.1)"; }
 }
 
-# gl_file_of <stored-node-json>: the epic file that holds it.
+# gl_file_of <stored-node-json>: the epic file that holds it. The name must be
+# a slug, so no input can make an unsafe or multi-line filename.
 gl_file_of() {
   local f
   f=$(jq -r 'if .kind == "epic" then .id else (.epic // "inbox") end' <<<"$1")
+  gl_is_id "$f" || gl_die "refusing epic file name '$f': not a §4.1 slug"
   printf '%s/%s.json' "$GL_EPICS" "$f"
 }
 
-# gl_put_node <node-json>: replace the stored node with the same id in its file.
+# gl_put_node <node-json>: replace the stored node with the same id in its
+# file. Fails (file unchanged) unless exactly one node, or the epic header,
+# carries that id: a no-op replace never returns 0.
 gl_put_node() {
   local file
   file=$(gl_file_of "$1")
   [ -f "$file" ] || gl_die "missing epic file $file"
   gl_write_cmd "$file" jq --slurpfile n "$(gl_json_file node "$1")" --argjson schema "$GL_SCHEMA" '
     $n[0] as $n
+    | ([.nodes[] | select(.id == $n.id)] | length) as $hits
     | if .schema != $schema then error("schema mismatch: expected \($schema), found \(.schema)")
-      elif (.epic // {}).id == $n.id then .epic = $n
-      else .nodes |= map(if .id == $n.id then $n else . end) end' "$file"
+      elif (.epic // {}).id == $n.id and $hits == 0 then .epic = $n
+      elif $hits == 1 and (.epic // {}).id != $n.id then .nodes |= map(if .id == $n.id then $n else . end)
+      else error("node \($n.id | tojson) is stored \($hits + (if (.epic // {}).id == $n.id then 1 else 0 end)) time(s) in this file (expected exactly 1): nothing replaced") end' "$file"
 }
 
 # gl_validate <stored-node-json>: validate_node with the derived pinged_at.
@@ -491,10 +556,13 @@ gl_do_create() {
   node=$(jq -c --slurpfile all "$GL_TMP/all.json" --arg now "$(gl_now)" --arg base "$BASE_BRANCH" \
     "$GL_CREATE" <<<"$1" 2> "$GL_TMP/err") \
     || { sed 's/^jq: error (at [^)]*): //' "$GL_TMP/err" >&2; exit 1; }
+  gl_one_object "create: the built node" "$node"
   gl_validate "$node"
   id=$(jq -r .id <<<"$node")
+  gl_is_id "$id" || gl_die "create: id '$id' is not a §4.1 slug"
   file=$(gl_file_of "$node")
   nf=$(gl_json_file node "$node")
+  gl_event_build create "$id" "" "$(jq -r .status <<<"$node")" "$(jq -r .title <<<"$node")"
   if [ "$(jq -r .kind <<<"$node")" = epic ]; then
     [ ! -e "$file" ] || gl_die "epic file $file already exists"
     gl_write_cmd "$file" jq -n --slurpfile n "$nf" --argjson s "$GL_SCHEMA" '{schema: $s, epic: $n[0], nodes: []}'
@@ -503,13 +571,13 @@ gl_do_create() {
   else
     gl_write_cmd "$file" jq -n --slurpfile n "$nf" --argjson s "$GL_SCHEMA" '{schema: $s, epic: null, nodes: $n}'
   fi
-  gl_event create "$id" "" "$(jq -r .status <<<"$node")" "$(jq -r .title <<<"$node")"
+  gl_event_append
   printf '%s\n' "$id"
 }
 
 op_create() {
   [ "$1" != - ] || set -- "$(cat)"
-  jq -e . >/dev/null 2>&1 <<<"$1" || gl_die "create: node-json does not parse"
+  gl_one_object "create: node-json" "$1"
   gl_with_lock gl_do_create "$1"
 }
 
@@ -532,13 +600,15 @@ gl_do_update() {
          | .updated_at = $now end' <<<"$old" 2> "$GL_TMP/err") \
     || { sed 's/^jq: error (at [^)]*): //' "$GL_TMP/err" >&2; exit 1; }
   gl_validate "$new"
+  gl_event_build transition "$1" "$(jq -r .status <<<"$old")" "$(jq -r .status <<<"$new")" "$(jq -c . <<<"$2")"
   gl_put_node "$new"
-  gl_event transition "$1" "$(jq -r .status <<<"$old")" "$(jq -r .status <<<"$new")" "$(jq -c . <<<"$2")"
+  gl_event_append
 }
 
 op_update() {
   [ "$2" != - ] || set -- "$1" "$(cat)"
-  jq -e . >/dev/null 2>&1 <<<"$2" || gl_die "update: patch-json does not parse"
+  gl_is_id "$1" || gl_die "update: not a node id: '$1'"
+  gl_one_object "update: patch-json" "$2"
   gl_with_lock gl_do_update "$1" "$2"
 }
 
@@ -554,11 +624,13 @@ gl_do_link() {
   [ "$(jq -c 'del(.updated_at)' <<<"$new")" != "$(jq -c 'del(.updated_at)' <<<"$old")" ] || return 0
   new=$(jq -c --arg now "$(gl_now)" '.updated_at = $now' <<<"$new")
   gl_validate "$new"
+  gl_event_build link "$1" "" "$2" "$3"
   gl_put_node "$new"
-  gl_event link "$1" "" "$2" "$3"
+  gl_event_append
 }
 
 op_link() {
+  gl_is_id "$1" || gl_die "link: not a node id: '$1'"
   gl_is_id "$2" || gl_die "link: not a node id: '$2'"
   [ "$1" != "$2" ] || gl_die "link: a node cannot block itself ('$1')"
   local hasvia=false
@@ -573,13 +645,15 @@ gl_do_flag() {
   [ "$(jq -r .needs_human <<<"$old")" != "$2" ] || return 0
   new=$(jq -c --argjson on "$2" --arg now "$(gl_now)" '.needs_human = $on | .updated_at = $now' <<<"$old")
   gl_validate "$new"
-  gl_put_node "$new"
   local st
   st=$(jq -r .status <<<"$new")
-  gl_event transition "$1" "$st" "$st" "needs-human $3"
+  gl_event_build transition "$1" "$st" "$st" "needs-human $3"
+  gl_put_node "$new"
+  gl_event_append
 }
 
 op_flag() {
+  gl_is_id "$1" || gl_die "flag: not a node id: '$1'"
   [ "$2" = needs-human ] || gl_usage "flag <id> needs-human on|off"
   case "$3" in
     on) gl_with_lock gl_do_flag "$1" true on ;;
@@ -618,6 +692,7 @@ gl_main() {
   set -- ${args[@]+"${args[@]}"}
   trap gl_cleanup EXIT
   gl_scratch   # once, here in the main shell, so the EXIT trap removes it
+  gl_check_jq
   gl_resolve_state
   case "$op" in
     list)   [ $# -eq 0 ] || gl_usage "list"; op_list ;;

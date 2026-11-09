@@ -416,6 +416,99 @@ gl "$repo" STATE_DIR="$J" -- show hum-2
 expect "B2: an unparsable line mid-journal hides none of the events after it" \
   '[ "$rc" = 0 ] && [ "$(jq -r .pinged_at <<<"$out")" != null ] && grep -q "2 line(s): 3, 9 " <<<"$err"'
 
+# A NUL-padded tail (size extended, data unwritten after a power loss): command
+# substitution drops NULs, so the newline repair must not rely on it (review B4).
+J="$tmp/s-nul"
+gl "$repo" STATE_DIR="$J" -- create '{"id":"hum-3","kind":"task","title":"nul tail","status":"claimed","claim":{"actor":"bob","run":null,"at":null,"by":"human"}}'
+printf '{"ts":"x","op":"com\0\0\0\0' >> "$J/events.jsonl"
+(cd "$repo" && env $ENV_CLEAR STATE_DIR="$J" bash -c '
+   . "$1"; gl_resolve_state; GL_ACTOR=loop
+   gl_with_lock gl_event comment hum-3 "" "" "STALE-CLAIM-PING: nul-tail regression"' _ "$backend" \
+   > "$tmp/out" 2> "$tmp/err") && rc=0 || rc=$?
+expect "B4: appending a comment event after a NUL-padded tail succeeds" '[ "$rc" = 0 ]'
+eq "B4: the NUL tail was terminated: the new event is its own, parseable last line" \
+  '"STALE-CLAIM-PING: nul-tail regression"' "$(tail -n 1 "$J/events.jsonl" | jq -c .body)"
+g "$repo" STATE_DIR="$J" -- show hum-3
+expect "B4: NUL-padded tail, then a valid STALE-CLAIM-PING comment event -> pinged_at set" \
+  '[ "$rc" = 0 ] && valid && [ "$(jq -r .pinged_at <<<"$out")" != null ]'
+expect "B4: the reader warns about, and skips, only the NUL line (2)" \
+  'grep -q "warning: skipping unparsable journal 1 line(s): 2 " <<<"$err"'
+
+# --- input holding several JSON values; no-op replaces (review B3) -------------------
+M="$tmp/s-multi"; cp -R "$S" "$M"
+snap() { (cd "$M" && find . -type f | LC_ALL=C sort | while read -r f; do printf '%s ' "$f"; cksum < "$f"; done); }
+before=$(snap)
+two='{"kind":"task","title":"a","epic":"auth"}{"kind":"task","title":"b","epic":"auth"}'
+two_ids='{"kind":"task","id":"x1","title":"a"} {"kind":"task","id":"x1","title":"b"}'
+for bad in "$two" "$two_ids" '[{"kind":"task","title":"a"}]' '' 'null'; do
+  gl "$repo" STATE_DIR="$M" -- create "$bad"
+  expect "B3: create refuses '$bad' (several values / not one object) -> exit 1" '[ "$rc" = 1 ] && grep -q "exactly one JSON object" <<<"$err"'
+done
+(cd "$repo" && printf '%s\n' "$two" | env $ENV_CLEAR STATE_DIR="$M" bash "$backend" create - > "$tmp/out" 2> "$tmp/err") && rc=0 || rc=$?
+expect "B3: create - refuses two values on stdin" '[ "$rc" = 1 ] && grep -q "exactly one JSON object" "$tmp/err"'
+gl "$repo" STATE_DIR="$M" -- update auth-7 '{"body":"one"}{"body":"two"}'
+expect "B3: update refuses a two-value patch" '[ "$rc" = 1 ] && grep -q "exactly one JSON object" <<<"$err"'
+(cd "$repo" && printf '{"body":"one"}\n{"body":"two"}\n' | env $ENV_CLEAR STATE_DIR="$M" bash "$backend" update auth-7 - > "$tmp/out" 2> "$tmp/err") && rc=0 || rc=$?
+expect "B3: update - refuses a two-value patch on stdin" '[ "$rc" = 1 ]'
+eq "B3: multi-value creates and updates leave every file (store, epics, journal) byte-identical" "$before" "$(snap)"
+expect "B3: ... and add no file (no junk 'e<newline>e.json')" '[ "$(ls "$M/epics" | wc -l)" = "$(ls "$S/epics" | wc -l)" ]'
+for verb in "update nope {\"title\":\"x\"}" "link nope auth-1" "flag nope needs-human on"; do
+  # shellcheck disable=SC2086
+  gl "$repo" STATE_DIR="$M" -- $verb
+  expect "B3: ${verb%% *} on a nonexistent id exits nonzero" '[ "$rc" != 0 ]'
+done
+eq "B3: ... and changes nothing" "$before" "$(snap)"
+# gl_put_node itself must refuse a replace that matches no stored node.
+(cd "$repo" && env $ENV_CLEAR STATE_DIR="$M" bash -c '
+   . "$1"; gl_resolve_state
+   gl_with_lock gl_put_node "{\"id\":\"ghost-1\",\"kind\":\"task\",\"epic\":\"auth\",\"title\":\"g\"}"' _ "$backend" \
+   > "$tmp/out" 2> "$tmp/err") && rc=0 || rc=$?
+expect "B3: gl_put_node of an id stored nowhere in its file fails" '[ "$rc" != 0 ] && grep -q "expected exactly 1" "$tmp/err"'
+eq "B3: ... leaving the file byte-identical" "$before" "$(snap)"
+gl "$repo" STATE_DIR="$M" -- create '{"id":"a/b","kind":"epic","title":"x"}'
+expect "B3: an epic id that is not a slug (unsafe filename) is refused" '[ "$rc" = 1 ] && [ ! -e "$M/epics/a" ]'
+gl "$repo" STATE_DIR="$M" -- show "$(printf 'auth\nauth-1')"
+expect "B3: a multi-line id is not an id" '[ "$rc" = 2 ]'
+
+# --- the journal line is built before the commit (review S2) ------------------------
+# The shim fails only the event build (its jq program holds `def n:`).
+for frc in 1 0; do
+  before=$(snap)
+  for args in "create {\"kind\":\"task\",\"epic\":\"auth\",\"title\":\"s2\"}" "update auth-7 {\"title\":\"s2\"}" \
+              "link auth-7 auth-login" "flag auth-7 needs-human on"; do
+    export JQ_FAIL_MATCH='def n:' JQ_FAIL_RC="$frc"
+    # shellcheck disable=SC2086
+    gl "$repo" STATE_DIR="$M" PATH="$shim:$PATH" -- $args
+    unset JQ_FAIL_MATCH JQ_FAIL_RC
+    expect "S2: ${args%% *} whose event build exits $frc -> exit 1, 'nothing written'" '[ "$rc" = 1 ] && grep -q "nothing written" <<<"$err"'
+  done
+  eq "S2: ... store, epic files and journal byte-identical (exit $frc)" "$before" "$(snap)"
+done
+gl "$repo" STATE_DIR="$M" -- create '{"kind":"task","epic":"auth","title":"s2 retry"}'
+expect "S2: the retried create then succeeds once" '[ "$rc" = 0 ] && [ "$(events "$M" ".op == \"create\" and .body == \"s2 retry\"")" = 1 ]'
+
+# --- store.json missing while epic files exist (review S3) ---------------------------
+O="$tmp/s-orphan"; cp -R "$S" "$O"; rm "$O/store.json"
+gl "$repo" STATE_DIR="$O" -- list
+expect "S3: no store.json but epic files -> list fails loudly, prints nothing" \
+  '[ "$rc" = 1 ] && [ -z "$out" ] && grep -q "store.json is missing" <<<"$err"'
+gl "$repo" STATE_DIR="$O" -- create '{"kind":"task","title":"x"}'
+expect "S3: ... and a write refuses to recreate store.json over them" '[ "$rc" = 1 ] && [ ! -e "$O/store.json" ]'
+
+# --- jq version floor (N6) ----------------------------------------------------------
+old="$tmp/oldjq"; mkdir -p "$old"
+cat > "$old/jq" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in --rawfile) echo "jq: Unknown arguments: --rawfile" >&2; exit 2 ;; --version) echo jq-1.5; exit 0 ;; esac
+done
+exec "$real_jq" "\$@"
+EOF
+chmod +x "$old/jq"
+gl "$repo" STATE_DIR="$M" PATH="$old:$PATH" -- list
+expect "jq without --rawfile (1.5) -> fails fast naming jq >= 1.6 and the found version" \
+  '[ "$rc" = 1 ] && [ -z "$out" ] && grep -q "jq >= 1.6 required.*jq-1.5" <<<"$err"'
+
 # --- scratch dirs (review S1) and leftover tmp files (review N2) ---------------------
 T="$tmp/tmpdir"; mkdir -p "$T"
 K="$tmp/s-leak"; cp -R "$S" "$K"
