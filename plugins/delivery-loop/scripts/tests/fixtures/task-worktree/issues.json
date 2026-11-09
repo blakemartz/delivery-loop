@@ -1,0 +1,182 @@
+[
+  {
+    "number": 1,
+    "title": "One",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "x",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null
+  },
+  {
+    "number": 13,
+    "title": "Thirteen",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "x",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null
+  },
+  {
+    "number": 14,
+    "title": "Legacy thing",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "x",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null
+  },
+  {
+    "number": 30,
+    "title": "[v0.2 E3] Branch targets!",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "## Context\nDefault target.\n",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null
+  },
+  {
+    "number": 31,
+    "title": "Release work",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Delivery-Target: release/x\n\n## Context\nx\n",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null
+  },
+  {
+    "number": 38,
+    "title": "Missing target",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Delivery-Target: release/missing\n\n## Context\nx\n",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "comments": [],
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null
+  }
+]
