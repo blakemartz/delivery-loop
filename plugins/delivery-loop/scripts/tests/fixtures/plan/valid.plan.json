@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "plan": "demo",
+  "spec": ["docs/demo_spec.md"],
+  "target_branch": "release/x",
+  "promote_to": "main",
+  "epics": [
+    {"id": "core", "title": "Core engine", "goal": "Store and queue", "spec_refs": ["§2"]},
+    {"id": "ui", "title": "User interface"}
+  ],
+  "tasks": [
+    {"id": "store-schema", "epic": "core", "title": "Store schema", "module": "policy", "size": "S",
+     "deps": [], "context": "Define the store.", "criteria": ["`bash scripts/check.sh` passes"],
+     "scope": ["lib/store.jq"]},
+    {"id": "queue", "epic": "core", "title": "Ready queue", "module": "plan", "size": "M",
+     "deps": [{"id": "store-schema", "via": "lib/store.jq read_store"},
+              {"id": "#42", "via": "the existing config loader"}],
+     "context": "Order the ready set.", "criteria": ["`bash scripts/check.sh` passes", "queue test passes"]},
+    {"id": "board-view", "epic": "ui", "title": "Board view", "module": "plan", "size": "S",
+     "deps": [{"id": "queue", "via": "queue.sh ready"}, {"id": "store-schema", "via": "store shape"}],
+     "criteria": ["the board renders"]},
+    {"id": "user-guide", "epic": "ui", "title": "User guide", "module": "docs", "size": "S",
+     "criteria": ["the guide names every command"]}
+  ]
+}

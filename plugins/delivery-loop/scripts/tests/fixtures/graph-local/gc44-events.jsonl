@@ -1,0 +1,7 @@
+{"ts":"2026-10-01T00:00:00Z","actor":"loop","run":null,"op":"comment","id":"hum-1","from":null,"to":null,"body":"STALE-CLAIM-PING: this claim has been inactive for 72h — still on it? (Human claims are never auto-reclaimed.)"}
+{"ts":"2026-10-06T00:00:00Z","actor":"loop","run":null,"op":"comment","id":"hum-1","from":null,"to":null,"body":"STALE-CLAIM-PING: this claim has been inactive for 72h — still on it? (Human claims are never auto-reclaimed.)"}
+{"ts":"2026-10-03T00:00:00Z","actor":"loop","run":null,"op":"comment","id":"hum-1","from":null,"to":null,"body":"STALE-CLAIM-PING: out-of-order append; older than the newest"}
+{"ts":"2026-10-09T00:00:00Z","actor":"ann","run":null,"op":"comment","id":"hum-1","from":null,"to":null,"body":"still on it"}
+{"ts":"2026-10-09T00:00:00Z","actor":"ann","run":null,"op":"comment","id":"hum-2","from":null,"to":null,"body":"re: STALE-CLAIM-PING — not a ping (prefix only)"}
+{"ts":"2026-10-09T00:00:00Z","actor":"loop","run":null,"op":"transition","id":"hum-2","from":"ready","to":"claimed","body":"STALE-CLAIM-PING: not a comment event"}
+{"ts":"2026-10-09T00:00:00Z","actor":"loop","run":null,"op":"comment","id":"hum-
