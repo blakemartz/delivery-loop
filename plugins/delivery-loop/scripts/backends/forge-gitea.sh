@@ -63,7 +63,9 @@
 #     by exact name, over GET /repos/{o}/{r}/labels and, only for names still
 #     unmatched, GET /orgs/{owner}/labels (a 404 there = a user owner, no org
 #     labels); a repo label wins a name clash. An unknown name exits 1
-#     before anything is sent, and nothing is ever created.
+#     before anything is sent, and nothing is ever created. Each --label is
+#     exactly one label: a name holding a newline or CR is refused before any
+#     request, and a repeated name is sent once.
 #   - verdicts and merges pin the head SHA: a pre-read refuses a stale --sha
 #     before any write, the review carries `commit_id` and the merge
 #     `head_commit_id` (409 when the head moved).
@@ -333,13 +335,24 @@ op_whoami() {
   jq -r '.login' "$tmp/resp"
 }
 
+# check_label_names <name>…: refuse, before any request, a name holding a line
+# break (each --label is exactly one label).
+check_label_names() {
+  local n
+  for n in "$@"; do
+    case "$n" in
+      *$'\n'*|*$'\r'*) die "label names cannot contain a newline or CR: $(printf '%q' "$n"); nothing created" ;;
+    esac
+  done
+}
+
 # resolve_labels <out-file> <name>…: write the ids of the named labels (repo
 # labels first, then the owner org's) as a JSON array. An unknown name exits 1
 # before anything is sent; nothing is created.
 resolve_labels() {
   local out="$1" org
   shift
-  printf '%s\n' "$@" | jq -R . | jq -s 'unique' > "$tmp/want.json"
+  jq -n '$ARGS.positional | unique' --args -- "$@" > "$tmp/want.json"   # argv kept exactly
   paged "$RP/labels" "$tmp/labels.json"
   if [ -n "$(missing_labels)" ]; then
     org=$(jq -rn --arg s "${FORGE_REPO%%/*}" '$s | @uri')
@@ -376,6 +389,7 @@ op_pr_create() {
   [ -n "$head" ] && [ -n "$base" ] && [ -n "$title" ] && [ -f "$body" ] || usage "$u"
   [ -z "$draft" ] || title="WIP: $title"
   if [ "${#names[@]}" -gt 0 ]; then
+    check_label_names "${names[@]}"
     resolve_labels "$tmp/label-ids.json" "${names[@]}"
     ids=$(cat "$tmp/label-ids.json")
   fi
