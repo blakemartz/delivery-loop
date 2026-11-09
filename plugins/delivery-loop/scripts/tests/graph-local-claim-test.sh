@@ -3,7 +3,7 @@
 # routing over it (docs/delivery_graph_spec.md §5, §6.1, §6.3): golden cases
 # GC21 (8 concurrent claims, one winner), GC24 (the `reclaim` event), GC25 (a
 # merged PR on the forge -> done, its dependent -> ready, end to end) — §17 row
-# C2 — plus GC66 through `graph.sh create`, the routed writes, human claims,
+# C2 — plus GC72 end to end (rule 3's AUTO-CLOSE marker survives a reopen), GC66 through `graph.sh create`, the routed writes, human claims,
 # stale-claim pings, the reconcile compare-and-set, `graph.sh show --events`'s
 # journal tail, the stop-at-first-stale-record apply loop, and that graph.sh
 # leaves no temp dir behind.
@@ -363,6 +363,55 @@ eq "GC25: both moves are journaled as transitions with the reason" \
   "$(jq -sc 'map(select(.op == "transition") | [.id, .from, .to, .body])' "$M/events.jsonl")"
 g "$M" -- ready
 eq "GC25: dep is now in the ready set" '["dep","w"]' "$(jq -sc 'map(.id) | sort' <<<"$out")"
+
+# --- GC72 (local, end to end): rule 3 records the PR it applied, so a human
+# reopen is never re-closed; a NEWER merged PR closes the node again. x lives
+# under epic e, so the same pass also closes e by rule 7, which gets no marker.
+R="$tmp/reopen"
+g "$R" -- create '{"id":"e","kind":"epic","title":"one task","size":"S","status":"ready"}'
+g "$R" -- create '{"id":"x","kind":"task","title":"shipped","size":"S","status":"in-review","epic":"e"}'
+g "$R" -- create '{"id":"dep","kind":"task","title":"waits on x","size":"S","status":"blocked","deps":["x"]}'
+backdate "$R" x "2026-01-01T00:00:00Z" "2026-01-02T00:00:00Z"
+backdate "$R" dep "2026-01-01T01:00:00Z" "2026-01-01T01:00:00Z"
+backdate "$R" e "2026-01-01T00:00:00Z" "2026-01-01T00:00:00Z"
+g "$R" -- reconcile --fix
+eq "GC72-local: --fix exits 0" 0 "$rc"
+eq "GC72-local: x -> done (PR #301), e -> done (rule 7), dep -> ready" \
+  '[["dep","ready"],["e","done"],["x","done"]]' \
+  "$(sed -n 's/^fix: transition \([^ ]*\) [^ ]* -> \([^:]*\):.*/\1 \2/p' <<<"$out" | jq -Rsc 'split("\n") | map(select(. != "") | split(" ")) | sort')"
+eq "GC72-local: x.applied_prs is [301]" '[301]' "$(field "$R" x .applied_prs)"
+eq "GC72-local: one AUTO-CLOSE marker, a comment event on x right after its transition" \
+  '[["transition","x","PR #301 merged into main"],["comment","x","AUTO-CLOSE: PR #301 merged into main. (Reconciled by graph.sh reconcile --fix.)"]]' \
+  "$(jq -sc '[range(1; length) as $i | select(.[$i].op == "comment" and (.[$i].body | startswith("AUTO-CLOSE"))) | .[$i - 1], .[$i]] | map([.op, .id, .body])' "$R/events.jsonl")"
+eq "GC72-local: the rule-7 epic close writes no marker (e.applied_prs [])" '[]' "$(field "$R" e .applied_prs)"
+eq "GC72-local: no AUTO-CLOSE event names anything but x" 0 \
+  "$(events "$R" '.op == "comment" and .id != "x" and ((.body // "") | startswith("AUTO-CLOSE"))')"
+# A human reopens x (and dep falls back to blocked); the next pass leaves both.
+g "$R" -- update x '{"status":"ready"}'
+eq "GC72-local: the human reopen succeeds" 0 "$rc"
+g "$R" -- update dep '{"status":"blocked"}'
+g "$R" -- reconcile
+eq "GC72-local: reconcile exits 0 after the reopen" 0 "$rc"
+eq "GC72-local: no record for x or its dependent" '[]' \
+  "$(jq -sc 'map(select(.id == "x" or .id == "dep"))' <<<"$out")"
+g "$R" -- reconcile --fix
+eq "GC72-local: --fix after the reopen changes nothing for x/dep" \
+  '{"dep":"blocked","x":"ready"}' \
+  "$(g "$R" -- list; jq -cS 'map(select(.id == "x" or .id == "dep") | {(.id): .status}) | add' <<<"$out")"
+# Control: a NEWER merged agent PR (303, Delivery-Task: x) closes x again.
+Q="$tmp/fx-q"; mkdir -p "$Q"
+jq '.merged[0] |= [{number: 303, headRefName: "task/x--again", mergedAt: "2026-01-06T00:00:00Z"}] + .' \
+  "$fx/lists.json" > "$Q/lists.json"
+jq '. + {"303": (."301" | .number = 303 | .url = "https://github.com/example/repo/pull/303"
+                 | .headRefName = "task/x--again" | .mergedAt = "2026-01-06T00:00:00Z"
+                 | .headRefOid = "3030000000000000000000000000000000000000")}' \
+  "$fx/prs.json" > "$Q/prs.json"
+g "$R" SHIM_FX="$Q" -- reconcile --fix
+eq "GC72-local control: --fix exits 0" 0 "$rc"
+eq "GC72-local control: x -> done naming the newer PR, then dep -> ready" \
+  "$(printf 'fix: transition x ready -> done: PR #303 merged into main\nfix: transition dep blocked -> ready: every dep is done')" \
+  "$out"
+eq "GC72-local control: x.applied_prs is [301,303]" '[301,303]' "$(field "$R" x .applied_prs)"
 
 # A forge failure stops reconcile before anything is written.
 before=$(cat "$M"/epics/*.json "$M/events.jsonl" | cksum)

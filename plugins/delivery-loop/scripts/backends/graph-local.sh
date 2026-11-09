@@ -785,8 +785,22 @@ GL_RECORD='
   elif .op == "ping" and .from != .to then error("record: a ping moves nothing (from must equal to)")
   else . end'
 
+# gl_autoclose_marker <record-file> <node-json>: the §5 rule-3 evidence comment
+# for a record that closes a task/promote on an agent PR's merge (reason `PR #<n>
+# merged into <base>`), else nothing. Its `AUTO-CLOSE: PR #<n> merged into <base>`
+# prefix is the github backend's (and v0.1.4's) marker, which the applied_prs
+# derivation reads (GC72). Epic closes (rule 7) and other records get none.
+gl_autoclose_marker() {
+  jq -r --argjson node "$2" '
+    select(.op == "transition" and .to == "done"
+           and ($node.kind == "task" or $node.kind == "promote"))
+    | .reason | capture("\\APR #(?<n>[1-9][0-9]*) merged into (?<b>[^\n]+)\\z")
+    | "AUTO-CLOSE: PR #\(.n) merged into \(.b). (Reconciled by graph.sh reconcile --fix.)"' "$1" \
+    || gl_die "reconcile: cannot derive the AUTO-CLOSE marker for $(jq -c .id "$1") (nothing written)"
+}
+
 gl_do_reconcile() {
-  local rf id op from to reason old new
+  local rf id op from to reason old new marker
   rf="$1"
   gl_ensure_store
   id=$(jq -r .id "$rf"); op=$(jq -r .op "$rf"); from=$(jq -r .from "$rf")
@@ -823,7 +837,16 @@ gl_do_reconcile() {
       new=$(jq -c --arg to "$to" --arg now "$(gl_now)" '.status = $to | .updated_at = $now' <<<"$old") ;;
   esac
   gl_validate "$new"
+  # Both events are built and checked before the commit, then appended in one
+  # write: the transition, then (rule 3 only) its AUTO-CLOSE marker.
   gl_event_build "$op" "$id" "$from" "$to" "$reason"
+  mv "$GL_TMP/ev-line" "$GL_TMP/ev-batch"
+  marker=$(gl_autoclose_marker "$rf" "$old") || exit 1
+  if [ -n "$marker" ]; then
+    gl_event_build comment "$id" "" "" "$marker"
+    cat "$GL_TMP/ev-line" >> "$GL_TMP/ev-batch"
+  fi
+  mv "$GL_TMP/ev-batch" "$GL_TMP/ev-line"
   gl_put_node "$new"
   gl_event_append
 }
