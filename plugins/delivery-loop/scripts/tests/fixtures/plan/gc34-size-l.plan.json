@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "plan": "fx",
+  "target_branch": "release/x",
+  "promote_to": "main",
+  "epics": [
+    {
+      "id": "e",
+      "title": "Epic"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "a",
+      "epic": "e",
+      "title": "Task A",
+      "module": "plan",
+      "size": "L",
+      "deps": [],
+      "criteria": [
+        "passes"
+      ]
+    },
+    {
+      "id": "b",
+      "epic": "e",
+      "title": "Task B",
+      "module": "plan",
+      "size": "S",
+      "deps": [
+        {
+          "id": "a",
+          "via": "a.sh"
+        }
+      ],
+      "criteria": [
+        "passes"
+      ]
+    }
+  ]
+}
