@@ -1043,7 +1043,7 @@ the graph itself.
 | `decompose` | §8.5. |
 | `task-status` | `graph.sh list` + `forge.sh pr-list` → board. `--graph` prints Mermaid. `--reclaim` → `graph.sh reconcile --fix`. |
 | `init` | Asks for or detects `GRAPH_BACKEND` and `FORGE`. The local backend skips labels and creates `STATE_DIR`. Checks forge auth via `forge.sh whoami`. gh is required only when either seam is github. Its repo-settings advice keeps merge commits **enabled**, because promotion merges with `PROMOTE_MERGE_METHOD=merge`. v0.1.4 advised `--enable-merge-commit=false`. |
-| `author-spec` | Board reads via `graph.sh`. Docs-review verdict via `forge.sh pr-review <pr> comment --sha <head> --body-file F`. As implemented (F3), the body's first line is the plain-text `Docs-review verdict: APPROVE` / `Docs-review verdict: REQUEST_CHANGES`, never a `## … verdict:` heading: the adapter heads the comment `## Adversarial review — verdict: COMMENT` and appends `Reviewed-Head:` (gitlab refuses a `comment` whose heading names another verdict). |
+| `author-spec` | Board reads via `graph.sh`. Docs-review verdict via `forge.sh pr-review <pr> comment --sha <head> --body-file F`. As implemented (F3), the body's first line is the plain-text `Docs-review verdict: APPROVE` / `Docs-review verdict: REQUEST_CHANGES`, never a `## … verdict:` heading: every adapter heads the comment `## Adversarial review — verdict: COMMENT` and appends `Reviewed-Head:` (github and gitea post it as a formal COMMENT review, gitlab as a plain note; gitlab refuses a `comment` whose heading names another verdict). |
 | `author-styleguides` | No change. |
 
 ## 11. Configuration

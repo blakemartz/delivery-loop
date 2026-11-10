@@ -429,8 +429,6 @@ Kept here so they don't get re-learned:
     epic #9 from auto-closing where v0.1.4 would have closed it. This errs
     safe and leaves the ready set unaffected; edit or close that issue.
 - **Mermaid output limitations** (`plan.sh render`, `task-status --graph`):
-  - a C1 control character (U+0080–U+009F) right after the word `direction` in
-    a title renders as a Windows-1252 glyph (cosmetic; the label stays safe);
   - Mermaid trims leading and trailing whitespace in edge labels and subgraph
     titles;
   - `task-status --graph` is assembled by the agent from `graph.sh list`
@@ -450,6 +448,7 @@ Kept here so they don't get re-learned:
 | Status looks wrong vs reality | Drift | `bash "${CLAUDE_PLUGIN_ROOT}/scripts/graph.sh" reconcile --fix`; ground truth: closed issue > merged PR > open PR > stored status |
 | A script exits 1 with `config: …` | Invalid seam combination, missing token, or unsupported jq | Fix what the line names; `delivery-config.sh --check` re-validates |
 | Exit 3, `graph-github: gh issue list returned <n> issues = LIST_LIMIT (<n>); refusing to truncate (raise LIST_LIMIT)` (a forge list: `forge-<forge>: … returned <n> items = LIST_LIMIT (<n>) …`; a github comment thread: `… has <n> comments >= LIST_LIMIT (<n>) …`) | A list hit the fetch ceiling (never truncated) | Raise `LIST_LIMIT` in `.claude/delivery.conf` |
+| Exit 3, `forge-github: … GitHub search's <n>-result cap (< LIST_LIMIT <n>); narrow the window` | A GitHub search-backed PR list hit GitHub's own result cap, which `LIST_LIMIT` cannot lift | Narrow the query (a shorter `--since` window or a tighter filter); raising `LIST_LIMIT` does not help |
 | Exit 75 / "busy; retry" (local) | Another writer holds the store lock | Retry. A lock left by a dead process is broken automatically once older than `LOCK_STALE_SECONDS`; see §10.2 for an owner-less or crashed lock |
 | Reconcile exit 4, "board changed" | The board moved under the plan | Re-run; the tick and `task-queue.sh` retry automatically |
 | `drift: <id> <field>` from `plan.sh apply` | A node differs from its plan file | Decide which is right; apply never overwrites |

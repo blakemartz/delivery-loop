@@ -286,6 +286,7 @@ eq "Mermaid safety: the epic title decodes" 'core: E "q" ]) | p nl' \
 mt() { jq -rn -L "$sd/lib" --arg s "$1" 'include "plan-render"; $s | mermaid_text'; }
 eq "mermaid_text: direction + space is broken" 'Flip direction#32;TB' "$(mt 'Flip direction TB')"
 eq "mermaid_text: direction + any whitespace is broken" 'direction#8195;LR' "$(mt $'direction\342\200\203LR')"
+eq "mermaid_text: a C1 control after direction becomes a space" 'direction#32;TB' "$(mt $'direction\302\205TB')"
 eq "mermaid_text: direction without whitespace is left alone" 'directional x' "$(mt 'directional x')"
 eq "mermaid_text: & is encoded" '#38;amp; #38;lt;' "$(mt '&amp; &lt;')"
 eq "mermaid_text: a : before a non-space is encoded" 'style fill#58;#35;f00;' "$(mt 'style fill:#f00;')"

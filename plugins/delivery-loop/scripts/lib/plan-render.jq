@@ -2,7 +2,8 @@
 # Mermaid `flowchart TD` (docs/delivery_graph_spec.md §8.4, GC37).
 #
 #   mermaid_text — one label made safe inside a Mermaid quoted string: line
-#                  breaks become spaces and every character that Mermaid could
+#                  breaks and C1 control characters (U+0080–U+009F) become
+#                  spaces and every character that Mermaid could
 #                  read as syntax (" [ ] | { } < > ` and # itself) becomes a
 #                  Mermaid entity code (#quot; #91; …). `#` is encoded first so
 #                  a title cannot forge an entity. Three more, for Mermaid's
@@ -32,7 +33,7 @@
 
 def mermaid_text:
   tostring
-  | gsub("[\r\n\t  ]+"; " ")
+  | gsub("[\r\n\t  \u0080-\u009f]+"; " ")
   | gsub("#"; "#35;")
   | gsub("\""; "#quot;")
   | gsub("\\["; "#91;") | gsub("\\]"; "#93;")

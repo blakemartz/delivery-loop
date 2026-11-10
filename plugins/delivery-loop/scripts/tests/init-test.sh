@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for delivery-init.sh (docs/delivery_graph_spec.md §10 `init` row, §11,
 # §6.3): golden case GC60, plus idempotency, the per-seam requirement checks
-# (jq >= 1.6, git >= 2.31 for local, gh >= 2.94 for the github backend), the
+# (jq >= 1.7, not 1.8.2, git >= 2.31 for local, gh >= 2.94 for the github backend), the
 # `promote` label on github, seam detection from origin, and the repo-settings
 # advice keeping merge commits enabled.
 #
@@ -26,6 +26,9 @@ printf '#!/usr/bin/env bash\nexec bash "%s" "$@"\n' "$fx/gh-shim.sh" > "$tmp/bin
 printf '#!/usr/bin/env bash\nexec bash "%s" "$@"\n' "$fx/curl-shim.sh" > "$tmp/bin/curl"
 printf '#!/usr/bin/env bash\n[ "${1:-}" = --version ] && { echo "git version 2.30.9"; exit 0; }\nexec "%s" "$@"\n' "$real_git" > "$tmp/oldgit/git"
 printf '#!/usr/bin/env bash\n[ "${1:-}" = --version ] && { echo "jq-1.5"; exit 0; }\nexec "%s" "$@"\n' "$real_jq" > "$tmp/oldjq/jq"
+mkdir -p "$tmp/badjq"
+printf '#!/usr/bin/env bash\n[ "${1:-}" = --version ] && { echo "jq-1.8.2"; exit 0; }\nexec "%s" "$@"\n' "$real_jq" > "$tmp/badjq/jq"
+chmod +x "$tmp/badjq/jq"
 chmod +x "$tmp/bin/gh" "$tmp/bin/curl" "$tmp/oldgit/git" "$tmp/oldjq/jq"
 
 # newrepo <name> [origin-url]: a fresh git repo at $tmp/<name>; sets $repo.
@@ -117,7 +120,11 @@ expect "local backend on git 2.30: exits 1 naming git >= 2.31, nothing written" 
 
 newrepo oldjq git@gitea.example.com:example/repo.git
 run -p "$tmp/oldjq" "${GITEA[@]}" --
-expect "jq 1.5: exits 1 naming jq >= 1.6, nothing written" '[ "$rc" = 1 ] && grep -qF "jq >= 1.6" "$tmp/out" && [ ! -e "$repo/.claude/delivery.conf" ]'
+expect "jq 1.5: exits 1 naming jq >= 1.7, nothing written" '[ "$rc" = 1 ] && grep -qF "jq >= 1.7" "$tmp/out" && [ ! -e "$repo/.claude/delivery.conf" ]'
+
+newrepo badjq git@gitea.example.com:example/repo.git
+run -p "$tmp/badjq" "${GITEA[@]}" --
+expect "jq 1.8.2: exits 1 naming the upstream bug, nothing written" '[ "$rc" = 1 ] && grep -qF "jqlang/jq#3597" "$tmp/out" && [ ! -e "$repo/.claude/delivery.conf" ]'
 
 newrepo badcombo git@gitea.example.com:example/repo.git
 run GRAPH_BACKEND=github FORGE=gitea GITEA_TOKEN=x --
