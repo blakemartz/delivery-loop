@@ -69,20 +69,19 @@ export BASE_BRANCH WORKTREE_SETUP_CMD GATE_CMD SPEC_SOURCES \
        FORGE FORGE_URL FORGE_REPO PLANS_DIR \
        TASK_MERGE_METHOD PROMOTE_MERGE_METHOD PROMOTE_GATE_CMD
 
-# dl_jq_check — refuse a jq the engine cannot run on. Supported: jq >= 1.7,
+# dl_jq_check — refuse a jq the engine cannot run on. Supported: jq >= 1.6,
 # except exactly 1.8.2, which mis-links nested module includes (upstream
-# jqlang/jq#3597) and crashes most of scripts/lib/. jq 1.6 fails the engine
-# (keyword shorthands, contains/stderr semantics). A version string that does
+# jqlang/jq#3597) and crashes most of scripts/lib/. A version string that does
 # not parse as a release (a git snapshot, or a dev build past a tag such as
 # "jq-1.8.2-12-gabc") is accepted with no error: it cannot be placed in the
-# range, and refusing it would block working installs. Known gap: Alpine's
-# jq 1.6 build (e.g. v3.14 "jq-1.6-r1") reports "jq-master-v20210212-…", so
-# it passes this check even though 1.6 is below the floor.
+# range, and refusing it would block working installs. (Alpine's jq 1.6 build,
+# e.g. v3.14 "jq-1.6-r1", reports such a string, "jq-master-v20210212-…"; it
+# is accepted, as 1.6 is.)
 # Prints one line to stderr and returns 1 if refused; returns 0 (silent) if ok.
 dl_jq_check() {
   local _dl_v _dl_core _dl_major _dl_minor _dl_patch
   if ! _dl_v="$(jq --version 2>/dev/null)"; then
-    echo "config: jq not found (or not runnable); the delivery loop needs jq >= 1.7 (not 1.8.2)" >&2
+    echo "config: jq not found (or not runnable); the delivery loop needs jq >= 1.6 (not 1.8.2)" >&2
     return 1
   fi
   _dl_core="${_dl_v#jq-}"
@@ -100,8 +99,8 @@ dl_jq_check() {
   case "$_dl_major" in ''|*[!0-9]*) return 0 ;; esac
   case "$_dl_minor" in ''|*[!0-9]*) return 0 ;; esac
   case "$_dl_patch" in ''|*[!0-9]*) return 0 ;; esac
-  if [ "$_dl_major" -lt 1 ] || { [ "$_dl_major" -eq 1 ] && [ "$_dl_minor" -lt 7 ]; }; then
-    echo "config: $_dl_v is too old; the delivery loop needs jq >= 1.7 (not 1.8.2)" >&2
+  if [ "$_dl_major" -lt 1 ] || { [ "$_dl_major" -eq 1 ] && [ "$_dl_minor" -lt 6 ]; }; then
+    echo "config: $_dl_v is too old; the delivery loop needs jq >= 1.6 (not 1.8.2)" >&2
     return 1
   fi
   if [ "$_dl_major" -eq 1 ] && [ "$_dl_minor" -eq 8 ] && [ "$_dl_patch" -eq 2 ]; then

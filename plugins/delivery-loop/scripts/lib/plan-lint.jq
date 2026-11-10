@@ -277,7 +277,7 @@ def plan_lint($ctx):
                    promote_to: $promote,
                    epics: [$epics[] | {id, title, goal: (.goal // ""), spec_refs: (.spec_refs // [])}],
                    tasks: [ $tasks[]
-                     | {id, epic, title, module, size,
+                     | {id, epic, title, module: .module, size,
                         deps: ([ .deps // [] | .[]
                                 | (.id | _is_existing_ref($backend)) as $ext
                                 | (.id | plan_dep_id($backend)) as $id

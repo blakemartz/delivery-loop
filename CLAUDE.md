@@ -126,7 +126,7 @@ passes, discovered by glob (a new test needs no gate edit), each run under a
 fresh private `TMPDIR` it must leave empty (a leaked temp file fails the gate);
 the gate's own self-tests pass; the plugin manifest validates; **both manifests
 agree on the version**; and the leak check `grep -ri lineage plugins/` stays
-empty. The jq version rule (≥ 1.7, never 1.8.2) is enforced by `dl_config_check`
+empty. The jq version rule (≥ 1.6, never 1.8.2) is enforced by `dl_config_check`
 and covered by `tests/config-check-test.sh`; the bash-3.2 container stage
 installs a jq < 1.8 for the same reason. A change that adds a new class of check
 belongs **in** `scripts/check.sh`, not in prose here — the gate is the single
@@ -139,6 +139,10 @@ keep a local `bash:3.2` docker image (override with `DL_BASH32_IMAGE`; never
 pulled). The stock `bash:3.2` image lacks git and jq, so each run needs network
 to `apk add` them; a prebuilt local image with git + jq<1.8 avoids that. With
 neither it prints a `SKIPPED` notice and continues; `DL_BASH32=off` skips
+explicitly. It then re-runs them under **jq 1.6**, the supported floor, in a
+local docker image `dl-bash32:jq16` (override with `DL_JQ16_IMAGE`; never
+pulled, nothing installed: it must already carry bash, git and jq 1.6, else the
+gate fails). No image prints a `SKIPPED` notice; `DL_JQ16=off` skips
 explicitly. Details in `scripts/check.sh`.
 
 To smoke-test an install without touching your real config, point Claude Code at

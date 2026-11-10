@@ -256,7 +256,7 @@ eq "GC68: A / B / D normalize to done / blocked / cancelled" '["done","blocked",
   "$(jq -c '[.[] | select(.id == "2" or .id == "4" or .id == "6")] | sort_by(.id) | map(.status)' <<<"$out")"
 eq "GC68: an external's fixed fields are forced, whatever its labels, assignees, comments and edges" \
   '{"claim":null,"pinged_at":null,"applied_prs":[],"deps":[],"checklist":[],"module":null,"size":null,"plan_ref":null,"promote_to":null,"needs_human":false}' \
-  "$(node 4 '{claim, pinged_at, applied_prs, deps, checklist, module, size, plan_ref, promote_to, needs_human}')"
+  "$(node 4 '{claim, pinged_at, applied_prs, deps, checklist, module: .module, size, plan_ref, promote_to, needs_human}')"
 eq "GC68: an external's epic is derived as for any node" '["8","8",null]' "$(jq -c '[.[] | select(.id == "10" or .id == "11" or .id == "9") | .epic] | sort_by(. // "")' <<<"$out" | jq -c 'sort_by(. == null) ')"
 g -- ready
 eq "GC68: T (dep A done) and W (native dep done) are ready; U (B open) and V (D cancelled) are not" '["1","14"]' "$(jq -sc 'map(.id)' <<<"$out")"
