@@ -31,16 +31,25 @@ eq() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1" "want: $2" "got:  $3";
 
 now=1798761600 # 2027-01-01T00:00:00Z, expand.jq's fixture_now
 
-# run_sparse <fixture> [input filter]: `reconcile` over a sparse fixture; the
+# run_sparse <fixture> [input filter]: `reconcile_plan` over a sparse fixture; the
 # records go to $tmp/out, stderr to $tmp/err.
 run_sparse() {
   jq -c -L "$lib" -L "$fx" "include \"expand\"; include \"reconcile\";
-    full_input | ${2:-.} | reconcile" "$fx/$1.json" >"$tmp/out" 2>"$tmp/err"
+    full_input | ${2:-.} | reconcile_plan" "$fx/$1.json" >"$tmp/plan" 2>"$tmp/err"
+  split_plan
 }
-# run_nodes <ready fixture>: `reconcile` over a full node array, no PRs.
+# run_nodes <ready fixture>: `reconcile_plan` over a full node array, no PRs.
 run_nodes() {
   jq -c -L "$lib" --argjson now "$now" 'include "reconcile";
-    {nodes: ., prs: [], now: $now} | reconcile' "$rfx/$1" >"$tmp/out" 2>"$tmp/err"
+    {nodes: ., prs: [], now: $now} | reconcile_plan' "$rfx/$1" >"$tmp/plan" 2>"$tmp/err"
+  split_plan
+}
+# split_plan: $tmp/plan ({records, warnings}) -> the records array in $tmp/out,
+# and each warning appended to $tmp/err as a "warn: …" line, as graph.sh
+# reconcile prints them.
+split_plan() {
+  jq -c '.records' "$tmp/plan" >"$tmp/out"
+  jq -r '.warnings[] | "warn: \(.)"' "$tmp/plan" >>"$tmp/err"
 }
 # moves: the records in $tmp/out as "<op> <id> <from>-><to>" strings.
 moves() { jq -c '[.[] | "\(.op) \(.id) \(.from)->\(.to)"]' "$tmp/out"; }
@@ -70,7 +79,8 @@ jq '[.[] | if .id == "gc6-b" then .deps += [{id: "gc6-c", via: null}] else . end
     + [(.[] | select(.id == "gc6-a") | .id = "gc6-c" | .deps = [{id: "gc6-a", via: null}])]' \
   "$rfx/gc6.json" >"$tmp/scc.json"
 jq -c -L "$lib" --argjson now "$now" 'include "reconcile";
-  {nodes: ., prs: [], now: $now} | reconcile' "$tmp/scc.json" >"$tmp/out" 2>"$tmp/err"
+  {nodes: ., prs: [], now: $now} | reconcile_plan' "$tmp/scc.json" >"$tmp/plan" 2>"$tmp/err"
+split_plan
 stderr_has "reconcile names the SCC members the cycle misses" \
   "warn: cycle: gc6-a → gc6-b → gc6-a (SCC: gc6-a, gc6-b, gc6-c)"
 eq "reconcile warns once per SCC, not once per cycle" 1 "$(grep -c 'warn: cycle:' "$tmp/err")"
@@ -304,15 +314,15 @@ eq "GC65 validation accepts a record with pr and keeps it" '[7]|[]' \
 
 # --- input validation ----------------------------------------------------------------------
 if jq -c -L "$lib" -L "$fx" 'include "expand"; include "reconcile";
-     full_input | .nodes[0].status = "open" | reconcile' "$fx/gc65.json" >/dev/null 2>&1; then
+     full_input | .nodes[0].status = "open" | reconcile_plan' "$fx/gc65.json" >/dev/null 2>&1; then
   fail "malformed node rejected" "accepted"
 else pass "malformed node rejected"; fi
 if jq -c -L "$lib" -L "$fx" 'include "expand"; include "reconcile";
-     full_input | .prs = [{number: 1}] | reconcile' "$fx/gc65.json" >/dev/null 2>&1; then
+     full_input | .prs = [{number: 1}] | reconcile_plan' "$fx/gc65.json" >/dev/null 2>&1; then
   fail "malformed PR rejected" "accepted"
 else pass "malformed PR rejected"; fi
 if jq -c -L "$lib" -L "$fx" 'include "expand"; include "reconcile";
-     full_input | .now = "2027-01-01T00:00:00Z" | reconcile' "$fx/gc65.json" >/dev/null 2>&1; then
+     full_input | .now = "2027-01-01T00:00:00Z" | reconcile_plan' "$fx/gc65.json" >/dev/null 2>&1; then
   fail "non-numeric now rejected" "accepted"
 else pass "non-numeric now rejected"; fi
 

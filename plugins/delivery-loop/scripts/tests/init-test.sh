@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for delivery-init.sh (docs/delivery_graph_spec.md §10 `init` row, §11,
 # §6.3): golden case GC60, plus idempotency, the per-seam requirement checks
-# (jq >= 1.7, not 1.8.2, git >= 2.31 for local, gh >= 2.94 for the github backend), the
+# (jq >= 1.6, not 1.8.2, git >= 2.31 for local, gh >= 2.94 for the github backend), the
 # `promote` label on github, seam detection from origin, and the repo-settings
 # advice keeping merge commits enabled.
 #
@@ -120,7 +120,7 @@ expect "local backend on git 2.30: exits 1 naming git >= 2.31, nothing written" 
 
 newrepo oldjq git@gitea.example.com:example/repo.git
 run -p "$tmp/oldjq" "${GITEA[@]}" --
-expect "jq 1.5: exits 1 naming jq >= 1.7, nothing written" '[ "$rc" = 1 ] && grep -qF "jq >= 1.7" "$tmp/out" && [ ! -e "$repo/.claude/delivery.conf" ]'
+expect "jq 1.5: exits 1 naming jq >= 1.6, nothing written" '[ "$rc" = 1 ] && grep -qF "jq >= 1.6" "$tmp/out" && [ ! -e "$repo/.claude/delivery.conf" ]'
 
 newrepo badjq git@gitea.example.com:example/repo.git
 run -p "$tmp/badjq" "${GITEA[@]}" --

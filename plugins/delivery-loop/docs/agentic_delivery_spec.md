@@ -94,7 +94,7 @@ reviewer identity, §13.2), `LOCK_WAIT_SECONDS` (local lock wait, default 30).
 `delivery-config.sh --check` validates the combination and exits 1 with one
 `config: …` line per problem: an unknown `GRAPH_BACKEND` or `FORGE` value;
 `GRAPH_BACKEND=github` with a non-github forge; a gitlab/gitea forge without its
-token; and an unsupported jq (jq ≥ 1.7 is required, and exactly 1.8.2 is refused
+token; and an unsupported jq (jq ≥ 1.6 is required, and exactly 1.8.2 is refused
 because of upstream bug jqlang/jq#3597; a version string that does not parse as a
 release is accepted). `graph.sh`, `forge.sh`, `tick-plan.sh`, `plan.sh`,
 `promote.sh` and `tick-merge.sh` run the same check once at start-up, before any

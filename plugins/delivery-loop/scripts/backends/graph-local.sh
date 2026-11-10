@@ -471,10 +471,11 @@ GL_EMIT='include "node";
 # The journal, one line per event: {bad: [line numbers], ev: [events]}. A line
 # that is not one JSON object, or holds a NUL byte (a torn tail, a crash
 # mid-append, NUL padding), is skipped on its own, so it can never hide the
-# events after it.
+# events after it. NUL is found with index, not contains: jq 1.6's contains
+# stops at the NUL in "\u0000" and so is true for every string.
 GL_JOURNAL='[inputs] | to_entries | map(select(.value | test("\\S")))
   | map(.n = .key + 1
-        | .e = (if .value | contains("\u0000") then null
+        | .e = (if .value | index("\u0000") != null then null
                 else .value | try fromjson catch null end))
   | {bad: map(select((.e | type) != "object") | .n),
      ev:  map(select((.e | type) == "object") | .e)}'

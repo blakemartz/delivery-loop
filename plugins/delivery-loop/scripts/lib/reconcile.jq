@@ -18,8 +18,10 @@
 #              backend need not parse it out of the reason.
 #   warnings — [string]: rule 8 diagnostics, plus one line per record that the
 #              transition table rejected (GC65). Never mutations.
-# `reconcile` prints the warnings on stderr ("warn: …" lines) and outputs the
-# records array, so a backend applies stdout and an operator reads stderr.
+# `reconcile_plan` outputs both as data; the caller prints each warning as a
+# "warn: …" line on stderr (graph.sh does) and applies the records. Printing is
+# left to the shell because jq's `stderr` builtin is not portable: jq 1.6
+# JSON-encodes its input, 1.7+ writes it raw.
 #
 # Rules (§5), evaluated in this order against a working copy of the board that
 # each accepted record updates, so one pass settles a cascade (a merged PR's
@@ -61,7 +63,7 @@
 # skipped, and the other records stand (GC65). Timestamps go through graph.jq
 # iso_epoch, which normalizes fractions and ±hh:mm offsets. Pure: no I/O.
 #
-# Usage: jq -L scripts/lib 'include "reconcile"; reconcile' input.json
+# Usage: jq -L scripts/lib 'include "reconcile"; reconcile_plan' input.json
 include "node";
 include "pr";
 include "graph";
@@ -211,6 +213,3 @@ def reconcile_plan:
   | _rule6($now) | _rule8
   | {records, warnings};
 
-def reconcile:
-  reconcile_plan
-  | (.warnings[] | "warn: \(.)\n" | stderr | empty), .records;

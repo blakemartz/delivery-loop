@@ -444,7 +444,7 @@ op_update() {
   # Label side of the patch (status only while it stays open).
   jq -c --arg cur "$cur" '{} + (if has("status") and .status != "done" and .status != "cancelled" and .status != $cur
                                 then {status} else {} end)
-                           + (if has("module") then {module} else {} end)
+                           + (if has("module") then {module: .module} else {} end)
                            + (if has("size") then {size} else {} end)
                            + (if has("needs_human") then {needs_human} else {} end)' <<<"$p" > "$tmp/lp.json"
   label_args "$(cat "$tmp/lp.json")"

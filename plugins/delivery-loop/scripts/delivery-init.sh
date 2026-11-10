@@ -12,7 +12,7 @@
 # to github; any other forge defaults it to local. gh is required only when a
 # seam is github.
 #
-# Requirements, checked up front: jq >= 1.7 always; git >= 2.31 for the local
+# Requirements, checked up front: jq >= 1.6 always; git >= 2.31 for the local
 # backend (`rev-parse --path-format`, §6.3); gh >= 2.94 for the github backend
 # (native issue relations, §6.2).
 #
@@ -80,7 +80,7 @@ detect_forge() {
 }
 
 # --- preflight: jq (the whole engine) ------------------------------------------
-command -v jq >/dev/null 2>&1 || die "jq >= 1.7 (not 1.8.2) is required (the engine parses all state with it). Install jq and re-run."
+command -v jq >/dev/null 2>&1 || die "jq >= 1.6 (not 1.8.2) is required (the engine parses all state with it). Install jq and re-run."
 # The same version rule every seam enforces (lib/config.sh dl_jq_check), in a
 # subshell so config.sh's exports do not leak in before it is sourced below.
 ( . "$SCRIPT_DIR/lib/config.sh"; dl_jq_check ) || die "unsupported jq (see above). Install a supported jq and re-run."

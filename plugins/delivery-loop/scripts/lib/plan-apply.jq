@@ -118,7 +118,7 @@ def _templates($backend):
                  target_branch: $p.target_branch}}),
       ($p.tasks | _topo[]
        | {pid: .id, kind: "task",
-          node: {kind: "task", title, body: _task_body, epic, module, size,
+          node: {kind: "task", title, body: _task_body, epic, module: .module, size,
                  deps: [.deps[] | {id, via, ref: (if .ref == "task" then "plan" else "node" end)}],
                  status: (if .deps == [] then "ready" else "blocked" end),
                  target_branch: $p.target_branch}}),

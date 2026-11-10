@@ -116,11 +116,11 @@ mechanics.
 Always:
 
 - `git`, `bash` (3.2 or later; macOS's default works), and `jq`.
-- jq ≥ 1.7, excluding 1.8.2 (upstream bug
-  [jqlang/jq#3597](https://github.com/jqlang/jq/issues/3597)); use 1.8.1, or 1.8.3
-  or later. `delivery-config.sh --check`, which every entry point runs, refuses an
-  unsupported jq. A version string it cannot parse is accepted, so Alpine's jq 1.6
-  build, which reports `jq-master-…`, is not caught: upgrade it yourself.
+- jq ≥ 1.6, excluding 1.8.2 (upstream bug
+  [jqlang/jq#3597](https://github.com/jqlang/jq/issues/3597)); with 1.8, use 1.8.1,
+  or 1.8.3 or later. `delivery-config.sh --check`, which every entry point runs,
+  refuses an unsupported jq. A version string it cannot parse is accepted (Alpine's
+  jq 1.6 build, for one, reports `jq-master-…`).
 - A remote on your forge — don't have one yet? `init` walks you through creating
   or connecting one.
 

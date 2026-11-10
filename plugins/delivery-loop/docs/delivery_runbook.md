@@ -58,7 +58,7 @@ Then **edit `.claude/delivery.conf`** — at minimum point `GATE_CMD` at your
 repo's check command, and set `WORKTREE_SETUP_CMD` if a fresh worktree needs a
 dependency install. `bash "${CLAUDE_PLUGIN_ROOT}/scripts/delivery-config.sh"`
 prints the resolved values; `… delivery-config.sh --check` validates them
-(including the jq on `PATH`: jq ≥ 1.7, never 1.8.2).
+(including the jq on `PATH`: jq ≥ 1.6, never 1.8.2).
 
 Then seed the other two seams the loop hangs on: run
 `/delivery-loop:author-styleguides` to draft the conventions in
@@ -363,13 +363,12 @@ Kept here so they don't get re-learned:
   nodes created afterwards; existing nodes keep their branch. A node with no
   `Delivery-Target:` line (created by v0.1.4, or whose trailer block was
   broken) is not pinned: it follows whatever `BASE_BRANCH` is in force.
-- **jq ≥ 1.7, excluding 1.8.2.** jq 1.8.2 mis-links nested module includes
-  (upstream jqlang/jq#3597) and crashes most of the engine; use 1.8.1, or 1.8.3
-  or later. Every entry point's config check refuses jq < 1.7 and exactly 1.8.2
-  (`1.8.2-dirty` included). A version string that does not parse as a release is
-  accepted, so Alpine's jq 1.6 build, which reports `jq-master-…`, slips through:
-  upgrade it yourself. `delivery-init.sh`'s own preflight only checks jq ≥ 1.6,
-  so the first `graph.sh`/`forge.sh` call is where an unsupported jq is refused.
+- **jq ≥ 1.6, excluding 1.8.2.** jq 1.8.2 mis-links nested module includes
+  (upstream jqlang/jq#3597) and crashes most of the engine; with 1.8, use 1.8.1,
+  or 1.8.3 or later. Every entry point's config check, and `delivery-init.sh`'s
+  preflight, refuses jq < 1.6 and exactly 1.8.2 (`1.8.2-dirty` included). A
+  version string that does not parse as a release is accepted (Alpine's jq 1.6
+  build, for one, reports `jq-master-…`).
   Deferred follow-up (upstream): once jq 1.8.3 ships, or if 1.8.2 ever must be
   supported, list full include chains (leaves last) at every nested-module call
   site and gate a run under jq 1.8.x that calls into each module.
