@@ -1,0 +1,75 @@
+[
+  {
+    "id": "gc6-a",
+    "kind": "task",
+    "title": "Task gc6-a",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "applied_prs": [],
+    "module": null,
+    "size": "S",
+    "deps": [
+      {
+        "id": "gc6-b",
+        "via": null
+      }
+    ],
+    "status": "ready",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "gc6-b",
+    "kind": "task",
+    "title": "Task gc6-b",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "applied_prs": [],
+    "module": null,
+    "size": "S",
+    "deps": [
+      {
+        "id": "gc6-a",
+        "via": null
+      }
+    ],
+    "status": "ready",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "gc6-control",
+    "kind": "task",
+    "title": "Task gc6-control",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "applied_prs": [],
+    "module": null,
+    "size": "S",
+    "deps": [],
+    "status": "ready",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  }
+]

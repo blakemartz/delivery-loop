@@ -1,0 +1,16 @@
+{"nodes": [
+  {"id": "gc68-t", "status": "blocked", "deps": ["gc68-a"]},
+  {"id": "gc68-u", "deps": ["gc68-b"]},
+  {"id": "gc68-v", "status": "blocked", "deps": ["gc68-d"]},
+  {"id": "gc68-a", "kind": "external", "status": "done", "size": null, "epic": "gc68-e"},
+  {"id": "gc68-b", "kind": "external", "status": "blocked", "size": null, "epic": "gc68-f"},
+  {"id": "gc68-d", "kind": "external", "status": "cancelled", "size": null},
+  {"id": "gc68-x", "kind": "external", "status": "blocked", "size": null},
+  {"id": "gc68-y", "kind": "external", "status": "blocked", "size": null},
+  {"id": "gc68-e", "kind": "epic", "size": null},
+  {"id": "gc68-c", "epic": "gc68-e", "status": "done"},
+  {"id": "gc68-f", "kind": "epic", "size": null},
+  {"id": "gc68-g", "epic": "gc68-f", "status": "done"}
+ ],
+ "prs": [{"number": 681, "task_id": "gc68-x"},
+         {"number": 682, "task_id": "gc68-y", "state": "merged"}]}

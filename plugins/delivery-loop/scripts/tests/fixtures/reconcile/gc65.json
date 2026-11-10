@@ -1,0 +1,8 @@
+{"nodes": [
+  {"id": "gc65-done", "status": "done", "updated_at": "2026-12-01T00:00:00Z",
+   "claim": {"actor": "agent-1", "run": "run-1", "at": "2026-12-01T00:00:00Z", "by": "agent"}},
+  {"id": "gc65-claimed", "status": "claimed", "updated_at": "2026-12-01T00:00:00Z",
+   "claim": {"actor": "agent-2", "run": "run-2", "at": "2026-12-01T00:00:00Z", "by": "agent"}},
+  {"id": "gc65-blocked", "status": "blocked"}
+ ],
+ "prs": []}

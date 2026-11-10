@@ -1,0 +1,96 @@
+[
+  {
+    "id": "gc2-blocked",
+    "kind": "task",
+    "title": "Task gc2-blocked",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "applied_prs": [],
+    "module": null,
+    "size": "S",
+    "deps": [
+      {
+        "id": "gc2-dep-cancelled",
+        "via": null
+      }
+    ],
+    "status": "blocked",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "gc2-dep-cancelled",
+    "kind": "task",
+    "title": "Task gc2-dep-cancelled",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "applied_prs": [],
+    "module": null,
+    "size": "S",
+    "deps": [],
+    "status": "cancelled",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "gc2-control",
+    "kind": "task",
+    "title": "Task gc2-control",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "applied_prs": [],
+    "module": null,
+    "size": "S",
+    "deps": [
+      {
+        "id": "gc2-dep-done",
+        "via": null
+      }
+    ],
+    "status": "ready",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "gc2-dep-done",
+    "kind": "task",
+    "title": "Task gc2-dep-done",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "applied_prs": [],
+    "module": null,
+    "size": "S",
+    "deps": [],
+    "status": "done",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  }
+]

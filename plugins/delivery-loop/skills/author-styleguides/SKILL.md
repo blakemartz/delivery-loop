@@ -7,7 +7,7 @@ description: Author or evolve the repo's styleguides — the conventions in STYL
 
 You author the conventions the loop treats as constitutional: the decomposer fits tasks to them, implementers read them before writing code, and reviewers enforce them as the best-practice bar (spec `${CLAUDE_PLUGIN_ROOT}/docs/agentic_delivery_spec.md` §2.1, §3.2–3.4). They are the prose counterpart of the gate: `GATE_CMD` defines *correct* mechanically; the styleguides define *good* where only judgment can.
 
-Read `.claude/delivery.conf` for `STYLEGUIDES_DIR` (default `styleguides/`), `GATE_CMD`, and `BASE_BRANCH`.
+Below, `S=${CLAUDE_PLUGIN_ROOT}/scripts`. Take `STYLEGUIDES_DIR` (default `styleguides/`), `GATE_CMD`, and `BASE_BRANCH` from `bash "$S/delivery-config.sh"` (the resolved `KEY=value` lines: defaults, `.claude/delivery.conf`, then environment) — never by reading the conf file yourself.
 
 ## Inputs
 
@@ -23,7 +23,7 @@ Read `.claude/delivery.conf` for `STYLEGUIDES_DIR` (default `styleguides/`), `GA
 4. **Draft** one guide per stack/layer in the scratchpad. Keep each readable in one sitting: prescriptive rules, a short right/wrong example where ambiguity is likely, no restating what the stack's defaults already guarantee.
    - **Checkable rules graduate to the gate.** If a rule can be enforced mechanically (formatter, linter rule, type-checker flag, test), the guide states the principle and the enforcement belongs in the gate — wire it into `GATE_CMD`'s script now if trivial, otherwise flag it as a follow-up task for the backlog.
 5. **Ratify — hard gate.** Present the drafts to the human with every judgment call flagged (each pin taken, anything observed-but-surprising, rules you chose *not* to write). **Nothing lands in the repo before the nod.** Apply their edits; re-present if the changes are substantive.
-6. **Land.** Write the ratified guides into `STYLEGUIDES_DIR` (replace the seeded README stub's "empty constitution" note if present). Commit to `BASE_BRANCH` directly when the loop isn't live yet; open a PR when it is or when the operator prefers.
+6. **Land.** Write the ratified guides into `STYLEGUIDES_DIR` (replace the seeded README stub's "empty constitution" note if present). Commit to `BASE_BRANCH` directly when the loop isn't live yet; open a PR when it is or when the operator prefers — against `BASE_BRANCH`: push the branch, write the body to `"$TMPDIR/styleguides-pr.md"` (a private `TMPDIR`: `export TMPDIR=$(mktemp -d)`), then `bash "$S/forge.sh" pr-create --head <branch> --base <BASE_BRANCH> --title "<title>" --body-file "$TMPDIR/styleguides-pr.md"` (stdout `{number, url}`; `<BASE_BRANCH>` is the resolved value, which may not be the repo default). Never call the forge's CLI or API directly.
 
 ## Hard rules (violating any of these means your constitution is wrong)
 

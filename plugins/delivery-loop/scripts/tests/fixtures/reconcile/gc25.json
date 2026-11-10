@@ -1,0 +1,8 @@
+{"nodes": [
+  {"id": "gc25-x", "status": "in-review",
+   "claim": {"actor": "agent-1", "run": "run-1", "at": "2026-12-31T22:00:00Z", "by": "agent"}},
+  {"id": "gc25-dependent", "status": "blocked", "deps": ["gc25-x"]},
+  {"id": "gc25-other", "status": "blocked", "deps": ["gc25-x", "gc25-open"]},
+  {"id": "gc25-open", "status": "ready"}
+ ],
+ "prs": [{"number": 25, "state": "merged", "task_id": "gc25-x"}]}

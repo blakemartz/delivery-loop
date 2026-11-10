@@ -1,0 +1,404 @@
+[
+  {
+    "number": 19,
+    "title": "Cancelled dependent of 15",
+    "state": "CLOSED",
+    "stateReason": "NOT_PLANNED",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Depends-on: #15",
+    "createdAt": "2026-01-01T05:00:00Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 17,
+    "title": "Medium, oldest, no epic",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_ready",
+        "name": "status:ready",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_M",
+        "name": "size:M",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_module_d",
+        "name": "module:d",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Standalone.",
+    "createdAt": "2026-01-01T04:00:00Z",
+    "updatedAt": "2026-01-01T04:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 16,
+    "title": "Small, older",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_ready",
+        "name": "status:ready",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Part of epic #2",
+    "createdAt": "2026-01-02T00:00:00Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 15,
+    "title": "In the started epic",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_ready",
+        "name": "status:ready",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_M",
+        "name": "size:M",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_module_a",
+        "name": "module:a",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Part of epic #1",
+    "createdAt": "2026-01-07T00:00:00Z",
+    "updatedAt": "2026-01-07T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 14,
+    "title": "Also blocked on 12",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_blocked",
+        "name": "status:blocked",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_M",
+        "name": "size:M",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_module_b",
+        "name": "module:b",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Part of epic #2\n\nDepends-on: #12",
+    "createdAt": "2026-01-01T03:00:00Z",
+    "updatedAt": "2026-01-01T03:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 13,
+    "title": "Blocked on 12",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_blocked",
+        "name": "status:blocked",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_module_a",
+        "name": "module:a",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Part of epic #1\n\nDepends-on: #12",
+    "createdAt": "2026-01-01T02:00:00Z",
+    "updatedAt": "2026-01-01T02:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 12,
+    "title": "Unblocks two",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_ready",
+        "name": "status:ready",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_M",
+        "name": "size:M",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_module_c",
+        "name": "module:c",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Part of epic #2",
+    "createdAt": "2026-01-06T00:00:00Z",
+    "updatedAt": "2026-01-06T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 11,
+    "title": "Small, younger",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_ready",
+        "name": "status:ready",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_module_b",
+        "name": "module:b",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Part of epic #2",
+    "createdAt": "2026-01-03T00:00:00Z",
+    "updatedAt": "2026-01-03T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 10,
+    "title": "Done child of the started epic",
+    "state": "CLOSED",
+    "stateReason": "COMPLETED",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_module_a",
+        "name": "module:a",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Part of epic #1",
+    "createdAt": "2026-01-01T01:00:00Z",
+    "updatedAt": "2026-01-02T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 2,
+    "title": "Epic: not started",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_epic",
+        "name": "epic",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "- [ ] #11\n- [ ] #12\n- [ ] #14\n- [ ] #16",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "updatedAt": "2026-01-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 1,
+    "title": "Epic: started",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_epic",
+        "name": "epic",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "- [ ] #10\n- [ ] #13\n- [ ] #15",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "updatedAt": "2026-01-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  }
+]

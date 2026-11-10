@@ -1,0 +1,853 @@
+[
+  {
+    "number": 48,
+    "title": "double status label, needs-human, L",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_ready",
+        "name": "status:ready",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_needs_human",
+        "name": "needs-human",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_L",
+        "name": "size:L",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_module_",
+        "name": "module:",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "x",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 47,
+    "title": "Not a delivery issue",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [],
+    "assignees": [],
+    "body": "Depends-on: #3",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 46,
+    "title": "via-annotated legacy edges",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_blocked",
+        "name": "status:blocked",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Delivery-Target: release/x\nDepends-on: #3 (via: shared config)\nDepends-on: #4 #6\nDelivery-Plan: v2/t46",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 45,
+    "title": "Promote release/x -> main",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_promote",
+        "name": "promote",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Delivery-Target: release/x\nDelivery-Promote-To: main\nDelivery-Plan: v2/promote",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 44,
+    "title": "claim:agent, assignee, no CLAIM",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_claim_agent",
+        "name": "claim:agent",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [
+      {
+        "id": "U_shim-user",
+        "login": "shim-user",
+        "name": "",
+        "databaseId": 1
+      }
+    ],
+    "body": "Drift.",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 43,
+    "title": "claim:agent, no assignee, no CLAIM",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_claim_agent",
+        "name": "claim:agent",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Drift.",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 42,
+    "title": "agent claim, reclaimed then re-claimed",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_claim_agent",
+        "name": "claim:agent",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [
+      {
+        "id": "U_shim-user",
+        "login": "shim-user",
+        "name": "",
+        "databaseId": 1
+      }
+    ],
+    "body": "Agent work.",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": [
+      {
+        "id": "IC_2026-10-01T01:00:01Z",
+        "author": {
+          "login": "shim-user"
+        },
+        "authorAssociation": "OWNER",
+        "body": "CLAIM agent-0 host-1-100 2026-10-01T01:00:00Z",
+        "createdAt": "2026-10-01T01:00:01Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/example/repo/issues/1#issuecomment-1",
+        "viewerDidAuthor": true
+      },
+      {
+        "id": "IC_2026-10-01T06:00:00Z",
+        "author": {
+          "login": "shim-user"
+        },
+        "authorAssociation": "OWNER",
+        "body": "RECLAIMED: agent claim was idle >4h with no open PR; task is ready again.",
+        "createdAt": "2026-10-01T06:00:00Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/example/repo/issues/1#issuecomment-1",
+        "viewerDidAuthor": true
+      },
+      {
+        "id": "IC_2026-10-01T07:00:01Z",
+        "author": {
+          "login": "shim-user"
+        },
+        "authorAssociation": "OWNER",
+        "body": "CLAIM agent-1 host-2-200 2026-10-01T07:00:00Z",
+        "createdAt": "2026-10-01T07:00:01Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/example/repo/issues/1#issuecomment-1",
+        "viewerDidAuthor": true
+      },
+      {
+        "id": "IC_2026-10-01T07:00:02Z",
+        "author": {
+          "login": "shim-user"
+        },
+        "authorAssociation": "OWNER",
+        "body": "CLAIM agent-2 host-3-300 2026-10-01T07:00:01Z",
+        "createdAt": "2026-10-01T07:00:02Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/example/repo/issues/1#issuecomment-1",
+        "viewerDidAuthor": true
+      },
+      {
+        "id": "IC_2026-10-01T07:00:03Z",
+        "author": {
+          "login": "shim-user"
+        },
+        "authorAssociation": "OWNER",
+        "body": "CLAIM-WITHDRAWN agent-2 host-3-300 (lost to earlier claim)",
+        "createdAt": "2026-10-01T07:00:03Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/example/repo/issues/1#issuecomment-1",
+        "viewerDidAuthor": true
+      }
+    ]
+  },
+  {
+    "number": 41,
+    "title": "GC44 human claim, never pinged",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [
+      {
+        "id": "U_bob",
+        "login": "bob",
+        "name": "",
+        "databaseId": 1
+      }
+    ],
+    "body": "Human work.",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": [
+      {
+        "id": "IC_2026-10-02T00:00:00Z",
+        "author": {
+          "login": "shim-user"
+        },
+        "authorAssociation": "OWNER",
+        "body": "note",
+        "createdAt": "2026-10-02T00:00:00Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/example/repo/issues/1#issuecomment-1",
+        "viewerDidAuthor": true
+      }
+    ]
+  },
+  {
+    "number": 40,
+    "title": "GC44 human claim, pinged twice",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_claimed",
+        "name": "status:claimed",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [
+      {
+        "id": "U_ann",
+        "login": "ann",
+        "name": "",
+        "databaseId": 1
+      }
+    ],
+    "body": "Human work.",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": [
+      {
+        "id": "IC_2026-10-04T00:00:00Z",
+        "author": {
+          "login": "shim-user"
+        },
+        "authorAssociation": "OWNER",
+        "body": "STALE-CLAIM-PING: first",
+        "createdAt": "2026-10-04T00:00:00Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/example/repo/issues/1#issuecomment-1",
+        "viewerDidAuthor": true
+      },
+      {
+        "id": "IC_2026-10-06T00:00:00Z",
+        "author": {
+          "login": "shim-user"
+        },
+        "authorAssociation": "OWNER",
+        "body": "STALE-CLAIM-PING: second",
+        "createdAt": "2026-10-06T00:00:00Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/example/repo/issues/1#issuecomment-1",
+        "viewerDidAuthor": true
+      },
+      {
+        "id": "IC_2026-10-07T00:00:00Z",
+        "author": {
+          "login": "shim-user"
+        },
+        "authorAssociation": "OWNER",
+        "body": "still on it",
+        "createdAt": "2026-10-07T00:00:00Z",
+        "includesCreatedEdit": false,
+        "isMinimized": false,
+        "minimizedReason": "",
+        "reactionGroups": [],
+        "url": "https://github.com/example/repo/issues/1#issuecomment-1",
+        "viewerDidAuthor": true
+      }
+    ]
+  },
+  {
+    "number": 34,
+    "title": "GC11 text and native edges",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_blocked",
+        "name": "status:blocked",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_M",
+        "name": "size:M",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_module_b",
+        "name": "module:b",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Standalone.\n\nDepends-on: #3\n",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [
+        {
+          "number": 3,
+          "state": "CLOSED",
+          "title": "Issue 3",
+          "url": "https://github.com/example/repo/issues/3"
+        },
+        {
+          "number": 4,
+          "state": "OPEN",
+          "title": "Issue 4",
+          "url": "https://github.com/example/repo/issues/4"
+        }
+      ],
+      "totalCount": 2
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 33,
+    "title": "GC9 duplicate, native sub-issue",
+    "state": "CLOSED",
+    "stateReason": "DUPLICATE",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "No epic text here.",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": {
+      "number": 30,
+      "state": "OPEN",
+      "title": "Issue 30",
+      "url": "https://github.com/example/repo/issues/30"
+    },
+    "comments": []
+  },
+  {
+    "number": 32,
+    "title": "GC45 checklist-only child",
+    "state": "CLOSED",
+    "stateReason": "NOT_PLANNED",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Listed only in the epic checklist.",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 31,
+    "title": "GC45 child by body backlink",
+    "state": "CLOSED",
+    "stateReason": "COMPLETED",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_module_a",
+        "name": "module:a",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Part of epic #30",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 30,
+    "title": "GC45 epic",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_epic",
+        "name": "epic",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Tracks:\r\n- [x] #31\r\n- [ ] #32\r\n- [ ] #31\r\n* [X] #33\r\nNot a checklist: #34",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 6,
+    "title": "GC64 third blocker",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_ready",
+        "name": "status:ready",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_M",
+        "name": "size:M",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Open.",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 5,
+    "title": "GC64 three blockers, two returned",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_blocked",
+        "name": "status:blocked",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Native blockers only.",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [
+        {
+          "number": 3,
+          "state": "CLOSED",
+          "title": "Issue 3",
+          "url": "https://github.com/example/repo/issues/3"
+        },
+        {
+          "number": 4,
+          "state": "OPEN",
+          "title": "Issue 4",
+          "url": "https://github.com/example/repo/issues/4"
+        }
+      ],
+      "totalCount": 3
+    },
+    "parent": null,
+    "comments": [],
+    "_view": {
+      "blockedBy": {
+        "nodes": [
+          {
+            "number": 3,
+            "state": "CLOSED",
+            "title": "Issue 3",
+            "url": "https://github.com/example/repo/issues/3"
+          },
+          {
+            "number": 4,
+            "state": "OPEN",
+            "title": "Issue 4",
+            "url": "https://github.com/example/repo/issues/4"
+          },
+          {
+            "number": 6,
+            "state": "OPEN",
+            "title": "Issue 6",
+            "url": "https://github.com/example/repo/issues/6"
+          }
+        ],
+        "totalCount": 3
+      }
+    }
+  },
+  {
+    "number": 4,
+    "title": "GC11 open dep",
+    "state": "OPEN",
+    "stateReason": "",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_status_ready",
+        "name": "status:ready",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Open.",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  },
+  {
+    "number": 3,
+    "title": "GC11 done dep",
+    "state": "CLOSED",
+    "stateReason": "COMPLETED",
+    "labels": [
+      {
+        "id": "LA_task",
+        "name": "task",
+        "description": "",
+        "color": "EDEDED"
+      },
+      {
+        "id": "LA_size_S",
+        "name": "size:S",
+        "description": "",
+        "color": "EDEDED"
+      }
+    ],
+    "assignees": [],
+    "body": "Done.",
+    "createdAt": "2026-10-01T00:00:00Z",
+    "updatedAt": "2026-10-01T00:00:00Z",
+    "blockedBy": {
+      "nodes": [],
+      "totalCount": 0
+    },
+    "parent": null,
+    "comments": []
+  }
+]

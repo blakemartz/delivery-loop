@@ -1,0 +1,6 @@
+{"flags": {},
+ "nodes": [{"id": "t-claimed", "status": "claimed",
+            "claim": {"actor": "agent-1", "run": "r1", "at": "2026-01-01T00:00:00Z", "by": "agent"}},
+           {"id": "t-approved", "status": "approved"},
+           {"id": "t-ready"}],
+ "prs": [{"number": 3, "task_id": "t-approved", "reviewed_at_head": true}]}

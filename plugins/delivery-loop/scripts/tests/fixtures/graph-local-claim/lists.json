@@ -1,0 +1,25 @@
+{
+  "open": [
+    [
+      {
+        "number": 302,
+        "headRefName": "task/z--claim-with-a-pr",
+        "mergedAt": null
+      }
+    ]
+  ],
+  "merged": [
+    [
+      {
+        "number": 301,
+        "headRefName": "task/x--shipped",
+        "mergedAt": "2026-01-05T00:00:00Z"
+      },
+      {
+        "number": 300,
+        "headRefName": "task/w--old-pr",
+        "mergedAt": "2025-12-01T00:00:00Z"
+      }
+    ]
+  ]
+}

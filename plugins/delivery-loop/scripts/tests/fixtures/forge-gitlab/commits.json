@@ -1,0 +1,29 @@
+{
+  "f0e1d2c3b4a5968778695a4b3c2d1e0f11223344": {
+    "id": "f0e1d2c3b4a5968778695a4b3c2d1e0f11223344",
+    "short_id": "f0e1d2c3",
+    "title": "Merge branch 'task/merged-results--ok' into 'main'",
+    "parent_ids": [
+      "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+      "a1b2c3d4e5f60718293a4b5c6d7e8f9011121314"
+    ]
+  },
+  "e1d2c3b4a5968778695a4b3c2d1e0f1122334455": {
+    "id": "e1d2c3b4a5968778695a4b3c2d1e0f1122334455",
+    "short_id": "e1d2c3b4",
+    "title": "Merge branch 'task/merged-results--red' into 'main'",
+    "parent_ids": [
+      "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+      "b2c3d4e5f60718293a4b5c6d7e8f901112131415"
+    ]
+  },
+  "e0d1c2b3a4958677869504a3b2c1d0e0f1122335": {
+    "id": "e0d1c2b3a4958677869504a3b2c1d0e0f1122335",
+    "short_id": "e0d1c2b3",
+    "title": "Merge branch 'task/merged-results--stale' into 'main'",
+    "parent_ids": [
+      "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
+      "c00dbbc9dadfbe1e232e93a729dd4752fade0abf"
+    ]
+  }
+}

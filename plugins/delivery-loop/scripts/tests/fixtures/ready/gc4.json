@@ -1,0 +1,75 @@
+[
+  {
+    "id": "gc4-escalated",
+    "kind": "task",
+    "title": "Task gc4-escalated",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "applied_prs": [],
+    "module": null,
+    "size": "S",
+    "deps": [
+      {
+        "id": "gc4-dep",
+        "via": null
+      }
+    ],
+    "status": "blocked",
+    "needs_human": true,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "gc4-dep",
+    "kind": "task",
+    "title": "Task gc4-dep",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "applied_prs": [],
+    "module": null,
+    "size": "S",
+    "deps": [],
+    "status": "done",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "id": "gc4-unflagged",
+    "kind": "task",
+    "title": "Task gc4-unflagged",
+    "epic": null,
+    "checklist": [],
+    "pinged_at": null,
+    "applied_prs": [],
+    "module": null,
+    "size": "S",
+    "deps": [
+      {
+        "id": "gc4-dep",
+        "via": null
+      }
+    ],
+    "status": "blocked",
+    "needs_human": false,
+    "claim": null,
+    "target_branch": "main",
+    "promote_to": null,
+    "plan_ref": null,
+    "body": "",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  }
+]

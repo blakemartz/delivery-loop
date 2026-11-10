@@ -1,0 +1,6 @@
+{"flags": {"auto_merge": true},
+ "nodes": [{"id": "e1", "kind": "epic", "status": "done"},
+           {"id": "p", "kind": "promote", "deps": ["e1"], "status": "in-review",
+            "target_branch": "release/x", "promote_to": "main"}],
+ "prs": [{"number": 41, "task_id": "p", "head": "release/x", "base": "main",
+          "mergeable": "clean", "checks": "success"}]}
