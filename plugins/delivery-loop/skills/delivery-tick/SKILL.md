@@ -36,6 +36,7 @@ Parse the argument first:
 6. **Idle.** Nothing to dispatch — **report it in one line and stop; do not probe further while an agent is in flight.** Render a one-line board summary (counts per bucket) and note what you're waiting on (human merges of approved PRs when `--auto-merge` is off, deps to close, empty queue → suggest `/delivery-loop:decompose`).
 
 ## Rules
+- **Shell rules in every dispatch prompt.** Tell each spawned agent: run scripts as plain commands with their full literal path; no shell variable assignments, `$(...)`/backticks, heredocs or `>` redirects in Bash (unattended runs cannot approve them); write files with the Write/Edit tools; if a command is denied, stop and report it.
 
 - **Serial: one action per tick. Parallel: one batch per tick.** Never chain a second dispatch after results return — replanning belongs to the next tick.
 - Approved **and mergeable** PRs: with `--auto-merge` **off** (the default) they are the human's queue, not yours — list them, don't touch them; with it **on**, step 1 squash-merges them. Either way, an approved PR that has gone *conflicting* is handled by the **Rebase** step, and a `needs-human` PR is never merged.

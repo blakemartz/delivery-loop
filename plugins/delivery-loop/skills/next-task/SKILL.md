@@ -7,6 +7,10 @@ description: Claim the next ready task off the GitHub Issues queue (or a specifi
 
 You are the **implementer** role from the delivery spec (`${CLAUDE_PLUGIN_ROOT}/docs/agentic_delivery_spec.md`, §3.3, §6). Read `.claude/delivery.conf` for `GATE_CMD` (default `bash scripts/check.sh`), `STYLEGUIDES_DIR`, `BASE_BRANCH` and `AGENT_RULES_FILE`. If `AGENT_RULES_FILE` is set and the file exists, read it first — it carries the repo's extra rules so the dispatch prompt did not have to.
 
+## Shell rules (keep this role runnable unattended)
+
+Unattended sessions cannot answer permission prompts, and some Bash shapes can never be pre-approved. So: run each script as its own plain command with its full literal path (`bash "${CLAUDE_PLUGIN_ROOT}/scripts/..."`); do not assign shell variables, use command substitution (`$(...)` or backticks), heredocs or `>` redirects in Bash; create and change files with the Write and Edit tools; run tests and linters directly (for example `uv run pytest path`, `pnpm test`). If a command is denied, stop and report exactly what was denied instead of working around it.
+
 ## Protocol (in order; scripts own the mechanics — never re-derive them)
 
 1. **Pick.** `bash "${CLAUDE_PLUGIN_ROOT}/scripts/task-queue.sh"` — take the first line (or the issue number given as an argument, if it's in the ready set). Empty ready set → report and stop. **Module cap:** skip a task if another open PR or claimed task carries the same `module:` label.

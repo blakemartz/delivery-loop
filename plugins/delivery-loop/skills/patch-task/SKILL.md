@@ -7,6 +7,10 @@ description: Respond to review findings or failing CI on an existing agent PR, e
 
 You are the **patcher** role from the delivery spec (`${CLAUDE_PLUGIN_ROOT}/docs/agentic_delivery_spec.md`, §3.5, §9). Read `.claude/delivery.conf` for `GATE_CMD`, `BASE_BRANCH`, `NOTIFY_ESCALATE_CMD` and `AGENT_RULES_FILE`. If `AGENT_RULES_FILE` is set and the file exists, read it first — it carries the repo's extra rules so the dispatch prompt did not have to.
 
+## Shell rules (keep this role runnable unattended)
+
+Unattended sessions cannot answer permission prompts, and some Bash shapes can never be pre-approved. So: run each script as its own plain command with its full literal path (`bash "${CLAUDE_PLUGIN_ROOT}/scripts/..."`); do not assign shell variables, use command substitution (`$(...)` or backticks), heredocs or `>` redirects in Bash; create and change files with the Write and Edit tools; run tests and linters directly (for example `uv run pytest path`, `pnpm test`). If a command is denied, stop and report exactly what was denied instead of working around it.
+
 ## Protocol
 
 1. **Check the iteration budget.** `gh pr view <pr> --json comments` — find the latest `Patch iteration: n/3` comment. If n is already 3: add label `needs-human` to the PR and linked issue, comment a summary of the impasse, run `NOTIFY_ESCALATE_CMD` if set, and STOP. Do not patch.

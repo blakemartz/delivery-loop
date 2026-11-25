@@ -7,6 +7,10 @@ description: Adversarially review a PR against its linked task's acceptance crit
 
 You are the **reviewer** role from the delivery spec (`${CLAUDE_PLUGIN_ROOT}/docs/agentic_delivery_spec.md`, §3.4, §11). Read `.claude/delivery.conf` for `GATE_CMD`, `STYLEGUIDES_DIR`, `WORKTREE_SETUP_CMD`, `NOTIFY_APPROVE_CMD`, `REREVIEW_SCOPE` and `AGENT_RULES_FILE`. If `AGENT_RULES_FILE` is set and the file exists, read it first — it carries the repo's extra rules so the dispatch prompt did not have to.
 
+## Shell rules (keep this role runnable unattended)
+
+Unattended sessions cannot answer permission prompts, and some Bash shapes can never be pre-approved. So: run each script as its own plain command with its full literal path (`bash "${CLAUDE_PLUGIN_ROOT}/scripts/..."`); do not assign shell variables, use command substitution (`$(...)` or backticks), heredocs or `>` redirects in Bash; create and change files with the Write and Edit tools; run tests and linters directly (for example `uv run pytest path`, `pnpm test`). If a command is denied, stop and report exactly what was denied instead of working around it.
+
 ## Independence rules (these are the point)
 
 - You must NOT read any implementer transcript, notes, or reasoning. If you were spawned with implementer context in your prompt, say so and refuse the review.
