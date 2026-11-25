@@ -318,6 +318,28 @@ expect "unknown op -> usage exit 2" '[ "$rc" = 2 ]'
 run FORGE_REPO=example/other -- pr-view 101
 expect "FORGE_REPO overrides the repo gh resolves (GH_REPO)" '[ "$rc" = 0 ] && log_has "gh[GH_REPO=example/other] pr view 101"'
 
+# --- label-ensure: create a missing repo label, leave an existing one ----------
+reset
+run -- label-ensure agent-authored EDEDED "Produced by an agent"
+expect "label-ensure: a label that exists -> {created:false}, listed with --limit, no create" \
+  '[ "$rc" = 0 ] && jq_true ".name == \"agent-authored\" and .created == false" && log_line "gh label list --json name --limit 5000" && [ "$(log_count "label create")" = 0 ]'
+reset
+run -- label-ensure needs-human B60205 "Escalated: a human must intervene"
+expect "label-ensure: a missing label -> one gh label create (no --force), {created:true}" \
+  '[ "$rc" = 0 ] && jq_true ".name == \"needs-human\" and .created == true" && log_line "gh label create --color B60205 --description Escalated: a human must intervene -- needs-human" && [ "$(log_count "--force")" = 0 ]'
+reset
+touch "$tmp/state/fail-label-create"
+run -- label-ensure needs-human B60205 "d"
+expect "label-ensure: gh label create fails -> exit 1, no JSON" '[ "$rc" = 1 ] && grep -qF "nothing created" <<<"$err" && [ -z "$out" ]'
+reset
+run LIST_LIMIT=3 -- label-ensure needs-human B60205 "d"
+expect "label-ensure: the label list reaching LIST_LIMIT -> exit 3, nothing created" '[ "$rc" = 3 ] && [ "$(log_count "label create")" = 0 ] && [ -z "$out" ]'
+reset
+run -- label-ensure needs-human "#B60205" "d"
+expect "label-ensure: a color that is not 6 hex digits -> usage exit 2, no gh call" '[ "$rc" = 2 ] && [ ! -s "$tmp/state/log" ]'
+run -- label-ensure "a,b" B60205 "d"
+expect "label-ensure: a name with a comma -> exit 1, no gh call" '[ "$rc" = 1 ] && [ ! -s "$tmp/state/log" ]'
+
 # --- forge.sh runs the config check before any I/O ----------------------------
 reset
 run FORGE=gitlab -- pr-view 101

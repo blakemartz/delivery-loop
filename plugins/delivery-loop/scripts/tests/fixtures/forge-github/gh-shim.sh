@@ -20,6 +20,8 @@
 #   many-merged        — the merged list is 1200 PRs, all merged in the window.
 #   unknown-label      — `pr create --label …` fails before creating, as gh does
 #                        when a name resolves to no label (no URL, exit 1).
+#   fail-label-create  — `label create` fails (exit 1), as on a permissions
+#                        error or a name that differs only in case.
 #   fail-label-update  — `pr create --label …` creates the PR, prints its URL,
 #                        then fails the label step, as gh does when its second
 #                        (updatePullRequest) request fails (exit 1).
@@ -93,6 +95,12 @@ case "${1:-} ${2:-}" in
   "pr diff")
     if [ "${4:-}" = --name-only ]; then printf 'a.sh\nb/c.jq\n'
     else printf 'diff --git a/a.sh b/a.sh\n'; fi ;;
+  "label list")   # the repo's labels, capped at --limit like real gh
+    jq -c --argjson lim "$(opt --limit "$@")" '.[0:$lim]' <<<'[{"name":"bug"},{"name":"agent-authored"},{"name":"task"}]' ;;
+  "label create")
+    if [ -f "$SHIM_STATE/fail-label-create" ]; then
+      echo "HTTP 403: Resource not accessible by integration" >&2; exit 1
+    fi ;;
   "run list") echo '[{"databaseId":77}]' ;;
   "run view") echo "job-failure  step  error: boom" ;;
   *) echo "gh-shim: unhandled call: gh $*" >&2; exit 64 ;;

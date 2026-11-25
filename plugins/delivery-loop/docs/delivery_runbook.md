@@ -41,7 +41,8 @@ Install the plugin (once, user or project scope), then bootstrap the repo:
 
 ```
 /delivery-loop:init        # picks the seams, scaffolds .claude/delivery.conf, seeds the gate,
-                           # gitignores .worktrees/, creates labels (github) or STATE_DIR (local)
+                           # gitignores .worktrees/, creates the PR labels on the forge, and the
+                           # issue labels (github backend) or STATE_DIR (local backend)
 ```
 
 `init` first settles the two seams (§10): `GRAPH_BACKEND` (`github` = GitHub
@@ -558,11 +559,26 @@ it.
 Tokens come from the **environment only**. A value set in `.claude/delivery.conf`
 (a checked-in file) is discarded.
 
-| Forge | Auth | Optional reviewer identity |
-|---|---|---|
-| github | `gh auth login` (repo scope) | `GH_REVIEW_TOKEN` |
-| gitlab | `GITLAB_TOKEN` (API access to the project) | `GITLAB_REVIEW_TOKEN` |
-| gitea / Forgejo | `GITEA_TOKEN` (repository read/write) | `GITEA_REVIEW_TOKEN` |
+| Forge | Auth | Scopes the token needs | Optional reviewer identity |
+|---|---|---|---|
+| github | `gh auth login` | `repo` (a fine-grained token: Contents, Issues and Pull requests, read and write) | `GH_REVIEW_TOKEN` |
+| gitlab | `GITLAB_TOKEN` | `api`, held by a member who may open and merge merge requests on the project (Developer or higher) | `GITLAB_REVIEW_TOKEN` |
+| gitea / Forgejo | `GITEA_TOKEN` | `repository` and `issue`, each read and write | `GITEA_REVIEW_TOKEN` |
+
+On gitea, `repository` covers the pull requests, merges and commit statuses,
+and `issue` covers the labels and PR comments. `read:organization` is **not**
+needed: when a label is not on the repo, the adapter also looks at the owner
+organization's labels, and a token that cannot read organizations (a 403)
+simply has none there. If `forge.sh whoami` itself answers 403, the server also
+wants `read:user` for the account lookup.
+
+`/delivery-loop:init` creates the two PR labels the loop relies on, on every
+forge and both graph backends: `agent-authored` (set on every PR the loop
+opens) and `needs-human` (a PR carrying it is never acted on). It goes through
+`forge.sh label-ensure <name> <color> <description>`, which leaves an existing
+label as it is, so re-running `init` is safe. `pr-create` never creates a
+label: on a repo where they are missing, the first PR fails with `unknown
+label(s) …: agent-authored` until `init` has run.
 
 `delivery-config.sh --check` refuses a gitlab or gitea forge whose token is
 unset. `FORGE_URL` and `FORGE_REPO` default from the `origin` remote; set them in

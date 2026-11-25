@@ -19,7 +19,10 @@
 # Local scaffolding runs first (gitignore, gate seed, .claude/delivery.conf with
 # every §11 key, styleguides stub, and on the local backend the STATE_DIR store
 # of §6.3), so a repo with no remote still gets it. Then, with a remote: forge
-# auth via `forge.sh whoami`, and on the github backend the label taxonomy
+# auth via `forge.sh whoami`; the PR labels the loop relies on (`agent-authored`,
+# `needs-human`), ensured on the forge through `forge.sh label-ensure` on every
+# forge and both graph backends (an existing label is left as it is; under
+# FORGE_DRY_RUN nothing is created); and on the github backend the label taxonomy
 # (including `promote`). With no remote, the script says how to connect one and
 # exits 2 — re-run after connecting to finish. Optional args become extra
 # module:<name> labels (github backend); you can also list modules in
@@ -426,6 +429,26 @@ if ! login="$(bash "$SCRIPT_DIR/forge.sh" whoami)" || [ -z "$login" ]; then
 fi
 echo "==> forge: $FORGE, authenticated as $login"
 
+# --- forge PR labels (every forge, both graph backends) ------------------------
+# The labels the loop puts on a PR or reads off one live on the forge, whatever
+# the graph backend: `agent-authored` (every `forge.sh pr-create --label`; a PR
+# without it is not the loop's) and `needs-human` (a PR carrying it is never
+# acted on). `pr-create` never creates a label, so they must exist before the
+# first PR. Only through the forge seam: no forge CLI or API call here.
+forge_label() {
+  local res
+  res="$(bash "$SCRIPT_DIR/forge.sh" label-ensure "$1" "$2" "$3")" \
+    || { echo "ERROR: ensuring forge label '$1' failed (see above) — the loop's PRs need it; fix the cause (token scopes: runbook §10.3) and re-run (idempotent)." >&2; exit 1; }
+  case "$(jq -r '.created' <<<"$res" 2>/dev/null || true)" in
+    true)  echo "  label: $1 (created)" ;;
+    false) echo "  label: $1 (exists)" ;;
+    *)     echo "  label: $1 (not sent: FORGE_DRY_RUN)" ;;
+  esac
+}
+echo "==> forge labels ($FORGE): the PR labels the loop relies on"
+forge_label "agent-authored" "EDEDED" "Produced by an agent"
+forge_label "needs-human"    "B60205" "Escalated: a human must intervene"
+
 # --- github backend: repo + label taxonomy -------------------------------------
 issues_enabled=true
 repo_slug=""
@@ -477,7 +500,7 @@ if [ "$GRAPH_BACKEND" = github ]; then
   done
   set +f
 else
-  echo "==> labels: skipped (GRAPH_BACKEND=local keeps the graph in $state, not in labels)"
+  echo "==> graph labels: skipped (GRAPH_BACKEND=local keeps the graph in $state, not in labels)"
   if [ "$#" -gt 0 ]; then
     echo "    note: module args ($*) are labels on the github backend only — list modules in MODULES= in .claude/delivery.conf"
   fi

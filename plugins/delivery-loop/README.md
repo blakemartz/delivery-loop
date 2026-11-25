@@ -16,7 +16,7 @@ configuration, and the full walkthrough.
       [--apply]`. Validates every node and applies the policy core.
     - `forge.sh` — PRs: `whoami`, `pr-create`, `pr-view`, `pr-list`, `pr-find`,
       `pr-review`, `pr-reviews`, `pr-comment(s)`, `pr-merge`, `pr-set-base`,
-      `pr-files`, `pr-diff`, `ci-failures`.
+      `pr-files`, `pr-diff`, `ci-failures`, `label-ensure`.
     - `backends/graph-github.sh` (+ `graph-github.jq`) and
       `backends/graph-local.sh` — the graph backends (`GRAPH_BACKEND`).
     - `backends/forge-{github,gitlab,gitea}.sh` (+ `.jq`) and
@@ -38,7 +38,8 @@ configuration, and the full walkthrough.
     - `claim-task.sh` — claim a task (`graph.sh claim`).
   - **Setup and config**
     - `delivery-init.sh` — one-time repo bootstrap (seams, config, gate seed,
-      styleguides stub, gitignore, labels or local store, forge auth check).
+      styleguides stub, gitignore, labels or local store, forge auth check,
+      forge PR labels).
     - `lib/config.sh` / `delivery-config.sh` — resolve `.claude/delivery.conf`
       (defaults < file < environment); `delivery-config.sh --check` validates
       the combination and the jq version.

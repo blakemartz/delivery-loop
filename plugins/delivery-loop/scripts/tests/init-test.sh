@@ -2,14 +2,17 @@
 # Tests for delivery-init.sh (docs/delivery_graph_spec.md §10 `init` row, §11,
 # §6.3): golden case GC60, plus idempotency, the per-seam requirement checks
 # (jq >= 1.6, not 1.8.2, git >= 2.31 for local, gh >= 2.94 for the github backend), the
-# `promote` label on github, seam detection from origin, and the repo-settings
-# advice keeping merge commits enabled.
+# `promote` label on github, seam detection from origin, the repo-settings
+# advice keeping merge commits enabled, and the forge PR labels
+# (`agent-authored`, `needs-human`) ensured through `forge.sh label-ensure` on
+# every forge and both graph backends, creating nothing on a re-run.
 #
 # Offline: each case runs in a fresh throwaway git repo under ${TMPDIR:-/tmp}
 # with shims first on PATH — gh (fixtures/init/gh-shim.sh: FAILS on any call
-# unless GH_SHIM_MODE=ok), curl (fixtures/init/curl-shim.sh: answers the gitea
-# whoami), and, per case, version-faking git/jq wrappers. FORGE_DRY_RUN=1 is set
-# on the gitea path so no forge write could be sent.
+# unless GH_SHIM_MODE=ok), curl (fixtures/init/curl-shim.sh: a small stateful
+# gitea / gitlab: whoami, label list and label create), and, per case,
+# version-faking git/jq wrappers. The GC60 cases set FORGE_DRY_RUN=1, under
+# which no forge write is sent; the forge-label cases run without it.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -64,6 +67,8 @@ expect() { if eval "$2"; then ok "$1"; else fail "$1 [$2]"; fi; }
 conf_val() { sed -n "s/^$1=//p" "$repo/.claude/delivery.conf"; }
 all_keys() { local k; for k in $keys; do grep -q "^$k=" "$repo/.claude/delivery.conf" || return 1; done; }
 gh_calls() { wc -l < "$repo/.shim/gh.log" | tr -d ' '; }
+posts() { grep -c '^POST ' "$repo/.shim/curl.log" || true; }
+label_names() { jq -c 'map(.name)' "$repo/.shim/labels.json"; }
 
 GITEA=(GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1)
 
@@ -82,7 +87,9 @@ expect "GC60: no token in the checked-in conf" '! grep -q s3cr3t-tok "$repo/.cla
 expect "GC60: printed advice has no --enable-merge-commit=false" '! grep -qF -- "--enable-merge-commit=false" "$tmp/out"'
 expect "GC60: advice keeps merge commits enabled (gitea)" 'grep -qF "Create merge commit" "$tmp/out" && grep -qF "Keep merge commits ENABLED" "$tmp/out"'
 expect "GC60: forge auth checked via forge.sh whoami" 'grep -qxF "GET https://gitea.example.com/api/v1/user" "$repo/.shim/curl.log" && grep -qF "authenticated as gitea-bot" "$tmp/out"'
-expect "GC60: labels skipped on the local backend" 'grep -qF "labels: skipped" "$tmp/out"'
+expect "GC60: graph labels skipped on the local backend" 'grep -qF "graph labels: skipped" "$tmp/out"'
+expect "GC60: FORGE_DRY_RUN: forge labels looked up, no write sent" \
+  'grep -q "^GET https://gitea.example.com/api/v1/repos/example/repo/labels?" "$repo/.shim/curl.log" && [ "$(posts)" = 0 ] && grep -qF "label: agent-authored (not sent: FORGE_DRY_RUN)" "$tmp/out"'
 
 # --- idempotent re-run ---------------------------------------------------------
 cp "$st/store.json" "$tmp/store.before"; cp "$repo/.claude/delivery.conf" "$tmp/conf.before"
@@ -135,6 +142,38 @@ newrepo notoken git@gitea.example.com:example/repo.git
 run GRAPH_BACKEND=local FORGE=gitea --
 expect "FORGE=gitea without GITEA_TOKEN: exits 1, nothing written" '[ "$rc" = 1 ] && grep -qF "GITEA_TOKEN" "$tmp/out" && [ ! -e "$repo/.claude/delivery.conf" ]'
 
+# --- forge PR labels: local backend + gitea -------------------------------------
+# The first PR needs `agent-authored` on the forge (pr-create never creates a
+# label), whatever the graph backend. The shim's org-label route answers 403,
+# as Gitea does for a repo-scoped token: init must not trip on it.
+newrepo lbl-gitea git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok --
+L=https://gitea.example.com/api/v1/repos/example/repo/labels
+expect "local+gitea: exits 0, zero gh calls" '[ "$rc" = 0 ] && [ "$(gh_calls)" = 0 ]'
+expect "local+gitea: creates agent-authored and needs-human on the forge (2 POSTs to the repo labels)" \
+  '[ "$(label_names)" = "[\"agent-authored\",\"needs-human\"]" ] && [ "$(posts)" = 2 ] && [ "$(grep -cxF "POST $L" "$repo/.shim/curl.log")" = 2 ]'
+expect "local+gitea: labels carry the taxonomy's color and description" \
+  '[ "$(jq -c ".[0] | [.color, .description]" "$repo/.shim/labels.json")" = "[\"#EDEDED\",\"Produced by an agent\"]" ] && [ "$(jq -r ".[1].color" "$repo/.shim/labels.json")" = "#B60205" ]'
+expect "local+gitea: reports each label created; graph labels still skipped" \
+  'grep -qF "label: agent-authored (created)" "$tmp/out" && grep -qF "label: needs-human (created)" "$tmp/out" && grep -qF "graph labels: skipped" "$tmp/out"'
+expect "local+gitea: the org-label fallback's 403 is not an error" 'grep -q "^GET https://gitea.example.com/api/v1/orgs/example/labels" "$repo/.shim/curl.log"'
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok --
+expect "local+gitea re-run: exits 0 and creates nothing (still 2 POSTs, 2 labels)" \
+  '[ "$rc" = 0 ] && [ "$(posts)" = 2 ] && [ "$(label_names)" = "[\"agent-authored\",\"needs-human\"]" ] && grep -qF "label: agent-authored (exists)" "$tmp/out" && grep -qF "label: needs-human (exists)" "$tmp/out"'
+
+# --- forge PR labels: local backend + gitlab ------------------------------------
+newrepo lbl-gitlab git@gitlab.example.com:example/repo.git
+run GITLAB_TOKEN=s3cr3t-tok --
+L=https://gitlab.example.com/api/v4/projects/example%2Frepo/labels
+expect "local+gitlab: seams detected (local/gitlab), auth via whoami, exits 0, zero gh calls" \
+  '[ "$rc" = 0 ] && [ "$(conf_val GRAPH_BACKEND)" = local ] && [ "$(conf_val FORGE)" = gitlab ] && grep -qF "authenticated as gitlab-bot" "$tmp/out" && [ "$(gh_calls)" = 0 ]'
+expect "local+gitlab: creates agent-authored and needs-human on the forge (2 POSTs to the project labels)" \
+  '[ "$(label_names)" = "[\"agent-authored\",\"needs-human\"]" ] && [ "$(posts)" = 2 ] && [ "$(grep -cxF "POST $L" "$repo/.shim/curl.log")" = 2 ] && [ "$(jq -r ".[0].color" "$repo/.shim/labels.json")" = "#EDEDED" ]'
+expect "local+gitlab: no token in the checked-in conf" '! grep -q s3cr3t-tok "$repo/.claude/delivery.conf"'
+run GITLAB_TOKEN=s3cr3t-tok --
+expect "local+gitlab re-run: exits 0 and creates nothing (still 2 POSTs, 2 labels)" \
+  '[ "$rc" = 0 ] && [ "$(posts)" = 2 ] && [ "$(label_names)" = "[\"agent-authored\",\"needs-human\"]" ] && grep -qF "label: needs-human (exists)" "$tmp/out"'
+
 # --- github backend + github forge ----------------------------------------------
 newrepo github https://github.com/example/repo.git
 run GH_SHIM_MODE=ok --  extra
@@ -142,6 +181,35 @@ expect "github: exits 0" '[ "$rc" = 0 ]'
 expect "github: seams detected from origin (github/github) and scaffolded" \
   'grep -qF "detected from origin (github.com)" "$tmp/out" && [ "$(conf_val GRAPH_BACKEND)" = github ] && [ "$(conf_val FORGE)" = github ]'
 expect "github: creates the promote label" 'grep -q "^label create promote " "$repo/.shim/gh.log"'
+expect "github: forge PR labels ensured through the forge seam, before the taxonomy" \
+  'grep -qxF "label create --color EDEDED --description Produced by an agent -- agent-authored" "$repo/.shim/gh.log" && grep -qxF "label create --color B60205 --description Escalated: a human must intervene -- needs-human" "$repo/.shim/gh.log" && [ "$(grep -n "^label create --color" "$repo/.shim/gh.log" | tail -n 1 | cut -d: -f1)" -lt "$(grep -n "^label create task " "$repo/.shim/gh.log" | cut -d: -f1)" ]'
+# The github graph backend's taxonomy, call for call (name, color, description, --force).
+cat > "$tmp/taxonomy.want" <<'EOF'
+label create task --color 1D76DB --description A unit of claimable work --force
+label create epic --color 3E4B9E --description Tracker for a group of tasks; never claimable --force
+label create promote --color 0B6E99 --description Promotion node: merges a plan's target branch onward; never claimable --force
+label create status:blocked --color D93F0B --description Has unmet Depends-on issues --force
+label create status:ready --color 0E8A16 --description Claimable now --force
+label create status:claimed --color FBCA04 --description Someone is working on it --force
+label create status:in-review --color C5DEF5 --description PR open, awaiting review --force
+label create status:changes-requested --color E99695 --description Reviewer requested changes --force
+label create status:approved --color 2EA44F --description Reviewed and ready for human merge --force
+label create needs-human --color B60205 --description Escalated: a human must intervene --force
+label create claim:agent --color BFD4F2 --description Claimed by an agent (absence + assignee = human claim) --force
+label create agent-authored --color EDEDED --description Produced by an agent --force
+label create human-authored --color EDEDED --description Produced by a human --force
+label create size:S --color C2E0C6 --description Small: single-sitting change --force
+label create size:M --color FEF2C0 --description Medium: max claimable size --force
+label create size:L --color F9D0C4 --description Too big to claim - decompose further --force
+label create module:infra --color 5319E7 --description Owning module: infra --force
+label create module:docs --color 5319E7 --description Owning module: docs --force
+label create module:extra --color 5319E7 --description Owning module: extra --force
+EOF
+grep -- ' --force$' "$repo/.shim/gh.log" > "$tmp/taxonomy.got" || true
+expect "github: the graph label taxonomy is unchanged (every gh label create --force, in order)" 'cmp -s "$tmp/taxonomy.want" "$tmp/taxonomy.got"'
+run GH_SHIM_MODE=ok --  extra
+expect "github re-run: exits 0; the forge seam creates nothing more (both labels exist)" \
+  '[ "$rc" = 0 ] && [ "$(grep -c "^label create --color" "$repo/.shim/gh.log")" = 2 ] && grep -qF "label: agent-authored (exists)" "$tmp/out"'
 expect "github: creates the task/status/module labels (incl. CLI arg module)" \
   'grep -q "^label create task " "$repo/.shim/gh.log" && grep -q "^label create status:ready " "$repo/.shim/gh.log" && grep -q "^label create module:extra " "$repo/.shim/gh.log"'
 expect "github: forge auth via forge.sh whoami (gh api user)" 'grep -qxF "api user" "$repo/.shim/gh.log" && grep -qF "authenticated as gh-bot" "$tmp/out"'
@@ -156,8 +224,12 @@ expect "github backend on gh 2.93: exits 1 naming gh >= 2.94, nothing written" \
 
 newrepo localgh https://github.com/example/repo.git
 run GH_SHIM_MODE=ok GH_SHIM_VERSION=2.80.0 GRAPH_BACKEND=local --
-expect "local backend + github forge on gh 2.80: exits 0 (gh >= 2.94 not needed), no labels" \
-  '[ "$rc" = 0 ] && ! grep -q "^label create" "$repo/.shim/gh.log" && grep -qxF "api user" "$repo/.shim/gh.log" && [ -f "$repo/.git/delivery/store.json" ]'
+expect "local backend + github forge on gh 2.80: exits 0 (gh >= 2.94 not needed), no graph labels" \
+  '[ "$rc" = 0 ] && ! grep -q -- " --force$" "$repo/.shim/gh.log" && grep -qxF "api user" "$repo/.shim/gh.log" && [ -f "$repo/.git/delivery/store.json" ]'
+expect "local+github: the two forge PR labels are created through the forge seam, nothing else" \
+  '[ "$(grep -c "^label create" "$repo/.shim/gh.log")" = 2 ] && grep -q "^label create .* -- agent-authored$" "$repo/.shim/gh.log" && grep -q "^label create .* -- needs-human$" "$repo/.shim/gh.log"'
+run GH_SHIM_MODE=ok GH_SHIM_VERSION=2.80.0 GRAPH_BACKEND=local --
+expect "local+github re-run: exits 0 and creates nothing" '[ "$rc" = 0 ] && [ "$(grep -c "^label create" "$repo/.shim/gh.log")" = 2 ]'
 
 # --- detection: a gitea host defaults to the local backend ----------------------
 newrepo detect https://gitea.example.com/example/repo.git

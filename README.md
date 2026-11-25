@@ -94,7 +94,7 @@ Ten skills, namespaced `/delivery-loop:*`:
 
 | Skill | Role |
 |---|---|
-| `init` | One-time per-repo bootstrap: pick the graph backend and forge, create/connect the remote if needed, scaffold `.claude/delivery.conf`, seed the gate + styleguides stub, gitignore `.worktrees/`, create the labels (github) or the local store, check forge auth. |
+| `init` | One-time per-repo bootstrap: pick the graph backend and forge, create/connect the remote if needed, scaffold `.claude/delivery.conf`, seed the gate + styleguides stub, gitignore `.worktrees/`, create the labels (github) or the local store, check forge auth, create the PR labels on the forge. |
 | `author-styleguides` | Draft the repo's styleguides — the conventions agents implement and review against — from your stack and existing code. You ratify before anything lands; re-runnable as stacks grow. |
 | `author-spec` | Turn a subsystem into a merged, decompose-ready sub-spec — pin → ground → draft → adversarial docs-review → hand to `decompose`. Upstream of the backlog. |
 | `decompose` | Specs → a plan file of epics and tasks, linted and rendered as a Mermaid graph (dry-run by default); `--create` after approval commits it and applies it to the graph backend. |
@@ -164,7 +164,8 @@ backend to `github` on GitHub, `local` elsewhere — override with
 `GRAPH_BACKEND=… FORGE=…` in the environment), scaffolds `.claude/delivery.conf`,
 gitignores `.worktrees/`, **seeds `scripts/check.sh` from your detected
 tooling**, and creates the label taxonomy (github backend) or the local store
-(local backend). (No remote yet? It scaffolds everything local, then tells you
+(local backend), plus, on any forge, the two PR labels the loop relies on
+(`agent-authored`, `needs-human`). (No remote yet? It scaffolds everything local, then tells you
 exactly how to create or connect one and finishes on re-run.) Then **review `scripts/check.sh`**
 — it's your gate — and adjust it so it runs your repo's real checks. (If init
 found no tooling, the seeded gate fails on purpose until you fill it in.)

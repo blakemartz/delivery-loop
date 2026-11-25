@@ -493,6 +493,29 @@ run -- pr-set-base 201 main
 expect "origin ssh:// with a port -> https://host, ssh port dropped" '[ "$(log_count "PUT $M/201 ")" = 2 ]'
 git -C "$tmp" remote set-url origin git@gitlab.example.com:example/sub/repo.git
 
+# --- label-ensure: create a missing project label, leave an existing one -------
+reset
+run -- label-ensure agent-authored EDEDED "Produced by an agent"
+expect "label-ensure: a project label that exists -> {created:false}, no POST" \
+  '[ "$rc" = 0 ] && jq_true ".name == \"agent-authored\" and .created == false" && [ "$(log_count POST)" = 0 ]'
+reset
+run -- label-ensure task 1D76DB "x"
+expect "label-ensure: an ancestor-group label counts as existing -> no POST" \
+  '[ "$rc" = 0 ] && jq_true ".created == false" && log_has "GET $R/labels?include_ancestor_groups=true&" && [ "$(log_count POST)" = 0 ]'
+reset
+run -- label-ensure needs-human B60205 "Escalated: a human must intervene"
+expect "label-ensure: a missing label -> one POST …/labels {name, color #rrggbb, description}, {created:true}" \
+  '[ "$rc" = 0 ] && jq_true ".name == \"needs-human\" and .created == true" && log_line "POST $R/labels token=$TOKEN" && [ "$(log_count POST)" = 1 ] && [ "$(jq -c . "$tmp/state/POST.labels.json")" = "{\"name\":\"needs-human\",\"color\":\"#B60205\",\"description\":\"Escalated: a human must intervene\"}" ]'
+reset
+run FORGE_DRY_RUN=1 -- label-ensure needs-human B60205 "d"
+expect "FORGE_DRY_RUN: label-ensure prints the POST instead of sending it" \
+  '[ "$rc" = 0 ] && [ "$(sed -n 1p <<<"$out")" = "POST /api/v4/projects/$ENC/labels" ] && [ "$(sed -n 2p <<<"$out" | jq -r .name)" = needs-human ] && [ "$(log_count POST)" = 0 ]'
+reset
+run -- label-ensure needs-human B6020 "d"
+expect "label-ensure: a color that is not 6 hex digits -> usage exit 2, no request" '[ "$rc" = 2 ] && [ ! -s "$tmp/state/log" ]'
+run -- label-ensure "a,b" B60205 "d"
+expect "label-ensure: a name with a comma -> exit 1, no request" '[ "$rc" = 1 ] && [ ! -s "$tmp/state/log" ]'
+
 # --- GC59 (forge.sh part): the config check runs before any I/O ---------------
 reset
 run GITLAB_TOKEN= -- pr-view 201

@@ -61,11 +61,18 @@
 #     labelled atomically. The create silently drops an id it cannot find
 #     (src: GetLabelsInRepoByIDs, no count check), so names are resolved first,
 #     by exact name, over GET /repos/{o}/{r}/labels and, only for names still
-#     unmatched, GET /orgs/{owner}/labels (a 404 there = a user owner, no org
-#     labels); a repo label wins a name clash. An unknown name exits 1
-#     before anything is sent, and nothing is ever created. Each --label is
-#     exactly one label: a name holding a newline or CR is refused before any
-#     request, and a repeated name is sent once.
+#     unmatched, GET /orgs/{owner}/labels; a repo label wins a name clash. The
+#     org lookup is a fallback, so a 404 there (a user owner) or a 403 (a
+#     token without `read:organization`, which Gitea checks before it looks
+#     the owner up, so a user owner answers 403 too) means "no org labels",
+#     never an error; a 403 on the repo labels still fails. An unknown name
+#     exits 1 naming it before anything is sent, and nothing is ever created.
+#     Each --label is exactly one label: a name holding a newline or CR is
+#     refused before any request, and a repeated name is sent once.
+#   - `label-ensure` looks the name up exactly as `pr-create --label` does
+#     (repo labels, then the owner org's): found either way, it creates
+#     nothing. Else it POSTs /repos/{o}/{r}/labels `{name, color: "#rrggbb",
+#     description}`. Under FORGE_DRY_RUN the POST is printed, not sent.
 #   - verdicts and merges pin the head SHA: a pre-read refuses a stale --sha
 #     before any write, the review carries `commit_id` and the merge
 #     `head_commit_id` (409 when the head moved).
@@ -215,7 +222,7 @@ limit_exit() {
   exit 3
 }
 
-# paged <path[?query]> <out-file> [since] [items] [missing-ok]: GET every page
+# paged <path[?query]> <out-file> [since] [items] [empty-codes]: GET every page
 # into one JSON array. `items` (a jq path, default `.`) selects each page's
 # array, for an endpoint that wraps it in an object. The next page is, in
 # order: the `Link: rel="next"` target; else page+1 while the items so far are
@@ -223,16 +230,21 @@ limit_exit() {
 # page+1 while the page was full (length == limit). An empty page ends paging.
 # With `since`, stop after the first page holding a PR updated before it.
 # Whichever way paging ends, a result reaching LIST_LIMIT exits 3 (checked
-# before every further page, too). With `missing-ok`, a 404 on page 1 is an
-# empty list instead of an error.
+# before every further page, too). `empty-codes` is a space-separated list of
+# HTTP codes (e.g. "404", "403 404") that, on page 1, mean an empty list
+# instead of an error; $paged_empty_code then holds the code that did (else "").
+paged_empty_code=""
 paged() {
-  local path="$1" out="$2" since="${3:-}" items="${4:-.}" missing_ok="${5:-}" page=1 next n len total sep='?'
+  local path="$1" out="$2" since="${3:-}" items="${4:-.}" empty_codes="${5:-}" page=1 next n len total sep='?'
   case "$path" in *\?*) sep='&' ;; esac
   page_size
   echo '[]' > "$out"
+  paged_empty_code=""
   while :; do
     api GET "$path${sep}limit=$PAGE&page=$page"
-    if [ "$code" = 404 ] && [ "$page" = 1 ] && [ -n "$missing_ok" ]; then return 0; fi
+    if [ "$page" = 1 ]; then
+      case " $empty_codes " in *" $code "*) paged_empty_code="$code"; return 0 ;; esac
+    fi
     ok2xx || die_http "GET $API_PATH$path"
     jq -e "$items | type == \"array\"" "$tmp/resp" >/dev/null 2>&1 \
       || die "GET $API_PATH$path: expected a JSON array at '$items'"
@@ -299,7 +311,7 @@ hydrate() {
   if [ "$(jq -r .state "$f")" = open ]; then
     paged "$RP/commits/$sha/status" "$tmp/h-statuses.json" "" '.statuses // []'
   else
-    paged "$RP/commits/$sha/status" "$tmp/h-statuses.json" "" '.statuses // []' missing-ok
+    paged "$RP/commits/$sha/status" "$tmp/h-statuses.json" "" '.statuses // []' 404
   fi
   api GET "$RP/issues/$n/comments"
   ok2xx || die_http "GET comments of pull #$n"
@@ -346,21 +358,37 @@ check_label_names() {
   done
 }
 
+# find_labels <name>…: load the labels this repo can use into $tmp/labels.json
+# (repo labels first, then, only if a name is still unmatched, the owner org's)
+# and the wanted names into $tmp/want.json. The org lookup is a fallback: a 404
+# (the owner is a user) or a 403 (the token cannot read organizations; Gitea
+# answers that before looking the owner up) means no org labels, and
+# $org_unreadable then holds the 403. A failure on the repo labels is fatal.
+org_unreadable=""
+find_labels() {
+  local org
+  jq -n '$ARGS.positional | unique' --args -- "$@" > "$tmp/want.json"   # argv kept exactly
+  paged "$RP/labels" "$tmp/labels.json"
+  org_unreadable=""
+  if [ -n "$(missing_labels)" ]; then
+    org=$(jq -rn --arg s "${FORGE_REPO%%/*}" '$s | @uri')
+    paged "/orgs/$org/labels" "$tmp/org-labels.json" "" . "403 404"
+    [ "$paged_empty_code" != 403 ] || org_unreadable=403
+    jq -s '.[0] + .[1]' "$tmp/labels.json" "$tmp/org-labels.json" > "$tmp/labels.n" && mv "$tmp/labels.n" "$tmp/labels.json"
+  fi
+}
+
 # resolve_labels <out-file> <name>…: write the ids of the named labels (repo
 # labels first, then the owner org's) as a JSON array. An unknown name exits 1
 # before anything is sent; nothing is created.
 resolve_labels() {
-  local out="$1" org
+  local out="$1" note=""
   shift
-  jq -n '$ARGS.positional | unique' --args -- "$@" > "$tmp/want.json"   # argv kept exactly
-  paged "$RP/labels" "$tmp/labels.json"
-  if [ -n "$(missing_labels)" ]; then
-    org=$(jq -rn --arg s "${FORGE_REPO%%/*}" '$s | @uri')
-    paged "/orgs/$org/labels" "$tmp/org-labels.json" "" . missing-ok
-    jq -s '.[0] + .[1]' "$tmp/labels.json" "$tmp/org-labels.json" > "$tmp/labels.n" && mv "$tmp/labels.n" "$tmp/labels.json"
-  fi
+  find_labels "$@"
+  [ -z "$org_unreadable" ] \
+    || note=" (org labels of '${FORGE_REPO%%/*}' were not readable, HTTP 403: only repo labels were searched)"
   [ -z "$(missing_labels)" ] \
-    || die "unknown label(s) on $FORGE_REPO: $(missing_labels); nothing created (pr-create never creates labels)"
+    || die "unknown label(s) on $FORGE_REPO: $(missing_labels); nothing created (pr-create never creates labels)$note"
   jq -c --slurpfile have "$tmp/labels.json" \
      'map(. as $w | first($have[0][] | select(.name == $w) | .id))' "$tmp/want.json" > "$out"
 }
@@ -369,6 +397,29 @@ resolve_labels() {
 missing_labels() {
   jq -r --slurpfile have "$tmp/labels.json" \
      '($have[0] | map(.name)) as $h | map(select(. as $w | $h | index([$w]) | not)) | join(", ")' "$tmp/want.json"
+}
+
+# need_color <color> <usage>: <color> is exactly 6 hex digits (no `#`), else usage.
+need_color() {
+  case "$1" in
+    [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) : ;;
+    *) usage "$2" ;;
+  esac
+}
+
+op_label_ensure() {
+  local u="label-ensure <name> <color: 6 hex digits, no #> <description>"
+  [ $# -eq 3 ] && [ -n "$1" ] || usage "$u"
+  need_color "$2" "$u"
+  check_label_names "$1"
+  find_labels "$1"
+  if [ -n "$(missing_labels)" ]; then
+    api POST "$RP/labels" "$(jq -cn --arg n "$1" --arg c "$2" --arg d "$3" '{name: $n, color: "#\($c)", description: $d}')"
+    ok2xx || die_http "POST label '$1'"
+    jq -cn --arg n "$1" '{name: $n, created: true}'
+  else
+    jq -cn --arg n "$1" '{name: $n, created: false}'
+  fi
 }
 
 op_pr_create() {
@@ -604,5 +655,6 @@ case "$op" in
   pr-files)    op_pr_files "$@" ;;
   pr-diff)     op_pr_diff "$@" ;;
   ci-failures) op_ci_failures "$@" ;;
+  label-ensure) op_label_ensure "$@" ;;
   *) usage "forge-gitea.sh <op> [args] (see docs/delivery_graph_spec.md §7.1)" ;;
 esac
