@@ -845,7 +845,7 @@ not in the docs.
 | `number` | `number` | `iid` (**never** the global `id`) | `number` |
 | `state` | `OPEN`/`MERGED`/`CLOSED` | `opened`→open, `merged`→merged, `closed`/`locked`→closed | `merged==true`→merged; else `state` `open`/`closed` |
 | `head`/`base`/`head_sha` | `headRefName`/`baseRefName`/`headRefOid` | `source_branch`/`target_branch`/`sha` | `head.ref`/`base.ref`/`head.sha` |
-| `mergeable` | `mergeStateStatus` CLEAN→clean, DIRTY→conflicting, BLOCKED/UNSTABLE/BEHIND→blocked, else unknown | `detailed_merge_status`: `mergeable`→clean; `conflict`/`need_rebase`→conflicting; `unchecked`/`checking`/`preparing`/`approvals_syncing`/`ci_still_running`→unknown (re-poll); everything else→blocked | `mergeable` field: `true`→clean, `false`→conflicting, absent/null→unknown. Separately, a 405 "try again later" from the merge POST makes `pr-merge` re-poll, then exit 1. |
+| `mergeable` | `mergeStateStatus` CLEAN→clean, DIRTY→conflicting, BLOCKED/UNSTABLE/BEHIND→blocked, else unknown | `detailed_merge_status`: `mergeable`→clean; `conflict`/`need_rebase`→conflicting; `unchecked`/`checking`/`preparing`/`approvals_syncing`/`ci_still_running`→unknown (re-poll); everything else→blocked | `mergeable` field: `true`→clean; `false` on every read of the bounded re-poll→conflicting (it also reads `false` while the conflict check runs); absent/null, or `false` not confirmed→unknown. Separately, a 405 "try again later" from the merge POST makes `pr-merge` re-poll, then exit 1. |
 | `checks` | `statusCheckRollup` (every conclusion SUCCESS/NEUTRAL/SKIPPED→success; any FAILURE/ERROR/CANCELLED/TIMED_OUT/ACTION_REQUIRED/STARTUP_FAILURE→failure; else pending; empty→none) | `head_pipeline.status` (present only on the single-MR GET, so `pr-list` hydrates it): `success`→success; `failed`/`canceled`/`canceling`→failure; null→none; else pending | `GET /commits/{sha}/status`: `total_count==0`→none; `success`→success; `error`/`failure`→failure; `pending`→pending; `warning`/`skipped`→success (one statement in the adapter header; Gitea Actions posts one status per job (src)) |
 | `pr-create` | `gh pr create` (`--label L` per label: resolved before the create, applied after it by a second `updatePullRequest`) | `POST /merge_requests` `source_branch,target_branch,title,description[,labels]` → `iid,web_url`; `labels` is comma-separated and **creates** unknown labels, so names are checked first against `GET /labels?include_ancestor_groups=true` | `POST /pulls` `head,base,title,body[,labels]` → `number,html_url`; `labels` is label **ids** (unknown ids are silently dropped (src)), resolved by name from `GET /repos/{o}/{r}/labels`, then `GET /orgs/{owner}/labels` |
 | `pr-list` / `pr-find` | `gh pr list --limit $LIST_LIMIT` / `--head` | `GET /merge_requests?state=opened&per_page=100`, following `x-next-page` until empty (`x-total` is omitted above 10k) / `&source_branch=` | `GET /pulls?state=open&limit=<max_response_items>&page=n`, following `Link rel=next` / `GET /pulls/{base}/{head}` (Forgejo also has a `head` filter) |
@@ -879,6 +879,14 @@ different verdict.
   be merged on.
 - **`unknown` is re-polled, never merged.** Re-poll up to 3 times with backoff, then
   report `unknown` (GC57).
+- **A gitea `mergeable: false` is confirmed before it is `conflicting`.** Gitea's
+  bool reads `false` for a few seconds while its conflict check re-runs (right
+  after the base or head moved), and the API does not say which. So an open PR
+  that does not read `true` shares the same bounded re-poll (3 re-reads, backoff
+  2 s, 4 s, 6 s: at most 12 s per PR): the first `true` is `clean`; `false` on all
+  4 reads is `conflicting`; anything else is `unknown`, never `clean`. A genuine
+  conflict is therefore still reported within that wait, and a transient `false`
+  no longer costs a rebase dispatch (§5 `tick-plan.jq` rule 3; GC76).
 - **Separate reviewer identity, optional.** Self-review rejection is the norm on
   every forge. If `GITLAB_REVIEW_TOKEN` / `GITEA_REVIEW_TOKEN` / `GH_REVIEW_TOKEN` is
   set in the environment, `pr-review` posts under it, which restores formal reviews.
@@ -1175,6 +1183,7 @@ the case assertions it owns.
 | GC33 | PR whose body only *mentions* `#12`; PR with `Delivery-Task: 12` | `task_id` null / `"12"`; reaper sees the second as #12's open PR and does not reclaim |
 | GC46 | 5 PRs, each carrying exactly one linkage form (trailer; `Closes #7`; `task/x--s` head; `task/7-s` head; none) plus one carrying both a trailer and `Closes` | `task_id` per §4.3 precedence; the trailer wins |
 | GC57 | forge reports mergeability as computing on 3 polls | `mergeable:"unknown"`; tick-plan emits no merge |
+| GC76 | gitea curl shim: an open PR reading `mergeable:false` then `true`; one reading `false` on every read; one reading null then `false` | `clean` after 1 re-read; `conflicting` after 3 re-reads (4 GETs, backoff 2/4/6 s); `unknown` (never `clean`) |
 | GC58 | `*_REVIEW_TOKEN` set | dry-run request carries the review token; `form:"formal"` |
 | GC63 | github `pr-merge` where the post-merge re-read shows `state:open` with auto-merge enabled (gh shim) | `gh pr merge --disable-auto` invoked; exit 1 |
 | GC67 | merged-PR feed with `--since T`: fixtures with PRs merged before and after T, plus a closed-unmerged PR (gitea) | only PRs merged at or after T; github shim called with `--search "merged:>=T"`; gitea stops paging once `updated_at < T` |
@@ -1357,7 +1366,7 @@ exception).
 | B2 graph-github-write | graph | M | B1 (read path), A5 (`reconcile.jq`), D1 (`forge.sh pr-list` + linkage), A4d #51 (`validate_node` and policy accept `external`) | github create/update/link/flag/claim/release/comment, `graph.sh transition`/`claim`/`reconcile --fix`; `task-queue.sh` and `claim-task.sh` become wrappers; the existing claim tests pass unchanged; `tests/graph-github-write-test.sh` passes GC33 (reaper), GC42 (issue closed), GC61, GC68, GC71; `applied_prs` also holds a merged PR that closed the issue through GitHub's closing keyword, from closed-by-PR evidence verified against gh and live issue data to survive a reopen (§4.1, §5 rule 3), and a test passes GC75 |
 | B3 graph-migrate | graph | S | B2 (`link`) | `graph.sh migrate`; `tests/graph-migrate-test.sh` passes GC48 |
 | D2 forge-gitlab | forge | M | D1 (contract, `forge.sh`) | `backends/forge-gitlab.sh`; `tests/forge-gitlab-test.sh` passes GC28 (gitlab), GC29, GC30, GC31, GC32, GC67 (gitlab), GC59 (`forge.sh` part) |
-| D3 forge-gitea | forge | M | D1 (contract, `forge.sh`) | `backends/forge-gitea.sh`; `tests/forge-gitea-test.sh` passes GC28 (gitea), GC29, GC30, GC32, GC67 (gitea) |
+| D3 forge-gitea | forge | M | D1 (contract, `forge.sh`) | `backends/forge-gitea.sh`; `tests/forge-gitea-test.sh` passes GC28 (gitea), GC29, GC30, GC32, GC67 (gitea), GC76 |
 | C1 local-store | graph | M | B1 (`graph.sh` dispatch) | `backends/graph-local.sh`: store, lock, journal, list/show/create/update/link/flag; `tests/graph-local-test.sh` passes GC22, GC23, GC27, GC66, GC44 (`pinged_at` derivation) |
 | C2 local-claim-reconcile | graph | M | C1 (store), A5 (`reconcile.jq`), A6 (`tick-plan.sh` for GC26), D1 (`forge.sh pr-list`) | local claim/release/comment/reconcile; `tests/graph-local-claim-test.sh` passes GC21, GC24 (event), GC25 (end to end); `tests/parity-test.sh` passes GC26 |
 | E1 plan-lint-render | plan | M | A4 (`lib/graph.jq` `cycles`) | `plan.sh lint`/`render` + `lib/plan-lint.jq`; `tests/plan-test.sh` passes GC34, GC37, the lint assertions of GC6, GC7, and GC59 (`plan.sh` part) |
