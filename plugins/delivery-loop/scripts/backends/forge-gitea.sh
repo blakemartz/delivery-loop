@@ -34,10 +34,16 @@
 #     the request stays on FORGE_URL, so the token never follows a link to
 #     another host. Reaching LIST_LIMIT exits 3 whichever way paging goes.
 #   - `mergeable` is a plain bool on Gitea: false covers conflicted, still
-#     checking, errored and WIP PRs (src: PullRequest.Mergeable). It maps to
-#     `conflicting` per §7.3, so a still-checking PR may be offered a rebase,
-#     never a merge. absent/null (older servers) is re-polled 3 times with
-#     backoff, then stays `unknown`. Only `true` is `clean`.
+#     checking, errored and WIP PRs (src: PullRequest.Mergeable), and the API
+#     has no field telling them apart. Right after the base or head moves it
+#     reads false for a few seconds while the conflict check re-runs, so one
+#     false is not a conflict. An open PR that does not read `true` is re-read
+#     up to 3 times with backoff (2 s, 4 s, 6 s: at most 12 s per PR), stopping
+#     at the first `true` (`clean`). It is `conflicting` only when all 4 reads
+#     were false; any other outcome (absent/null on an older server, or false
+#     and null mixed) is `unknown`. So a genuine conflict, and a WIP PR, costs
+#     the full 12 s on every read; a closed PR is never re-read. Only `true` is
+#     `clean`.
 #   - `checks` is rolled up in the adapter over every `statuses[].status` of
 #     GET /commits/{sha}/status, paged in full like any list (LIST_LIMIT exit 3
 #     included); `warning` and `skipped` count as success. That endpoint is
@@ -45,7 +51,8 @@
 #     so neither is trusted: Gitea Actions posts one status per job, and a failing
 #     job past page 1 must still read as failure.
 #   - `pr-list` hydrates each listed PR (combined status, issue comments,
-#     reviews); it re-reads a PR only while its mergeability is unknown.
+#     reviews); it re-reads a PR only while its mergeability is unsettled
+#     (above).
 #   - `pr-list --state merged` pages `state=closed&sort=recentupdate` and keeps
 #     `merged == true`. The swagger has no `since`, so with `--since T` paging
 #     stops at the first page holding a PR updated before T (merging updates
@@ -287,13 +294,22 @@ get_pr() {
   cp "$tmp/resp" "$2"
 }
 
-# repoll <file>: while the PR in <file> is open with mergeability unknown,
-# re-read it up to $POLLS times with backoff (it then stays `unknown`).
+# repoll <file>: while the PR in <file> is open and not `mergeable: true`,
+# re-read it up to $POLLS times with backoff. A `false` is a conflict only when
+# every read of that wait was false (Gitea reads false while its conflict check
+# runs); a false left unconfirmed is rewritten to null, so it reads `unknown`.
 repoll() {
-  local f="$1" i=0 n
+  local f="$1" i=0 n confirmed=1
   n=$(jq -r .number "$f")
-  while [ "$i" -lt "$POLLS" ] \
-        && [ "$(fjq -r 'include "forge-gitea"; gt_mergeable_computing' "$f")" = true ]; do
+  while [ "$(fjq -r 'include "forge-gitea"; gt_mergeable_unsettled' "$f")" = true ]; do
+    [ "$(jq -r '.mergeable == false' "$f")" = true ] || confirmed=0
+    if [ "$i" -ge "$POLLS" ]; then
+      if [ "$confirmed" = 0 ]; then
+        jq '.mergeable = null' "$f" > "$f.unconfirmed"
+        mv "$f.unconfirmed" "$f"
+      fi
+      break
+    fi
     i=$((i + 1))
     sleep $((i * 2))
     get_pr "$n" "$f"

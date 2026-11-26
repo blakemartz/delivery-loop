@@ -8,8 +8,8 @@
 #                            one PullRequest, `statuses` every CommitStatus of its
 #                            head (all pages), `comments`/`reviews` the issue
 #                            comments and PullReviews.
-#   gt_mergeable_computing — a PullRequest whose mergeability is still unknown
-#                            (open, `mergeable` absent/null), so a re-poll can help.
+#   gt_mergeable_unsettled — an open PullRequest whose `mergeable` is not `true`
+#                            (false, or absent/null), so a re-poll can change it.
 #   gt_checks              — [CommitStatus] (every page) → success|pending|failure|none.
 #   gt_reviews($comments)  — [PullReview] → [{author, verdict, body, at, commit}]:
 #                            every review, then every verdict-headed issue comment
@@ -39,14 +39,18 @@ def gt_state:
        // error("unknown gitea PR state \(.state | tojson)") end;
 
 # §7.3 mergeable: true → clean, false → conflicting, absent/null → unknown.
-# Only `true` is clean, so `unknown` is never mergeable.
+# Only `true` is clean, so `unknown` is never mergeable. The adapter's `repoll`
+# hands over an open PR's `false` only once it is confirmed (false on every read
+# of the bounded wait); an unconfirmed one arrives here as null.
 def gt_mergeable:
   if .mergeable == true then "clean"
   elif .mergeable == false then "conflicting"
   else "unknown" end;
 
-def gt_mergeable_computing:
-  .state == "open" and .merged != true and .mergeable == null;
+# Gitea reads `mergeable: false` while its conflict check is still running, and
+# an older server sends null: neither is settled on an open PR.
+def gt_mergeable_unsettled:
+  .state == "open" and .merged != true and .mergeable != true;
 
 # §7.3 checks, rolled up here over every `statuses[].status` of the head commit
 # (all pages of GET /commits/{sha}/status). The server's `state`/`total_count`

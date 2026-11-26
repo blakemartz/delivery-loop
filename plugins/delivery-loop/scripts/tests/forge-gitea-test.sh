@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for forge.sh + backends/forge-gitea.sh (docs/delivery_graph_spec.md §7,
-# §4.2–§4.3): golden cases GC28 (gitea), GC29, GC30, GC32 and GC67 (gitea), plus
+# §4.2–§4.3): golden cases GC28 (gitea), GC29, GC30, GC32, GC67 (gitea) and GC76, plus
 # FORGE_DRY_RUN request assertions (§7.2), origin derivation, and a smoke test of
 # every other §7.1 op.
 #
@@ -85,11 +85,34 @@ expect "GC28: checks from the head commit's status list, paged with limit/page" 
 expect "GC28: hydrates issue comments and paged reviews" 'log_line "GET $R/issues/101/comments token=$TOKEN" && log_line "GET $R/pulls/101/reviews?limit=2&page=1 token=$TOKEN"'
 expect "GC28: reviews page 2 followed via X-Total-Count (the route sends no Link)" 'log_line "GET $R/pulls/101/reviews?limit=2&page=2 token=$TOKEN"'
 expect "GC28: the token is never on curl's command line" '! grep -qF "$TOKEN" "$tmp/state/argv"'
-expect "GC28: mergeable null re-polled 3 times with backoff, then unknown (106)" '[ "$(log_count "GET $R/pulls/106 ")" = 4 ] && [ "$(log_count sleep)" = 3 ]'
+expect "GC28: mergeable null re-polled 3 times, then unknown (106)" '[ "$(log_count "GET $R/pulls/106 ")" = 4 ]'
+expect "GC28: only the unsettled open PRs (104 false, 106 null) are re-polled" '[ "$(log_count sleep)" = 6 ]'
+expect "GC28: a closed or merged PR is never re-polled (102, 103: one GET)" '[ "$(log_count "GET $R/pulls/102 ")" = 1 ] && [ "$(log_count "GET $R/pulls/103 ")" = 1 ]'
 expect "GC28: no re-poll for a settled PR (101: one GET)" '[ "$(log_count "GET $R/pulls/101 ")" = 1 ]'
 reset
 run -- pr-view 107
 expect "GC28: null then true on the re-poll -> clean" '[ "$rc" = 0 ] && jq_true ".mergeable == \"clean\"" && [ "$(log_count sleep)" = 1 ]'
+
+# --- GC76: a gitea `mergeable: false` is confirmed before it is a conflict ----
+# Gitea reads false while its conflict check re-runs (§7.3), so the adapter
+# re-reads: bounded to 3 re-reads with backoff 2 s, 4 s, 6 s (12 s per PR).
+reset
+run -- pr-view 109
+expect "GC76: false then true on the re-poll -> clean, after one re-read" \
+  '[ "$rc" = 0 ] && jq_true ".mergeable == \"clean\"" && [ "$(log_count "GET $R/pulls/109 ")" = 2 ] && [ "$(log_count sleep)" = 1 ]'
+reset
+run -- pr-view 104
+expect "GC76: false on every read -> conflicting" '[ "$rc" = 0 ] && jq_true ".mergeable == \"conflicting\""'
+expect "GC76: the wait is bounded: 4 GETs, backoff 2 s, 4 s, 6 s, no more" \
+  '[ "$(log_count "GET $R/pulls/104 ")" = 4 ] && [ "$(grep -F sleep "$tmp/state/log" | tr "\n" ",")" = "sleep 2,sleep 4,sleep 6," ]'
+reset
+run -- pr-view 110
+expect "GC76: null then false (false not seen on every read) -> unknown, never clean" \
+  '[ "$rc" = 0 ] && jq_true ".mergeable == \"unknown\"" && [ "$(log_count "GET $R/pulls/110 ")" = 4 ]'
+reset
+run -- pr-view 111
+expect "GC76: false on 3 reads, true on the last -> clean (a slow check is still not a conflict)" \
+  '[ "$rc" = 0 ] && jq_true ".mergeable == \"clean\"" && [ "$(log_count "GET $R/pulls/111 ")" = 4 ]'
 
 # GC28: the status list spans pages and the failing job is on page 2. Page 1's
 # own state is "success", so only a roll-up over every page reads it right.
@@ -162,10 +185,12 @@ expect "§4.3: Closes #N ignored off the github graph; legacy head task/16-… -
 reset
 run -- pr-list
 expect "GC32: two-page open list -> every PR from both pages" '[ "$rc" = 0 ] && [ "$(jq -c "map(.number)" <<<"$out")" = "[101,104,105]" ]'
+expect "GC76: pr-list confirms a listed false too (104: re-read 3 times, conflicting)" \
+  '[ "$(log_count "GET $R/pulls/104 ")" = 3 ] && jq_true "map(select(.number == 104))[0].mergeable == \"conflicting\""'
 expect "GC32: page size from GET /settings/api (max_response_items)" 'log_line "GET $B/settings/api token=$TOKEN"'
 expect "GC32: page 1 and page 2 requested with limit=max_response_items, stable sort=oldest" 'log_line "GET $R/pulls?state=open&sort=oldest&limit=2&page=1 token=$TOKEN" && log_line "GET $R/pulls?state=open&sort=oldest&limit=2&page=2 token=$TOKEN"'
 expect "GC32: no page past the last Link rel=next" '[ "$(log_count "pulls?state=open&sort=oldest&limit=2&page=3")" = 0 ]'
-expect "GC32: listed PRs hydrated without re-reading settled ones" '! grep -qE "^GET $R/pulls/[0-9]+ token=" "$tmp/state/log" && log_has "GET $R/commits/$(sha 105)/status"'
+expect "GC32: listed PRs hydrated without re-reading settled ones" '[ "$(log_count "GET $R/pulls/101 ")" = 0 ] && [ "$(log_count "GET $R/pulls/105 ")" = 0 ] && log_has "GET $R/commits/$(sha 105)/status"'
 expect "GC32: every listed PR passes validate_pr" 'jq -e -L "$here/../lib" "include \"pr\"; map(validate_pr) | length == 3" <<<"$out" >/dev/null'
 reset
 run LIST_LIMIT=3 -- pr-list
@@ -179,7 +204,7 @@ expect "GC32: the --since early stop still applies LIST_LIMIT (6 read >= 5 -> ex
 reset
 touch "$tmp/state/rate-limit-once"
 run -- pr-list
-expect "pr-list: a 429 is retried after a backoff" '[ "$rc" = 0 ] && [ "$(jq -c "map(.number)" <<<"$out")" = "[101,104,105]" ] && [ "$(log_count sleep)" = 1 ]'
+expect "pr-list: a 429 is retried after a backoff" '[ "$rc" = 0 ] && [ "$(jq -c "map(.number)" <<<"$out")" = "[101,104,105]" ] && [ "$(log_count "sleep 2")" = 2 ]'
 
 # --- GC67 (gitea): merged feed since T ----------------------------------------
 reset
