@@ -107,7 +107,8 @@ file `GATE_CMD` points at by default) from what it finds — preferring the
 repo's own declared commands. If it finds no tooling, the seeded gate *fails*
 until a human defines the checks (an undefined gate must never report green).
 On the local backend it creates the `STATE_DIR` store; on the github backend it
-creates the label taxonomy. The `init` skill surfaces the seed for human review
+creates the label taxonomy; on every forge it creates the PR labels
+`agent-authored` and `needs-human` (`forge.sh label-ensure`). The `init` skill surfaces the seed for human review
 and suggests a starter toolset when none is present.
 
 ## 3. Roles
@@ -521,7 +522,9 @@ merged), `checks` (`success` \| `pending` \| `failure` \| `none`), `task_id`
 approve|request-changes|comment --sha S --body-file F` · `pr-reviews <n>` ·
 `pr-comment <n> --body-file F` / `pr-comments <n>` · `pr-merge <n> --method
 squash|merge --sha S` · `pr-set-base <n> <branch>` · `pr-files <n>` / `pr-diff
-<n>` · `ci-failures <n>`. Exit codes: 0 ok · 1 failed / refused / invalid config
+<n>` · `ci-failures <n>` · `label-ensure <name> <color> <description>`
+(creates a missing repo label, leaves an existing one; `init` uses it for the PR
+labels `agent-authored` and `needs-human`). Exit codes: 0 ok · 1 failed / refused / invalid config
 · 2 usage · 3 a list reached `LIST_LIMIT` · 4 unsupported by this forge (e.g.
 `ci-failures` on gitea: the patcher then reproduces the failure by running
 `GATE_CMD` locally). The `forge.sh` header and each adapter header are the

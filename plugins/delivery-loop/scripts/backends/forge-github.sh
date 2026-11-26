@@ -47,6 +47,11 @@
 #     Each value is exactly one label: gh CSV-splits a --label value (pflag
 #     StringSlice), so a name holding ',' or '"' is refused, as is one holding a
 #     newline or CR, before gh runs. A repeated name is passed once.
+#   - `label-ensure` reads `gh label list --json name --limit $LIST_LIMIT` and
+#     matches the name exactly; a missing one is created with `gh label create`
+#     (never `--force`: an existing label is not edited). GitHub compares label
+#     names case-insensitively, so a label differing only in case makes the
+#     create fail: rename it, since the loop matches its labels exactly.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -144,6 +149,30 @@ check_label_names() {
       *$'\n'*|*$'\r'*) die "label names cannot contain a newline or CR: $(printf '%q' "$n"); nothing created" ;;
     esac
   done
+}
+
+# need_color <color> <usage>: <color> is exactly 6 hex digits (no `#`), else usage.
+need_color() {
+  case "$1" in
+    [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) : ;;
+    *) usage "$2" ;;
+  esac
+}
+
+op_label_ensure() {
+  local u="label-ensure <name> <color: 6 hex digits, no #> <description>"
+  [ $# -eq 3 ] && [ -n "$1" ] || usage "$u"
+  need_color "$2" "$u"
+  check_label_names "$1"
+  gh label list --json name --limit "$LIST_LIMIT" > "$tmp/labels.json" || die "gh label list failed"
+  check_limit "$tmp/labels.json" "gh label list"
+  if jq -e --arg n "$1" 'any(.[]; .name == $n)' "$tmp/labels.json" >/dev/null; then
+    jq -cn --arg n "$1" '{name: $n, created: false}'
+  else
+    gh label create --color "$2" --description "$3" -- "$1" >/dev/null \
+      || die "gh label create '$1' failed; nothing created"
+    jq -cn --arg n "$1" '{name: $n, created: true}'
+  fi
 }
 
 op_pr_create() {
@@ -374,5 +403,6 @@ case "$op" in
   pr-files)    op_pr_files "$@" ;;
   pr-diff)     op_pr_diff "$@" ;;
   ci-failures) op_ci_failures "$@" ;;
+  label-ensure) op_label_ensure "$@" ;;
   *) usage "forge-github.sh <op> [args] (see docs/delivery_graph_spec.md §7.1)" ;;
 esac

@@ -114,6 +114,8 @@ else
   case "$method $route" in
     "GET /user") respond 200 '{"id":7,"username":"shim-user","name":"Shim User","state":"active","web_url":"https://gitlab.example.com/shim-user"}' ;;
     "GET labels") page "$(cat "$SHIM_FX/labels.json")" ;;
+    "POST labels")
+      respond 201 "$(jq -c '{id: 777, name: .name, color: .color, description: .description, is_project_label: true}' <<<"$data")" ;;
     "GET merge_requests")
       st=$(qp state); src=$(urldecode "$(qp source_branch)"); ua=$(urldecode "$(qp updated_after)")
       page "$(jq -c --arg s "${st:-all}" --arg src "$src" --arg ua "$ua" --slurpfile mrs "$SHIM_FX/mrs.json" -L "$lib" -L "$lib/../lib" '

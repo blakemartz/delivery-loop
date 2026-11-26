@@ -8,7 +8,15 @@
 #
 # Ops (§7.1): whoami · pr-create · pr-view · pr-list · pr-find · pr-review ·
 # pr-reviews · pr-comment · pr-comments · pr-merge · pr-set-base · pr-files ·
-# pr-diff · ci-failures.
+# pr-diff · ci-failures · label-ensure.
+#
+# `label-ensure <name> <color> <description>` makes sure a repo-level label
+# exists, so `pr-create --label` (which never creates one) can apply it. <color>
+# is 6 hex digits, no `#`. A label the forge already offers this repo is left
+# as it is (its color and description are not touched) and prints
+# `{name, created: false}`; a missing one is created and prints
+# `{name, created: true}`. delivery-init.sh calls it for the PR labels the loop
+# relies on.
 #
 # Exit codes: 0 ok · 1 failed / refused / invalid config · 2 usage ·
 # 3 list reached LIST_LIMIT · 4 unsupported by this forge.
@@ -21,8 +29,8 @@ dl_config_check || exit 1
 
 case "${1:-}" in
   whoami|pr-create|pr-view|pr-list|pr-find|pr-review|pr-reviews|pr-comment|\
-  pr-comments|pr-merge|pr-set-base|pr-files|pr-diff|ci-failures) : ;;
-  *) echo "usage: forge.sh <op> [args]; ops: whoami pr-create pr-view pr-list pr-find pr-review pr-reviews pr-comment pr-comments pr-merge pr-set-base pr-files pr-diff ci-failures (docs/delivery_graph_spec.md §7.1)" >&2
+  pr-comments|pr-merge|pr-set-base|pr-files|pr-diff|ci-failures|label-ensure) : ;;
+  *) echo "usage: forge.sh <op> [args]; ops: whoami pr-create pr-view pr-list pr-find pr-review pr-reviews pr-comment pr-comments pr-merge pr-set-base pr-files pr-diff ci-failures label-ensure (docs/delivery_graph_spec.md §7.1)" >&2
      exit 2 ;;
 esac
 

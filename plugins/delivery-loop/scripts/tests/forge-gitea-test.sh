@@ -437,6 +437,69 @@ run -- pr-diff 101
 expect "origin ssh:// with a port -> https://host, ssh port dropped" 'log_has "GET $R/pulls/101.diff"'
 git -C "$tmp" remote set-url origin git@gitea.example.com:example/repo.git
 
+# --- resolve_labels: the org-label fallback answering 403 / 404 ----------------
+# A repo-scoped token gets 403 from GET /orgs/<owner>/labels (no
+# read:organization), for a user owner too: that is "no org labels", and the
+# error must name the missing label, not the 403.
+reset
+touch "$tmp/state/org-labels-403"
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label agent-authored --label no-such-label
+expect "pr-create --label: org fallback 403 -> exit 1 naming the unknown label, nothing sent" \
+  'log_has "GET $B/orgs/example/labels?" && [ "$rc" = 1 ] && grep -qF "unknown label(s) on example/repo: no-such-label;" <<<"$err" && [ "$(log_count POST)" = 0 ] && [ -z "$out" ]'
+expect "pr-create --label: … and says the org labels were not readable (HTTP 403)" 'grep -qF "not readable, HTTP 403" <<<"$err"'
+reset
+touch "$tmp/state/org-labels-403"
+run FORGE_URL=https://gitea.example.com FORGE_REPO=someone/repo -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label nope
+expect "pr-create --label: a user owner answering 403 -> unknown label exit 1, nothing sent" \
+  'log_has "GET $B/orgs/someone/labels?" && [ "$rc" = 1 ] && grep -qF "unknown label(s) on someone/repo: nope;" <<<"$err" && [ "$(log_count POST)" = 0 ]'
+reset
+touch "$tmp/state/org-labels-403"
+run FORGE_DRY_RUN=1 -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label agent-authored --label task
+expect "pr-create --label: every name on the repo -> no org lookup, so its 403 never matters" \
+  '[ "$rc" = 0 ] && [ "$(sed -n 2p <<<"$out" | jq -c .labels)" = "[12,13]" ] && [ "$(log_count "/orgs/")" = 0 ]'
+reset
+run FORGE_URL=https://gitea.example.com FORGE_REPO=someone/repo -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label nope
+expect "pr-create --label: org fallback 404 -> unknown label, no 403 note" \
+  '[ "$rc" = 1 ] && grep -qF "unknown label(s) on someone/repo: nope;" <<<"$err" && ! grep -qF "HTTP 403" <<<"$err"'
+reset
+touch "$tmp/state/repo-labels-403"
+run -- pr-create --head h --base b --title T --body-file "$tmp/body.md" --label agent-authored
+expect "pr-create --label: a 403 on the REPO labels still fails loudly (HTTP 403, not 'unknown label')" \
+  '[ "$rc" = 1 ] && grep -qF "HTTP 403" <<<"$err" && grep -qF "repos/example/repo/labels" <<<"$err" && ! grep -qF "unknown label" <<<"$err" && [ "$(log_count POST)" = 0 ] && [ "$(log_count "/orgs/")" = 0 ]'
+
+# --- label-ensure: create a missing repo label, leave an existing one ----------
+reset
+run -- label-ensure agent-authored EDEDED "Produced by an agent"
+expect "label-ensure: a repo label that exists -> {created:false}, no POST, no org lookup" \
+  '[ "$rc" = 0 ] && jq_true ".name == \"agent-authored\" and .created == false" && [ "$(log_count POST)" = 0 ] && [ "$(log_count "/orgs/")" = 0 ]'
+reset
+run -- label-ensure promote 0B6E99 "x"
+expect "label-ensure: an owner-org label counts as existing (pr-create resolves it) -> no POST" \
+  '[ "$rc" = 0 ] && jq_true ".created == false" && [ "$(log_count POST)" = 0 ]'
+reset
+run -- label-ensure needs-human B60205 "Escalated: a human must intervene"
+expect "label-ensure: a missing label -> one POST /labels {name, color #rrggbb, description}, {created:true}" \
+  '[ "$rc" = 0 ] && jq_true ".name == \"needs-human\" and .created == true" && log_line "POST $R/labels token=$TOKEN" && [ "$(log_count POST)" = 1 ] && body_true POST.labels ". == {name: \"needs-human\", color: \"#B60205\", description: \"Escalated: a human must intervene\"}"'
+reset
+touch "$tmp/state/org-labels-403"
+run -- label-ensure needs-human B60205 "d"
+expect "label-ensure: org fallback 403 -> still creates the repo label" '[ "$rc" = 0 ] && jq_true ".created == true" && [ "$(log_count POST)" = 1 ]'
+reset
+touch "$tmp/state/repo-labels-403"
+run -- label-ensure needs-human B60205 "d"
+expect "label-ensure: a 403 on the repo labels -> exit 1, nothing created" '[ "$rc" = 1 ] && grep -qF "HTTP 403" <<<"$err" && [ "$(log_count POST)" = 0 ] && [ -z "$out" ]'
+reset
+run FORGE_DRY_RUN=1 -- label-ensure needs-human B60205 "d"
+expect "FORGE_DRY_RUN: label-ensure prints the POST instead of sending it" \
+  '[ "$rc" = 0 ] && [ "$(sed -n 1p <<<"$out")" = "POST /api/v1/repos/example/repo/labels" ] && [ "$(sed -n 2p <<<"$out" | jq -r .name)" = needs-human ] && [ "$(log_count POST)" = 0 ]'
+reset
+run -- label-ensure needs-human "#B60205" "d"
+expect "label-ensure: a color that is not 6 hex digits -> usage exit 2, no request" '[ "$rc" = 2 ] && [ ! -s "$tmp/state/log" ]'
+run -- label-ensure needs-human B60205
+expect "label-ensure: a missing argument -> usage exit 2, no request" '[ "$rc" = 2 ] && [ ! -s "$tmp/state/log" ]'
+run -- label-ensure $'a\nb' B60205 "d"
+expect "label-ensure: a name with a newline -> exit 1, no request" '[ "$rc" = 1 ] && [ ! -s "$tmp/state/log" ]'
+
 # --- forge.sh runs the config check before any I/O ----------------------------
 reset
 run GITEA_TOKEN= -- pr-view 101

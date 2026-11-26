@@ -40,6 +40,10 @@
 #   merge-later        — POST merge gets 405 "Please try again later".
 #   merge-conflict     — POST merge gets 409 (head out of date).
 #   rate-limit-once    — the next request gets a 429 (the switch is consumed).
+#   org-labels-403     — GET /orgs/<owner>/labels gets Gitea's 403 for a token
+#                        without read:organization (sent for any owner, org or
+#                        user: the scope is checked before the owner is looked up).
+#   repo-labels-403    — GET labels (the repo's) gets a 403.
 set -euo pipefail
 
 : "${SHIM_FX:?}" "${SHIM_STATE:?}"
@@ -104,11 +108,19 @@ else
     "GET /user") respond 200 '{"id":2,"login":"shim-user","full_name":"","email":"shim-user@noreply.gitea.example.com"}' ;;
     "GET /settings/api")
       respond 200 '{"max_response_items":2,"default_paging_num":2,"default_git_trees_per_page":1000,"default_max_blob_size":10485760}' ;;
-    "GET labels") page "$(jq -c '.repo' "$SHIM_FX/labels.json")" link ;;
+    "GET labels")
+      if [ -f "$SHIM_STATE/repo-labels-403" ]; then
+        err 403 "token does not have at least one of required scope(s): [read:issue]"
+      else page "$(jq -c '.repo' "$SHIM_FX/labels.json")" link; fi ;;
+    "POST labels")
+      respond 201 "$(jq -c '{id: 77, name: .name, color: (.color | ltrimstr("#")), description: .description,
+                       exclusive: false, is_archived: false}' <<<"$data")" ;;
     GET\ /orgs/*/labels)
       o="${route#/orgs/}"; o="${o%/labels}"
       ls=$(jq -c --arg o "$o" '.orgs[$o] // empty' "$SHIM_FX/labels.json")
-      if [ -n "$ls" ]; then page "$ls" link; else err 404 "GetOrgByName"; fi ;;
+      if [ -f "$SHIM_STATE/org-labels-403" ]; then
+        err 403 "token does not have at least one of required scope(s): [read:organization]"
+      elif [ -n "$ls" ]; then page "$ls" link; else err 404 "GetOrgByName"; fi ;;
     "GET pulls")
       st=$(qp state)
       page "$(jq -c --arg s "${st:-open}" --slurpfile prs "$SHIM_FX/prs.json" \

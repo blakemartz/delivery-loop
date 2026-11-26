@@ -63,6 +63,10 @@
 #     with a comma is refused too (GitLab label titles cannot hold one), as is
 #     one with a newline or CR, so each --label is exactly one label; both
 #     refusals happen before any request. A repeated name is sent once.
+#   - `label-ensure` reads the same list (project and ancestor-group labels):
+#     a name found there is left alone; else it POSTs …/labels `{name, color:
+#     "#rrggbb", description}`, a project label. Under FORGE_DRY_RUN the POST is
+#     printed, not sent.
 #   - verdicts and merges pin the head SHA: a pre-read refuses a stale --sha
 #     before any write, the approval carries `sha` and the merge `sha` (409 when
 #     the head moved).
@@ -369,6 +373,29 @@ resolve_labels() {
   jq -r 'unique | join(",")' "$tmp/want.json" > "$out"
 }
 
+# need_color <color> <usage>: <color> is exactly 6 hex digits (no `#`), else usage.
+need_color() {
+  case "$1" in
+    [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) : ;;
+    *) usage "$2" ;;
+  esac
+}
+
+op_label_ensure() {
+  local u="label-ensure <name> <color: 6 hex digits, no #> <description>"
+  [ $# -eq 3 ] && [ -n "$1" ] || usage "$u"
+  need_color "$2" "$u"
+  check_label_names "$1"
+  paged "$P/labels?include_ancestor_groups=true" "$tmp/labels.json"
+  if jq -e --arg n "$1" 'any(.[]; .name == $n)' "$tmp/labels.json" >/dev/null; then
+    jq -cn --arg n "$1" '{name: $n, created: false}'
+  else
+    api POST "$P/labels" "$(jq -cn --arg n "$1" --arg c "$2" --arg d "$3" '{name: $n, color: "#\($c)", description: $d}')"
+    ok2xx || die_http "POST label '$1'"
+    jq -cn --arg n "$1" '{name: $n, created: true}'
+  fi
+}
+
 op_pr_create() {
   local u="pr-create --head H --base B --title T --body-file F [--draft] [--label L]…"
   local head="" base="" title="" body="" draft="" labels=""
@@ -620,5 +647,6 @@ case "$op" in
   pr-files)    op_pr_files "$@" ;;
   pr-diff)     op_pr_diff "$@" ;;
   ci-failures) op_ci_failures "$@" ;;
+  label-ensure) op_label_ensure "$@" ;;
   *) usage "forge-gitlab.sh <op> [args] (see docs/delivery_graph_spec.md §7.1)" ;;
 esac
