@@ -2,6 +2,7 @@
  "nodes": [{"id": "t-same", "status": "approved"},
            {"id": "t-comment", "status": "approved"},
            {"id": "t-stall", "status": "in-review"},
+           {"id": "t-revoked", "status": "approved"},
            {"id": "t-ok", "status": "approved"}],
  "prs": [{"number": 91, "task_id": "t-same", "reviewed_at_head": true, "verdict_at_head": "request-changes",
           "head_sha": "5a5e5a5000000000000000000000000000000000",
@@ -11,4 +12,6 @@
           "approved_head_sha": "c0c0c0c000000000000000000000000000000000"},
          {"number": 93, "task_id": "t-stall", "reviewed_at_head": true, "verdict_at_head": "request-changes",
           "head_sha": "57a1157000000000000000000000000000000000"},
-         {"number": 94, "task_id": "t-ok", "reviewed_at_head": true, "approved_at_head": true}]}
+         {"number": 94, "task_id": "t-ok", "reviewed_at_head": true, "approved_at_head": true},
+         {"number": 95, "task_id": "t-revoked", "reviewed_at_head": true, "verdict_at_head": null,
+          "head_sha": "d0d0d0d000000000000000000000000000000000", "approved_head_sha": null}]}

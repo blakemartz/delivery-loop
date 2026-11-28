@@ -38,9 +38,16 @@
 # request-changes or a comment (also after an approve at that same head, GC78),
 # is not approved. Such a PR is a `waiting` line; reconcile moves the node on:
 # rule 10 to changes-requested when that verdict is a request-changes (the
-# patch rule takes it), else rule 9 back to in-review, where rule 4 reviews a
-# head that has no verdict yet. tick-merge.sh re-applies this rule, so it
-# refuses such a PR too.
+# patch rule takes it), else rule 9 back to in-review. tick-merge.sh re-applies
+# this rule, so it refuses such a PR too.
+#
+# Review (rule 4, GC78): an in-review task's PR is reviewed unless a standing
+# approve or request-changes verdict names its current head (`verdict_at_head`).
+# So a head with no verdict, one whose latest verdict is a comment, and one
+# whose only verdict was dismissed or revoked are all reviewed (again): none
+# waits silently, none is escalated. A head with a standing approve or
+# request-changes is a `waiting` line until its node moves (the reviewer's
+# transition; reconcile rule 10 for a request-changes).
 #
 # Hardening (GC70): a merge needs the PR's base to equal the node's
 # target_branch, and a task gets at most one merge per tick (the lowest PR
@@ -105,11 +112,18 @@ def _pr_rule($n; $auto):
                 then "changes requested at \($iter): patch-task escalates (GC62)"
                 else "changes requested (\($iter))" end)}
     elif $n.status == "in-review" then
-      if .reviewed_at_head then
+      # Only a standing approve or request-changes at the head settles a review
+      # (GC78). Anything else is reviewed (again): a comment verdict decides
+      # nothing, and a dismissed or revoked verdict no longer stands.
+      if .verdict_at_head == "approve" or .verdict_at_head == "request-changes" then
         {wait: "\($ref) is reviewed at head \(.head_sha[0:7]): awaiting its verdict transition"}
       else
         {action: "review", pr: .number, id: $n.id,
-         reason: "in review, no verdict at head \(.head_sha[0:7])"}
+         reason: ("in review, "
+                  + (if .verdict_at_head == "comment" then "only a comment verdict"
+                     elif .reviewed_at_head then "no standing verdict"
+                     else "no verdict" end)
+                  + " at head \(.head_sha[0:7])")}
       end
     else empty end;
 

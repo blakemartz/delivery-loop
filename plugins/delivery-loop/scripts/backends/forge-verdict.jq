@@ -40,12 +40,16 @@
 #                                `approve` (§4.2 `approved_at_head`): a later
 #                                request-changes or comment verdict at $sha supersedes
 #                                an approve there.
-#   approved_head_sha($sha)    — the same list → the head the latest approve verdict
+#   approved_head_sha($sha)    — the same list → $sha itself when approved_at_head($sha)
+#                                (the current head wins over an approve dated later at
+#                                another head: a head that returned to an earlier
+#                                sha). Otherwise the head the latest approve verdict
 #                                names (its last `Reviewed-Head:` line, lower-cased;
-#                                $sha itself when it names $sha), or null when no approve verdict
-#                                names a head (§4.2 `approved_head_sha`). Superseded
-#                                approves count: this says which head was approved
-#                                last, not whether that approval stands.
+#                                $sha itself when it names $sha), or null when no
+#                                approve verdict names a head (§4.2
+#                                `approved_head_sha`). Superseded approves count
+#                                there: this says which head was approved last, not
+#                                whether that approval stands.
 #   with_verdict_heading($v)   — a body about to be posted as verdict $v → that body,
 #                                headed `## Adversarial review — verdict: <V>` when it
 #                                has no verdict heading; an error when its heading
@@ -112,10 +116,12 @@ def approved_at_head($sha): verdict_at_head($sha) == "approve";
 
 def approved_head_sha($sha):
   ($sha // "" | ascii_downcase) as $head
-  | [ .[] | select(.verdict == "approve" and (_reviewed_heads | length) > 0) ]
-  | max_by(_verdict_order)
-  | if . == null then null
-    else _reviewed_heads | if any(.[]; . == $head) then $sha else last end end;
+  | if approved_at_head($sha) then $sha
+    else [ .[] | select(.verdict == "approve" and (_reviewed_heads | length) > 0) ]
+         | max_by(_verdict_order)
+         | if . == null then null
+           else _reviewed_heads | if any(.[]; . == $head) then $sha else last end end
+    end;
 
 def _headed($verdict): verdict_heading + ($verdict | ascii_upcase | gsub("-"; "_")) + "\n\n" + .;
 

@@ -154,7 +154,10 @@ eq "GC77 tick 3: approved at the new head -> merged at the new head" \
 # head. #91 was approved and then got a request-changes at the same head, #92 an
 # approve and then a comment verdict there: neither is approved at its head, so
 # neither merges nor is rebased. #93 is the stall: a request-changes at the head
-# of an in-review node whose reviewer never made the transition.
+# of an in-review node whose reviewer never made the transition. #95's approve
+# was revoked (gitlab) or dismissed (github, gitea): the voided verdict still
+# carries the trailer (`reviewed_at_head` true), but no verdict stands at the
+# head (`verdict_at_head` null).
 eq "GC78 --auto-merge: approve-then-request-changes at one head is never proposed for merge" \
   '["merge 94"]' "$(acts gc78 '.flags.parallel = 3')"
 eq "GC78 nor rebased when it conflicts" '["merge 94"]' \
@@ -169,15 +172,45 @@ eq "GC78 without --auto-merge: one 'awaiting a human merge' line, for the PR app
 # Reconcile (rule 10, then rule 9), then the plan over the repaired board.
 recs78=$(jq -c -L "$lib" -L "$fx" 'include "expand"; include "reconcile";
   full_input | reconcile_plan | .records' "$fx/gc78.json")
-eq "GC78 reconcile: both request-changes heads go to changes-requested; the comment head back to in-review" \
-  '["t-same approved->changes-requested: PR #91 has a request-changes verdict at its head 5a5e5a5","t-stall in-review->changes-requested: PR #93 has a request-changes verdict at its head 57a1157","t-comment approved->in-review: PR #92 has no approve verdict at its current head c0c0c0c"]' \
+waits_for "GC78 the revoked approval is listed in waiting, never merged" gc78 \
+  "PR #95 (t-revoked) is approved, but no approve verdict stands at its head d0d0d0d: awaiting reconcile"
+eq "GC78 reconcile: both request-changes heads go to changes-requested; the comment head and the revoked head back to in-review" \
+  '["t-same approved->changes-requested: PR #91 has a request-changes verdict at its head 5a5e5a5","t-stall in-review->changes-requested: PR #93 has a request-changes verdict at its head 57a1157","t-comment approved->in-review: PR #92 has no approve verdict at its current head c0c0c0c","t-revoked approved->in-review: PR #95 has no approve verdict at its current head d0d0d0d"]' \
   "$(jq -c 'map("\(.id) \(.from)->\(.to): \(.reason)")' <<<"$recs78")"
-eq "GC78 the following plan emits patch for both, and still no merge of either" \
+# plan78 <plan filter> [input filter]: the plan over gc78 with those records applied.
+plan78() {
+  jq -c -L "$lib" -L "$fx" --argjson recs "$recs78" "include \"expand\"; include \"tick-plan\";
+    (\$recs | map({key: .id, value: .to}) | from_entries) as \$to
+    | .nodes |= map(.status = (\$to[.id] // .status)) | .flags.parallel = 4
+    | ${2:-.} | full_input | tick_plan | $1" "$fx/gc78.json"
+}
+eq "GC78 the following plan emits patch for both request-changes heads, and still no merge of either" \
   '["merge 94","patch 91","patch 93"]' \
-  "$(jq -c -L "$lib" -L "$fx" --argjson recs "$recs78" 'include "expand"; include "tick-plan";
+  "$(plan78 '[.actions[] | select(.action != "review") | "\(.action) \(.pr // .id)"]')"
+# No stall after rule 9 either: an in-review head with no standing approve or
+# request-changes verdict is reviewed again, whatever trailer it carries.
+eq "GC78 the following plan reviews the comment head and the revoked head again" \
+  '["review 92: in review, only a comment verdict at head c0c0c0c","review 95: in review, no standing verdict at head d0d0d0d"]' \
+  "$(plan78 '[.actions[] | select(.action == "review") | "\(.action) \(.pr): \(.reason)"]')"
+eq "GC78 neither waits for a verdict transition, and neither is escalated" '[]' \
+  "$(plan78 '[.waiting[] | select(test("#92|#95|t-comment|t-revoked"))]')"
+eq "GC78 a second reconcile pass plans nothing for them: the review is the tick's move" '[]' \
+  "$(jq -c -L "$lib" -L "$fx" --argjson recs "$recs78" 'include "expand"; include "reconcile";
        ($recs | map({key: .id, value: .to}) | from_entries) as $to
-       | .nodes |= map(.status = ($to[.id] // .status)) | .flags.parallel = 3
-       | full_input | tick_plan | [.actions[] | "\(.action) \(.pr // .id)"]' "$fx/gc78.json")"
+       | .nodes |= map(.status = ($to[.id] // .status))
+       | full_input | reconcile_plan | .records' "$fx/gc78.json")"
+# Controls: a standing approve or request-changes at an in-review head is not
+# reviewed twice; it waits for its node to move.
+eq "GC78 control: an in-review head with a standing approve waits for its transition, unreviewed" \
+  '[]|["PR #95 (t-revoked) is reviewed at head d0d0d0d: awaiting its verdict transition"]' \
+  "$(plan78 '[.actions[] | select(.pr == 95)]' '.prs[4] |= (.approved_at_head = true | .verdict_at_head = "approve")')|$(plan78 \
+       '[.waiting[] | select(test("#95"))]' '.prs[4] |= (.approved_at_head = true | .verdict_at_head = "approve")')"
+eq "GC78 control: an in-review head with a standing request-changes is not reviewed (reconcile rule 10 moves it)" \
+  '[]|["PR #95 (t-revoked) is reviewed at head d0d0d0d: awaiting its verdict transition"]' \
+  "$(plan78 '[.actions[] | select(.pr == 95)]' '.prs[4].verdict_at_head = "request-changes"')|$(plan78 \
+       '[.waiting[] | select(test("#95"))]' '.prs[4].verdict_at_head = "request-changes"')"
+eq "GC78 a needs-human node is still never reviewed" '[]' \
+  "$(plan78 '[.actions[] | select(.pr == 92)]' '.nodes[1].needs_human = true')"
 
 eq "GC18 same module, different target_branch -> both started" \
   '["start t-main","start t-rel"]' "$(acts gc18)"
@@ -186,7 +219,7 @@ eq "GC18 control: same module and target -> one start" '["start t-main"]' \
 eq "module lock: an in-flight PR on (main, m) blocks a start on (main, m) only" \
   '["start t-rel"]' \
   "$(acts gc18 '.nodes += [{id: "t-busy", module: "m", status: "in-review"}]
-                | .prs = [{number: 9, task_id: "t-busy", reviewed_at_head: true}]')"
+                | .prs = [{number: 9, task_id: "t-busy", reviewed_at_head: true, approved_at_head: true}]')"
 eq "module lock: no-module tasks are exempt" '["start t-main","start t-rel"]' \
   "$(acts gc18 '.nodes |= map(.module = null | .target_branch = "main")')"
 

@@ -63,7 +63,12 @@ def pr_errors:
         and .approved_at_head != (.verdict_at_head == "approve")
      then "`approved_at_head` must equal whether `verdict_at_head` is \"approve\"" else empty end),
     (if (.verdict_at_head // null) != null and .reviewed_at_head == false
-     then "`verdict_at_head` cannot be set while `reviewed_at_head` is false" else empty end)
+     then "`verdict_at_head` cannot be set while `reviewed_at_head` is false" else empty end),
+    # An approval standing at the head names that head (§4.2).
+    (if .approved_at_head == true and (.head_sha | type) == "string" and has("approved_head_sha")
+        and ((.approved_head_sha | type) != "string"
+             or (.approved_head_sha | ascii_downcase) != (.head_sha | ascii_downcase))
+     then "`approved_head_sha` must equal `head_sha` while `approved_at_head` is true" else empty end)
   ] end;
 
 def validate_pr:

@@ -56,10 +56,12 @@
 #      push, or the loop's own rebase action), else `PR #N has no approve
 #      verdict at its current head <sha7>` (an approval recorded with no
 #      verdict, or an approve there that a later comment verdict superseded
-#      or that was dismissed or revoked). The tick's review rule then
-#      re-reviews a head that has no verdict. With several such PRs the
-#      lowest number names the record. Only reconcile may make this move
-#      (transitions.jq).
+#      or that was dismissed or revoked). In each case the tick's review
+#      rule then reviews that head again: an in-review task with no standing
+#      approve or request-changes verdict at its PR's head is reviewed, never
+#      left waiting and never escalated (tick-plan.jq, GC78). With several
+#      such PRs the lowest number names the record. Only reconcile may make
+#      this move (transitions.jq).
 #   1. blocked -> ready when deps_done and not needs_human (GC4).
 #   2. ready -> blocked when not deps_done.
 #   5. agent claim on an open node, no open PR for the node, now - updated_at
@@ -212,8 +214,9 @@ def _rule10($open):
 
 # _rule9 — an approval covers one head. `approved_at_head` (§4.2) is false once
 # no approve verdict stands at the PR's head, so the approved node goes back to
-# in-review and tick-plan's review rule picks up a head with no verdict. The
-# head moved only when the latest approve verdict names another one.
+# in-review and tick-plan's review rule picks the head up: it reviews any
+# in-review head with no standing approve or request-changes verdict. The head
+# moved only when the latest approve verdict names another one.
 def _rule9($open):
   _offer_all(
     _subjects

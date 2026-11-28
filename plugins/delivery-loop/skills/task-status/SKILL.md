@@ -22,7 +22,7 @@ Every graph read or write goes through `graph.sh`, every PR read through `forge.
    - **needs-human** — every open node with `needs_human: true`: id, title, and what's stuck (the newest `comment` event from `bash "$S/graph.sh" show <id> --events`; if that read exits nonzero, say "notes unreadable").
    - **approved, awaiting human merge** — status `approved`: node, PR, `checks`, `mergeable`, and whether the latest verdict at the current head is an approve (`approved_at_head`; if not, the next reconcile sends the task to `changes-requested` when `verdict_at_head` is `request-changes`, else back to `in-review`). A promotion PR (kind `promote`) is always a human's merge.
    - **changes-requested** — node, PR, `Patch iteration: <patch_iteration>/3`.
-   - **in-review** — node, PR, `checks`, and whether a verdict exists at the current head (`reviewed_at_head`).
+   - **in-review** — node, PR, `checks`, and the verdict standing at the current head (`verdict_at_head`): `approve` or `request-changes` awaits its transition; `comment` or none (also after a dismissed or revoked verdict) means the next tick reviews it.
    - **claimed** — node, `claim.actor`, `claim.by` (human or agent), idle time since `updated_at`.
    - **ready** — `graph.sh ready`'s output, in order.
    - **blocked** — node, and its deps whose node is not `done`.

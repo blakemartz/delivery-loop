@@ -169,8 +169,10 @@ head_verdict "approve at the head, then a request-changes naming an older head: 
   "$(rvt APPROVED "$H" 15:00)" "$(cmt REQUEST_CHANGES "$O" 16:00)" "approve true $H"
 head_verdict "approve at an older head, request-changes at the head: the approved head is the older one" \
   "$(rvt APPROVED "$O" 15:00)" "$(cmt REQUEST_CHANGES "$H" 16:00)" "request-changes false $O"
-head_verdict "approves at two heads: the approved head is the latest approve's" \
-  "$(both "$(rvt APPROVED "$H" 15:00)" "$(rvt APPROVED "$O" 16:00)")" '[]' "approve true $O"
+head_verdict "approved at the head, and later at another one (the head returned to an earlier sha): the approved head is the current head" \
+  "$(both "$(rvt APPROVED "$H" 15:00)" "$(rvt APPROVED "$O" 16:00)")" '[]' "approve true $H"
+head_verdict "approves at two heads, the one at the head superseded by a comment verdict: the approved head is the latest approve's" \
+  "$(both "$(rvt APPROVED "$H" 15:00)" "$(rvt APPROVED "$O" 16:00)")" "$(cmt COMMENT "$H" 17:00)" "comment false $O"
 head_verdict "fractional seconds order two verdicts of one second" '[]' \
   "$(jq -cn --arg h "$H" '[{body: "## Review — verdict: REQUEST_CHANGES\n\nReviewed-Head: \($h)", author: {login: "r"}, createdAt: "2026-11-08T15:00:00.900Z"},
                            {body: "## Review — verdict: APPROVE\n\nReviewed-Head: \($h)", author: {login: "r"}, createdAt: "2026-11-08T15:00:00.100Z"}]')" \
