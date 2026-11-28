@@ -215,15 +215,18 @@ eq "GC69 open agent PR on a ready/blocked node -> in-review (non-agent PR: none)
 eq "GC69 the drift record names the PR" '"open PR #69"' "$(jq -c '.[0].reason' "$tmp/out")"
 
 # --- rule 9: approved, the PR head moved -> in-review -------------------------------------
-# GC77 (issue #102): an approval covers one head. An approved task with an open
-# agent PR that has no verdict at its head goes back to in-review. A PR reviewed
-# at its head, a non-agent PR, a closed PR and a node that is not approved get
-# no record; needs_human does not freeze the repair (a human's push is
-# re-reviewed too).
+# GC77 (issues #102, #111): an approval covers one head. An approved task with
+# an open agent PR that has no approve verdict at its head goes back to
+# in-review: a head with no verdict, and a head whose only verdict is a
+# request-changes (gc77-rc: reviewed, not approved). A PR approved at its head,
+# a non-agent PR, a closed PR and a node that is not approved get no record;
+# needs_human does not freeze the repair (a human's push is re-reviewed too).
 run_sparse gc77
-eq "GC77 approved + open agent PR not reviewed at its head -> in-review (controls: none)" \
-  '["transition gc77-moved approved->in-review","transition gc77-two approved->in-review","transition gc77-flagged approved->in-review"]' \
+eq "GC77 approved + open agent PR not approved at its head -> in-review (controls: none)" \
+  '["transition gc77-moved approved->in-review","transition gc77-two approved->in-review","transition gc77-flagged approved->in-review","transition gc77-rc approved->in-review"]' \
   "$(moves)"
+eq "GC77 a head whose only verdict is a request-changes is not approved: the record names it" \
+  '"PR #781 head moved to 4c4c4c4 since its approval"' "$(jq -c '.[3].reason' "$tmp/out")"
 eq "GC77 the record names the PR and its new head" \
   '"PR #771 head moved to d4c5c18 since its approval"' "$(jq -c '.[0].reason' "$tmp/out")"
 eq "GC77 several unreviewed PRs for one task: the lowest number names the record" \
@@ -234,8 +237,12 @@ eq "GC77 records carry exactly {op, id, from, to, reason}; no warnings" '[["from
 eq "GC77 the fix line reads approved -> in-review: PR #N head moved to <sha7> since its approval" \
   'transition gc77-moved approved -> in-review: PR #771 head moved to d4c5c18 since its approval' \
   "$(jq -r '.[0] | "\(.op) \(.id) \(.from) -> \(.to): \(.reason)"' "$tmp/out")"
+run_sparse gc77 '.prs |= map(.reviewed_at_head = true | .approved_at_head = true)'
+eq "GC77 control: every PR approved at its head -> no record" '[]' "$(moves)"
 run_sparse gc77 '.prs |= map(.reviewed_at_head = true)'
-eq "GC77 control: every PR reviewed at its head -> no record" '[]' "$(moves)"
+eq "GC77 every head reviewed, none newly approved: the same four records" \
+  '["transition gc77-moved approved->in-review","transition gc77-two approved->in-review","transition gc77-flagged approved->in-review","transition gc77-rc approved->in-review"]' \
+  "$(moves)"
 # A merged PR outranks the bounce (rule 3 runs first): the task is done.
 run_sparse gc77 '.prs |= map(if .number == 771 then .state = "merged" else . end)'
 eq "GC77 the PR merged meanwhile -> done, not in-review" '["transition gc77-moved approved->done"]' \

@@ -25,6 +25,9 @@
 # The §4.3 linkage precedence, `patch_iteration`, `reviewed_at_head` and the
 # ISO-8601 parser are forge-neutral rules: they are reused from forge-github.jq
 # (fed github-named fields) rather than restated, so the adapters cannot drift.
+# `approved_at_head` is forge-verdict.jq's rule over the MR's verdict notes
+# (`gl_reviews`): an approval itself has no body, so the APPROVE-headed note that
+# `pr-review approve` always posts is what ties it to a head.
 include "pr";
 include "shape";
 include "forge-github";
@@ -93,6 +96,15 @@ def gl_checks: gl_checks(null);
 
 def _gl_human_notes: map(select(.system != true));
 
+# Approvals first, then every verdict-headed, non-system note (the shared
+# forge-verdict rule: `verdict` from the heading, `commit` from the trailer).
+def gl_reviews($approvals):
+  [ ($approvals.approved_by // [])[]
+    | { author: (.user | _gl_login), verdict: "approve", body: "",
+        at: (.approved_at // null), commit: null } ]
+  + ([ _gl_human_notes[] | {author: (.author | _gl_login), body: (.body // ""), at: .created_at} ]
+     | verdict_comments);
+
 def gl_pr($graph_backend):
   .mr as $m
   | (.merge_parents // null) as $parents
@@ -110,18 +122,10 @@ def gl_pr($graph_backend):
       labels: $labels,
       patch_iteration: ({comments: $notes} | gh_patch_iteration),
       reviewed_at_head: ({headRefOid: $m.sha, reviews: [], comments: $notes} | gh_reviewed_at_head),
+      approved_at_head: ($notes | gl_reviews(null) | approved_at_head($m.sha)),
       agent: ($labels | any(.[]; . == agent_label)),
       author: ($m.author | _gl_login) }
   | validate_pr;
-
-# Approvals first, then every verdict-headed, non-system note (the shared
-# forge-verdict rule: `verdict` from the heading, `commit` from the trailer).
-def gl_reviews($approvals):
-  [ ($approvals.approved_by // [])[]
-    | { author: (.user | _gl_login), verdict: "approve", body: "",
-        at: (.approved_at // null), commit: null } ]
-  + ([ _gl_human_notes[] | {author: (.author | _gl_login), body: (.body // ""), at: .created_at} ]
-     | verdict_comments);
 
 # Notes carry no URL of their own: GitLab anchors them on the MR page as #note_<id>.
 def gl_comments($web_url):

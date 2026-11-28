@@ -23,6 +23,7 @@
 # The §4.3 linkage precedence, `patch_iteration`, `reviewed_at_head` and the
 # ISO-8601 parser are forge-neutral rules: they are reused from forge-github.jq
 # (fed github-named fields) rather than restated, so the two adapters cannot drift.
+# `approved_at_head` is forge-verdict.jq's rule over this adapter's `gt_reviews`.
 include "pr";
 include "shape";
 include "forge-github";
@@ -65,6 +66,22 @@ def gt_checks:
     elif all($s[]; . == "success" or . == "warning" or . == "skipped") then "success"
     else "pending" end;
 
+# A dismissed review is reported as `dismissed`, as github's DISMISSED state is.
+def gt_reviews($comments):
+  [ .[]
+    | { author: (.user | _gt_login),
+        verdict: (if .dismissed == true then "dismissed"
+                  else {"APPROVED": "approve", "REQUEST_CHANGES": "request-changes",
+                        "COMMENT": "comment", "PENDING": "pending",
+                        "REQUEST_REVIEW": "request-review"}[.state // ""]
+                       // (.state // "" | ascii_downcase) end),
+        body: (.body // ""),
+        at: .submitted_at,
+        commit: (.commit_id // null) } ]
+  + ([ ($comments // [])[] | {author: (.user | _gt_login), body: (.body // ""), at: .created_at} ]
+     | verdict_comments);
+def gt_reviews: gt_reviews([]);
+
 def gt_pr($graph_backend):
   .pr as $p
   | (.comments // []) as $comments
@@ -82,25 +99,10 @@ def gt_pr($graph_backend):
       labels: $labels,
       patch_iteration: ({comments: $comments} | gh_patch_iteration),
       reviewed_at_head: ({headRefOid: $p.head.sha, reviews: $reviews, comments: $comments} | gh_reviewed_at_head),
+      approved_at_head: ($reviews | gt_reviews($comments) | approved_at_head($p.head.sha)),
       agent: ($labels | any(.[]; . == agent_label)),
       author: ($p.user | _gt_login) }
   | validate_pr;
-
-# A dismissed review is reported as `dismissed`, as github's DISMISSED state is.
-def gt_reviews($comments):
-  [ .[]
-    | { author: (.user | _gt_login),
-        verdict: (if .dismissed == true then "dismissed"
-                  else {"APPROVED": "approve", "REQUEST_CHANGES": "request-changes",
-                        "COMMENT": "comment", "PENDING": "pending",
-                        "REQUEST_REVIEW": "request-review"}[.state // ""]
-                       // (.state // "" | ascii_downcase) end),
-        body: (.body // ""),
-        at: .submitted_at,
-        commit: (.commit_id // null) } ]
-  + ([ ($comments // [])[] | {author: (.user | _gt_login), body: (.body // ""), at: .created_at} ]
-     | verdict_comments);
-def gt_reviews: gt_reviews([]);
 
 def gt_comments:
   [ .[] | { author: (.user | _gt_login), body: (.body // ""), at: .created_at, url: (.html_url // null) } ];

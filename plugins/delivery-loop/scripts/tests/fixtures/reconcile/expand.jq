@@ -3,8 +3,9 @@
 #   full_node  — defaults: an unclaimed, ready, size-S task on `main`, updated
 #                1h before `now` (so no claim is stale unless the fixture says
 #                so); `deps` may be bare ids.
-#   full_pr    — defaults: an open agent PR into `main`; `agent` always follows
-#                `labels` (default ["agent-authored"]).
+#   full_pr    — defaults: an open agent PR into `main`; no verdict at its head
+#                (`reviewed_at_head` and `approved_at_head` false); `agent`
+#                always follows `labels` (default ["agent-authored"]).
 #   full_input — {nodes, prs, now?} → the reconcile input; now defaults to
 #                2027-01-01T00:00:00Z.
 def fixture_now: 1798761600;
@@ -23,7 +24,7 @@ def full_pr:
    head_sha: "abcdef0123456789abcdef0123456789abcdef01",
    mergeable: "clean", checks: "success", task_id: null,
    labels: ["agent-authored"], patch_iteration: 0, reviewed_at_head: false,
-   author: "agent"}
+   approved_at_head: false, author: "agent"}
   + .
   | .agent = any(.labels[]; . == "agent-authored");
 

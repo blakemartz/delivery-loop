@@ -12,7 +12,8 @@ include "shape";
 
 def pr_fields:
   ["number", "url", "state", "head", "base", "head_sha", "mergeable", "checks",
-   "task_id", "labels", "patch_iteration", "reviewed_at_head", "agent", "author"];
+   "task_id", "labels", "patch_iteration", "reviewed_at_head", "approved_at_head",
+   "agent", "author"];
 
 def pr_states: ["open", "merged", "closed"];
 
@@ -41,13 +42,17 @@ def pr_errors:
     check("labels"; is_string_array; "must be an array of strings"),
     check("patch_iteration"; is_int and . >= 0; "must be a non-negative integer"),
     check("reviewed_at_head"; is_bool; "must be a boolean"),
+    check("approved_at_head"; is_bool; "must be a boolean"),
     check("agent"; is_bool; "must be a boolean"),
     # §4.2 types `author` as a string, not nullable: a deleted account is the
     # forge's placeholder login (github/gitea "ghost"), never null.
     check("author"; type == "string"; "must be a string"),
     (if (.agent | type) == "boolean" and (.labels | is_string_array)
         and .agent != (.labels | any(.[]; . == agent_label))
-     then "`agent` must equal whether `labels` contains \"\(agent_label)\"" else empty end)
+     then "`agent` must equal whether `labels` contains \"\(agent_label)\"" else empty end),
+    # An approve verdict at the head is a verdict at the head (§4.2).
+    (if .approved_at_head == true and .reviewed_at_head == false
+     then "`approved_at_head` cannot be true while `reviewed_at_head` is false" else empty end)
   ] end;
 
 def validate_pr:

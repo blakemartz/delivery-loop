@@ -97,6 +97,25 @@ expect "GC28: no re-poll for a settled MR (201: one GET)" '[ "$(log_count "GET $
 expect "GC28: re-polls back off (1 + 3 sleeps for 207 and 206)" '[ "$(log_count sleep)" = 4 ]'
 expect "GC28: Reviewed-Head equal to head -> true (201); a note on an older head -> false (205)" \
   '[ "$(jq -sc "map(.reviewed_at_head)" "$tmp/gc28.jsonl")" = "[true,false,false,false,false,false,false,false,false,false,false,false,false,false]" ]'
+expect "GC28: an APPROVE note at the head -> approved_at_head true (201); none elsewhere" \
+  '[ "$(jq -sc "map(.approved_at_head)" "$tmp/gc28.jsonl")" = "[true,false,false,false,false,false,false,false,false,false,false,false,false,false]" ]'
+# approved_at_head (§4.2) on gitlab: every verdict is a note, so only an
+# APPROVE-headed, non-system note whose Reviewed-Head: names the head counts.
+GH=aaaaaaa000000000000000000000000000000000
+gl_at_head() { # <name> <note body> <system: true|false> <want "reviewed approved">
+  got=$(gljq -r --arg h "$GH" --arg b "$2" --argjson sys "$3" 'include "forge-gitlab";
+    {mr: {iid: 1, web_url: "u", state: "opened", source_branch: "h", target_branch: "main", sha: $h,
+          detailed_merge_status: "mergeable", description: "", labels: [], author: {username: "a"}},
+     notes: [{body: $b, system: $sys, author: {username: "r"}, created_at: "2026-11-08T15:00:00.000Z"}]}
+    | gl_pr("local") | "\(.reviewed_at_head) \(.approved_at_head)"' <<<null)
+  rc=0; out="$got"; err=""; want="$4"
+  expect "GC28: $1 -> reviewed/approved at head: $want" '[ "$got" = "$want" ]'
+}
+gl_at_head "an APPROVE note at the head" "$(printf '## Adversarial review — verdict: APPROVE\n\nReviewed-Head: %s' "$GH")" false "true true"
+gl_at_head "a REQUEST_CHANGES note at the head" "$(printf '## Adversarial review — verdict: REQUEST_CHANGES\n\nReviewed-Head: %s' "$GH")" false "true false"
+gl_at_head "a COMMENT note at the head" "$(printf '## Adversarial review — verdict: COMMENT\n\nReviewed-Head: %s' "$GH")" false "true false"
+gl_at_head "an APPROVE note at an older head" "$(printf '## Adversarial review — verdict: APPROVE\n\nReviewed-Head: %s' bbbbbbb000000000000000000000000000000000)" false "false false"
+gl_at_head "a system note is no verdict" "$(printf '## Adversarial review — verdict: APPROVE\n\nReviewed-Head: %s' "$GH")" true "false false"
 expect "GC28: system notes are not comments (201: patch_iteration 2 from human notes)" '[ "$(jq -s -r ".[0].patch_iteration" "$tmp/gc28.jsonl")" = 2 ]'
 expect "§4.3: Closes #N ignored off the github graph; legacy head task/16-… -> \"16\"" \
   '[ "$(jq -s -r ".[1].task_id" "$tmp/gc28.jsonl")" = 16 ]'

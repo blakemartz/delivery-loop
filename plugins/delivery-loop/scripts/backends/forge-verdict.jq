@@ -17,6 +17,12 @@
 #   body_reviewed_head         — a body → the sha of its first `Reviewed-Head:` line, or null.
 #   verdict_comments           — [{author, body, at}] → [{author, verdict, body, at, commit}],
 #                                keeping only the verdict-headed comments.
+#   approved_at_head($sha)     — a `pr-reviews` list ([{verdict, body, …}]) → true when
+#                                an `approve` entry's body carries a `Reviewed-Head:`
+#                                line equal to $sha (§4.2 `approved_at_head`). The
+#                                verdict is the entry's own (a formal review's state,
+#                                a comment's heading), so a request-changes, comment
+#                                or dismissed entry at $sha never counts.
 #   with_verdict_heading($v)   — a body about to be posted as verdict $v → that body,
 #                                headed `## Adversarial review — verdict: <V>` when it
 #                                has no verdict heading; an error when its heading
@@ -53,6 +59,14 @@ def verdict_comments:
     | ($b | body_verdict) as $v
     | select($v != null)
     | { author: .author, verdict: $v, body: $b, at: .at, commit: ($b | body_reviewed_head) } ];
+
+def approved_at_head($sha):
+  ($sha // "" | ascii_downcase) as $head
+  | $head != ""
+    and any( .[] | select(.verdict == "approve") | .body | _verdict_lines[]
+             | capture("^Reviewed-Head:[ \t]*(?<sha>[0-9A-Fa-f]+)[ \t]*$").sha
+             | ascii_downcase;
+             . == $head );
 
 def _headed($verdict): verdict_heading + ($verdict | ascii_upcase | gsub("-"; "_")) + "\n\n" + .;
 

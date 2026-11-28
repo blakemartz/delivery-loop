@@ -266,7 +266,7 @@ eq "conf case (promote): the tree's conf wins; caller env/conf values do not lea
 
 # --- tick-merge ---------------------------------------------------------------------
 M="$tmp/sm"
-for t in x y z w h v c b m p r; do
+for t in x y z w h v c b m p r q; do
   g "$M" create "{\"id\":\"$t\",\"kind\":\"task\",\"title\":\"task $t\",\"size\":\"S\",\"status\":\"approved\"}"
 done
 g "$M" create '{"id":"pp","kind":"promote","title":"Promote release/x","target_branch":"release/x","promote_to":"main","status":"in-review"}'
@@ -300,11 +300,15 @@ mkpr 209 task/x--ok "$x_sha" main SUCCESS b
 mkpr 210 task/x--ok "$x_sha" main SUCCESS m
 mkpr 211 task/y--red "$y_sha" main SUCCESS p
 mkpr 212 task/x--ok "$x_sha" main SUCCESS r
+mkpr 213 task/x--ok "$x_sha" main SUCCESS q
 # 211 is at the patch budget; 212's only verdict is at an older head (y's), so
-# nothing reviewed the head it now has.
-jq --arg old "$y_sha" '
+# nothing reviewed the head it now has; 213 was approved at that older head and
+# its current head carries only a REQUEST_CHANGES verdict.
+jq --arg old "$y_sha" --arg cur "$x_sha" '
   .["211"].comments += [{body: "Patch iteration: 3/3", author: {login: "agent"}}]
-  | .["212"].comments = [{body: "## Adversarial review — verdict: APPROVE\n\nReviewed-Head: \($old)", author: {login: "agent"}}]' \
+  | .["212"].comments = [{body: "## Adversarial review — verdict: APPROVE\n\nReviewed-Head: \($old)", author: {login: "agent"}}]
+  | .["213"].comments = [{body: "## Adversarial review — verdict: APPROVE\n\nReviewed-Head: \($old)", author: {login: "agent"}},
+                         {body: "## Adversarial review — verdict: REQUEST_CHANGES\n\nReviewed-Head: \($cur)", author: {login: "agent"}}]' \
   "$tmp/shim/prs.json" > "$tmp/shim/prs.new"
 mv "$tmp/shim/prs.new" "$tmp/shim/prs.json"
 
@@ -324,13 +328,20 @@ expect "GC39: no merge request" '! log_has "pr merge"'
 r tick-merge.sh "$M" -- 206 "$x_sha"
 expect "a needs-human PR -> exit 1, no merge request" '[ "$rc" = 1 ] && grep -q "needs-human" <<<"$err" && ! log_has "pr merge"'
 
-# GC77: an approved node whose PR head has no verdict (reviewed_at_head false).
+# GC77: an approved node whose PR head has no verdict (approved_at_head false).
 r tick-merge.sh "$M" -- 212 "$x_sha"
 expect "GC77: approved node, head not reviewed -> exit 1" \
   '[ "$rc" = 1 ] && grep -q "PR #212 (r) is approved at an older head" <<<"$err"'
 expect "GC77: head not reviewed -> no merge request" '! log_has "pr merge"'
 eq "GC77: head not reviewed -> nothing on stdout, the node stays approved for reconcile" \
   '|"approved"' "$out|$(field "$M" r .status)"
+# GC77 (issue #111): a verdict at the head is not enough; it must be an approve.
+r tick-merge.sh "$M" -- 213 "$x_sha"
+expect "GC77: approved node, only a request-changes verdict at the head -> exit 1" \
+  '[ "$rc" = 1 ] && grep -q "PR #213 (q) is approved at an older head" <<<"$err"'
+expect "GC77: request-changes at the head -> no merge request" '! log_has "pr merge"'
+eq "GC77: request-changes at the head -> nothing on stdout, the node stays approved for reconcile" \
+  '|"approved"' "$out|$(field "$M" q .status)"
 eq "no gate ran for an ineligible PR" "$runs0" "$(gate_runs)"
 
 r tick-merge.sh "$M" -- 202 "$y_sha"

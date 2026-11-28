@@ -225,7 +225,8 @@ Every forge adapter's `pr-view`/`pr-list` emits PRs of exactly this shape
 | `task_id` | string \| null | linkage, §4.3. |
 | `labels` | [string] | |
 | `patch_iteration` | int | highest `Patch iteration: n/3` found in the PR comments (0 if none). |
-| `reviewed_at_head` | bool | true when some review **or** comment carries a `Reviewed-Head: <sha>` trailer equal to `head_sha`. Every verdict body ends with that trailer, whatever the form: formal review, GitLab note, or comment fallback. A comment has no commit of its own, so the trailer is the only forge-independent way to tie a verdict to a head (GC28, GC29). |
+| `reviewed_at_head` | bool | true when some review **or** comment carries a `Reviewed-Head: <sha>` trailer equal to `head_sha`. Every verdict body ends with that trailer, whatever the form: formal review, GitLab note, or comment fallback. A comment has no commit of its own, so the trailer is the only forge-independent way to tie a verdict to a head (GC28, GC29). It says a verdict exists at the head, whatever that verdict is. |
+| `approved_at_head` | bool | true when an **approve** verdict carries a `Reviewed-Head: <sha>` trailer equal to `head_sha`: a formal approving review that is not dismissed, or a comment (a GitLab note) whose verdict heading names `APPROVE` (§7.1 `pr-reviews`). A request-changes or comment verdict at the head, a plain comment carrying the trailer, and an approve at an older head do not count. This is what "approved at the PR's current head" means in §5 (merge, rebase, reconcile rule 9); it implies `reviewed_at_head`, and `validate_pr` rejects a PR that has it without `reviewed_at_head` (GC28, GC77). |
 | `agent` | bool | the PR carries the `agent-authored` label. Only agent PRs are patched, reviewed, rebased or merged by the loop (design spec §5.2). |
 | `author` | string | |
 
@@ -343,7 +344,7 @@ spec's §5 table, which is amended to match (§16):
 | in-review | changes-requested | agent (reviewer) | verdict REQUEST_CHANGES |
 | changes-requested | in-review | agent (patcher) | fixes pushed |
 | in-review | approved | agent (reviewer) | verdict APPROVE |
-| approved | in-review | reconcile | the open agent PR's head moved since its approval (`reviewed_at_head` false): it is re-reviewed before any merge (reconcile rule 9, GC77). No other actor may make this move. |
+| approved | in-review | reconcile | the open agent PR's head moved since its approval (`approved_at_head` false): it is re-reviewed before any merge (reconcile rule 9, GC77). No other actor may make this move. |
 | blocked \| ready \| claimed \| in-review \| changes-requested \| approved | done | reconcile | PR with this `task_id` merged into the node's `target_branch` (GC42). `claimed` covers a merge that lands before the label edit; `blocked`/`ready` cover label drift and human-driven PRs (reconcile rule 3: any open status). |
 | ready | done | reconcile | `kind=="epic"` only: an open epic with ≥ 1 child, every child `done` or `cancelled` (reconcile rule 7, GC45) |
 | claimed | done | promote | promote node with identical trees (§9) |
@@ -426,10 +427,15 @@ reads the PR from the record instead of parsing the reason. Other records have n
    - `cycle: <id> → … → <id>`, one per non-trivial SCC, with ` (SCC: <ids>)` appended
      when the cycle misses some of the SCC's members
 9. **Approved at an older head → in-review.** An `approved` task with an open agent
-   PR (its `task_id`) whose `reviewed_at_head` is false (§4.2) goes back to
+   PR (its `task_id`) whose `approved_at_head` is false (§4.2) goes back to
    `in-review` (GC77). An approval covers one head: once the head moves (a push, or
-   the loop's own `rebase` action) no verdict covers what would merge, so the
-   tick's review rule (rule 4 below) re-reviews it. The record's reason names the
+   the loop's own `rebase` action) no approve verdict covers what would merge, so
+   the tick's review rule (rule 4 below) re-reviews it. A verdict at the new head
+   that is not an approve (a request-changes, a comment) does not keep the node
+   `approved` either: the node goes back to `in-review`. The tick does not review
+   that head a second time (rule 4 below needs `reviewed_at_head` false); it lists
+   the PR in `waiting` until the verdict's own transition is made
+   (`in-review → changes-requested`, the reviewer's). The record's reason names the
    PR and its new head, so `--fix` prints
    `fix: transition <id> approved -> in-review: PR #<n> head moved to <sha7> since its approval`.
    With several such PRs for one task, the lowest PR number names the record.
@@ -448,8 +454,10 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
 1. **merge.** Only when `auto_merge` is set. The PR is `open`, `mergeable=="clean"`
    and `checks` is `success` **or `none`** (parity: v0.1.4's "every check SUCCESS"
    is vacuously true with no checks). Its node is a `task` with status `approved`,
-   and the approval is at the PR's current head: `reviewed_at_head` is true. An
-   approved PR without it is listed in `waiting`
+   and the approval is at the PR's current head: `approved_at_head` is true (§4.2:
+   an approve verdict names that head; a head that carries only a request-changes
+   or comment verdict is reviewed, not approved). An approved PR without it is
+   listed in `waiting`
    (`… approved at an older head: awaiting reconcile/re-review`) and never merged,
    with or without `auto_merge`; reconcile rule 9 returns its node to `in-review`
    (GC77).
@@ -464,11 +472,13 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
    dispatched `patch-task` performs the escalation itself: it sets `needs-human`,
    runs `NOTIFY_ESCALATE_CMD` and stops. So a task at the cap is escalated once
    rather than silently stranded (GC62).
-3. **rebase.** The node is `approved`, `reviewed_at_head` is true,
+3. **rebase.** The node is `approved`, `approved_at_head` is true,
    `mergeable=="conflicting"`, `patch_iteration < 3`, and `needs_human` is false.
    The rebase pushes a new head, so the next tick's reconcile sends the node back
    to `in-review` (rule 9) and rule 4 reviews that head before any merge (GC77).
-4. **review.** The node is `in-review`, `reviewed_at_head` is false, and
+4. **review.** The node is `in-review`, `reviewed_at_head` is false (no verdict of
+   any kind at the head, so a head that already carries a request-changes verdict
+   is not reviewed twice while its transition is pending), and
    `needs_human` is false; a PR labeled `needs-human` is not reviewed either
    (parity with v0.1.4: never act on needs-human items).
 5. **promote.** The node is a promote node with status `ready` and `needs_human`
@@ -821,8 +831,8 @@ are derived on read (`list`, `show`) from the node's journal `comment` events, a
 |---|---|
 | `whoami` | The login of the authenticated account. |
 | `pr-create --head H --base B --title T --body-file F [--draft] [--label L]…` | Returns `{number, url}`. `--label` is repeatable; each names an **existing** label, applied to the new PR on every adapter. Each value is exactly one label, never split: a name containing a newline or CR is refused on every adapter, and one containing `,` on github and gitlab (gh CSV-splits `--label`, so github also refuses `"`; GitLab label titles cannot hold `,`), each with exit 1 before any request. A repeated name is applied once. `pr-create` never creates a label: an unknown name exits 1 before the PR is created (github: gh's own name resolution; gitlab: checked against the project's labels, since the create would otherwise make it; gitea: resolved name→id, repo then owner-org labels). gitlab and gitea attach the labels in the create request itself. github cannot (`gh pr create` creates the PR, then labels it in a second request); if that second request fails, the adapter exits 1 naming the created PR's URL, so the caller finds it with `pr-find --head` instead of opening a duplicate. |
-| `pr-view <n>` | A §4.2 PR, including `patch_iteration` and `reviewed_at_head`. |
-| `pr-list [--state open\|merged] [--since ISO]` | All matching PRs, **fully paginated** (GC32). Elements carry every §4.2 field. When the forge's list endpoint omits a field (GitLab `head_pipeline`; GitHub `comments`/`reviews` used for `patch_iteration` and `reviewed_at_head`), the adapter hydrates it per PR. |
+| `pr-view <n>` | A §4.2 PR, including `patch_iteration`, `reviewed_at_head` and `approved_at_head`. |
+| `pr-list [--state open\|merged] [--since ISO]` | All matching PRs, **fully paginated** (GC32). Elements carry every §4.2 field. When the forge's list endpoint omits a field (GitLab `head_pipeline`; GitHub `comments`/`reviews` used for `patch_iteration`, `reviewed_at_head` and `approved_at_head`), the adapter hydrates it per PR. |
 | `pr-find --head H` | The open PR for a head branch, or empty. |
 | `pr-review <n> approve\|request-changes\|comment --sha S --body-file F` | Posts a verdict and returns `{posted, form: "formal"\|"comment", url}`. The adapter appends `Reviewed-Head: S` to the body. If the forge rejects a self-review, it falls back to a comment-form review with the same body (GC29). If `*_REVIEW_TOKEN` is set, it posts under that identity instead (GC58). |
 | `pr-reviews <n>` | `[{author, verdict, body, at, commit}]`, used to verify a verdict landed. |
@@ -1169,8 +1179,8 @@ the case assertions it owns.
 | GC68 | github fixture: task T with `Depends-on: #A`, A an unlabelled CLOSED (`COMPLETED`) issue; task U with `Depends-on: #B`, B an unlabelled OPEN issue; task V with `Depends-on: #D`, D an unlabelled CLOSED (`NOT_PLANNED`) issue; an unlabelled issue C that nothing references | A, B and D normalize to `kind:"external"` (`done` / `blocked` / `cancelled`) and C is not emitted; T is in `ready`; U and V are not ready (§2 exception 1); reconcile stderr `V: blocked on cancelled dep D` (GC2), and no `unknown dep` warning and no fix record for A, B or D |
 | GC71 | github fixture (§2 exception 6): issue X labelled both `task` and `epic`, open, size S, no deps, unclaimed; ready task T (size S, `unblocks` 0) with body `Part of epic #X`, and a CLOSED (`COMPLETED`) task C with body `Part of epic #X`; ready task U (size S, `unblocks` 0, no epic) created before T; issue Y labelled both `task` and `epic` whose only child, a task with body `Part of epic #Y`, is CLOSED | X and Y normalize to `kind:"task"` with `checklist: []`; X is in `ready`; T has `started:false` and U precedes T (v0.1.4 put T first); reconcile emits no `→ done` record for X or Y (v0.1.4 auto-closed Y) |
 | GC72 | node X `ready` (a human reopened it) whose merged agent PR P into X's target is in `applied_prs`, and a dependent `blocked` on X; the same board with `applied_prs: []`; then a newer merged PR Q not in `applied_prs`; github: comments `AUTO-CLOSE: PR #12 …`, `AUTO-CLOSE: PR #9 …`, `AUTO-CLOSE: PR #12 …`, `AUTO-CLOSE: epic …` | no record for X or the dependent / X → `done` and the dependent → `ready` / X → `done` naming Q; github `applied_prs` `[9,12]` (`[]` with no such comment); local: the same from journal `comment` events (`AUTO-CLOSE: PR #12`, `… #7 merged`, `… #12`, `… #30`, with a torn line and a NUL line beside the markers, and non-markers `… #0`, `… #x9`, `re: AUTO-CLOSE: PR #99`, a `transition` event with that body) → `[7,12,30]`; `create`/`update` refuse `applied_prs` and stored nodes carry none |
-| GC77 | (a) reconcile: `approved` tasks with an open agent PR whose `reviewed_at_head` is false (one with three PRs, one `needs_human`); controls: a PR reviewed at its head, a non-agent PR, a closed PR, `in-review` and `changes-requested` nodes. (b) tick-plan, `--auto-merge`: approved PRs, one not reviewed at its head, one conflicting; then the rebase's new head | (a) one `approved → in-review` record per task, reason `PR #<n> head moved to <sha7> since its approval` (lowest PR number), none for the controls; legal for actor `reconcile` only. (b) no `merge` and no `rebase` for the unreviewed head, a `waiting` line `… approved at an older head: awaiting reconcile/re-review`; after the rebase: no `merge`, reconcile → `in-review`, the next plan emits `review` at the new head, and `merge` only once that head is approved. Parity: both backends plan the same record (board F3) |
 | GC73 | stale (> 4h) agent claims, no open PR, on `in-review` (its PR closed unmerged), `changes-requested`, `approved` and `ready` (a live `CLAIM`, no assignee) nodes; controls: an `in-review` node with an open PR, a fresh agent claim, a human claim | one `RECLAIMED` record each, `→ ready` with the claim cleared; no record for the controls; with `needs_human` set, none |
+| GC77 | (a) reconcile: `approved` tasks with an open agent PR whose `approved_at_head` is false (one with three PRs, one `needs_human`, one whose head carries only a request-changes verdict: `reviewed_at_head` true); controls: a PR approved at its head, a non-agent PR, a closed PR, `in-review` and `changes-requested` nodes. (b) tick-plan, `--auto-merge`: approved PRs, one with no verdict at its head, one with only a request-changes verdict at its head, one conflicting; then the rebase's new head. (c) `graph.sh reconcile --fix` over such a board, on the github backend (write shim) and on the local backend | (a) one `approved → in-review` record per task, reason `PR #<n> head moved to <sha7> since its approval` (lowest PR number), none for the controls; legal for actor `reconcile` only. (b) no `merge` and no `rebase` for either head that lacks an approve, a `waiting` line `… approved at an older head: awaiting reconcile/re-review` each; after the rebase: no `merge`, reconcile → `in-review`, the next plan emits `review` at the new head (none for the head that already carries its request-changes verdict), and `merge` only once that head is approved. (c) the record is applied: each such node ends `in-review` on both backends, a node approved at its head stays `approved`, and a second pass plans nothing. Parity: both backends plan the same record (board F3) |
 
 **Tick plan:**
 
@@ -1205,7 +1215,7 @@ the case assertions it owns.
 
 | # | Given | Expect |
 |---|---|---|
-| GC28 | captured or doc-derived responses per adapter (open/merged/closed; conflict; checks pass/pending/fail/none; a `Reviewed-Head:` verdict) | normalized §4.2 PRs equal the expected fixtures, `reviewed_at_head` included |
+| GC28 | captured or doc-derived responses per adapter (open/merged/closed; conflict; checks pass/pending/fail/none; a `Reviewed-Head:` verdict) | normalized §4.2 PRs equal the expected fixtures, `reviewed_at_head` and `approved_at_head` included; per adapter, a request-changes, comment or dismissed verdict at the head gives `reviewed_at_head` true and `approved_at_head` false |
 | GC29 | fixture: formal review rejected as self-review (gitlab: no request-changes endpoint, so always a note) | comment-form fallback, `{posted:true, form:"comment"}`, body ends `Reviewed-Head: <sha>` |
 | GC30 | `pr-merge --sha` with a stale sha | exit nonzero, no merge request sent (dry-run log) |
 | GC31 | `FORGE_DRY_RUN=1 FORGE=gitlab forge.sh pr-create …` | prints `POST /api/v4/projects/<enc>/merge_requests` + body with source/target/title; with `--label L`, `labels` too (gitea: the resolved ids; github shim: `gh pr create … --label L`) |
@@ -1236,7 +1246,7 @@ the case assertions it owns.
 | GC50 | promote node, red `PROMOTE_GATE_CMD` | `needs_human`, claim released, no PR, exit 1 |
 | GC51 | promote node, green gate | PR head T base P, body contains `Delivery-Task: <id>`; node `in-review` |
 | GC52 | `tick-merge.sh <pr> <sha>` when the head moved / checks became `failure` | exit 1, no merge request |
-| GC77 | `tick-merge.sh <pr> <sha>` on an `approved` node whose PR is clean and green but has `reviewed_at_head: false` (its only verdict names an older head) | exit 1, no merge request, no gate run; the node stays `approved` for reconcile rule 9 |
+| GC77 | `tick-merge.sh <pr> <sha>` on an `approved` node whose PR is clean and green but has `approved_at_head: false`: one whose only verdict names an older head, and one approved at an older head whose current head carries only a request-changes verdict | each: exit 1, no merge request, no gate run; the node stays `approved` for reconcile rule 9 |
 | GC53 | `apply` with a missing target branch (git shim) | prints, then runs, `git push origin origin/<P>:refs/heads/<T>` |
 | GC54 | `apply` where an existing node's title differs | `drift: <id> title`, node unchanged, exit 0 |
 | GC55 | worktree for id `ready-policy`; an existing dir `task-ready-policy-extra--x`; numeric id 12 with a legacy dir `task-12-old` | creates `task-ready-policy--<slug>` (no false match); reuses `task-12-old` |

@@ -120,7 +120,8 @@ case "$acts" in
 esac
 
 # --- board F3: PR #205's head moved after its approval (GC77) ------------------------
-# The verdict on #205 still names the old head, so `reviewed_at_head` is false.
+# The verdict on #205 still names the old head, so `reviewed_at_head` and
+# `approved_at_head` are false.
 mkdir "$tmp/forge"
 cp "$fx/lists.json" "$tmp/forge/lists.json"
 jq '.["205"].headRefOid = "d4c5c18000000000000000000000000000000000"' \

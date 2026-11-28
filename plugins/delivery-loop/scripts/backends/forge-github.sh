@@ -21,8 +21,8 @@
 #     status is authoritative: a successful post that printed no URL keeps
 #     `url: ""`.
 #   - `pr-list` hydrates each listed PR through the `pr-view` path, because the
-#     list's `comments`/`reviews` are what `patch_iteration`/`reviewed_at_head`
-#     come from and mergeability may still be computing.
+#     list's `comments`/`reviews` are what `patch_iteration`, `reviewed_at_head`
+#     and `approved_at_head` come from and mergeability may still be computing.
 #   - verdicts and merges pin the head SHA: a pre-read refuses a stale --sha
 #     before any write, and `pr-merge` also sends `--match-head-commit`.
 #   - `pr-merge` re-reads the PR; gh may silently enable auto-merge instead of

@@ -1,8 +1,12 @@
 {"flags": {"auto_merge": true},
  "nodes": [{"id": "t-moved", "status": "approved"},
            {"id": "t-rebase", "status": "approved"},
-           {"id": "t-ok", "status": "approved"}],
+           {"id": "t-ok", "status": "approved"},
+           {"id": "t-rc", "status": "approved"}],
  "prs": [{"number": 81, "task_id": "t-moved", "head_sha": "d4c5c18000000000000000000000000000000000"},
-         {"number": 82, "task_id": "t-rebase", "mergeable": "conflicting", "reviewed_at_head": true,
+         {"number": 82, "task_id": "t-rebase", "mergeable": "conflicting",
+          "reviewed_at_head": true, "approved_at_head": true,
           "head_sha": "2af79da000000000000000000000000000000000"},
-         {"number": 83, "task_id": "t-ok", "reviewed_at_head": true}]}
+         {"number": 83, "task_id": "t-ok", "reviewed_at_head": true, "approved_at_head": true},
+         {"number": 84, "task_id": "t-rc", "reviewed_at_head": true,
+          "head_sha": "4c4c4c4000000000000000000000000000000000"}]}

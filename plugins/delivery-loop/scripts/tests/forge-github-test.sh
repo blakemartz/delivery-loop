@@ -84,6 +84,37 @@ while IFS= read -r c; do
   expect "GC28: checks for $name -> $want" '[ "$got" = "$want" ]'
 done < <(jq -c '.[]' "$fx/rollups.json")
 
+# GC28: approved_at_head (§4.2) needs an approve verdict whose Reviewed-Head:
+# names the head. Any trailer at the head makes reviewed_at_head true; only an
+# approve (a formal APPROVED review, or an APPROVE-headed comment) makes
+# approved_at_head true. H is the head, O an older one.
+H=aaaaaaa000000000000000000000000000000000; O=bbbbbbb000000000000000000000000000000000
+at_head() { # <name> <reviews json> <comments json> <want "reviewed approved">
+  got=$(jq -r -L "$here/../lib" -L "$here/../backends" --arg h "$H" --argjson r "$2" --argjson c "$3" \
+    'include "forge-github"; {headRefOid: $h, reviews: $r, comments: $c}
+     | "\(gh_reviewed_at_head) \(gh_approved_at_head)"' <<<null)
+  rc=0; out="$got"; err=""; want="$4"
+  expect "GC28: $1 -> reviewed/approved at head: $want" '[ "$got" = "$want" ]'
+}
+# rv <state> <body> / cm <body>: one formal review / one comment; `\n` in <body> is a newline.
+rv() { jq -cn --arg s "$1" --arg b "$(printf '%b' "$2")" '[{state: $s, body: $b, author: {login: "r"}, submittedAt: "2026-11-08T15:00:00Z", commit: {oid: "x"}}]'; }
+cm() { jq -cn --arg b "$(printf '%b' "$1")" '[{body: $b, author: {login: "r"}, createdAt: "2026-11-08T15:00:00Z"}]'; }
+at_head "no verdict" '[]' '[]' "false false"
+at_head "a formal APPROVED review at the head" "$(rv APPROVED "ok\n\nReviewed-Head: $H")" '[]' "true true"
+at_head "a formal CHANGES_REQUESTED review at the head" "$(rv CHANGES_REQUESTED "no\n\nReviewed-Head: $H")" '[]' "true false"
+at_head "a formal COMMENTED review at the head" "$(rv COMMENTED "hm\n\nReviewed-Head: $H")" '[]' "true false"
+at_head "a DISMISSED approval at the head" "$(rv DISMISSED "ok\n\nReviewed-Head: $H")" '[]' "true false"
+at_head "a formal APPROVED review at an older head" "$(rv APPROVED "ok\n\nReviewed-Head: $O")" '[]' "false false"
+at_head "an APPROVE-headed comment at the head" '[]' "$(cm "## Adversarial review — verdict: APPROVE\n\nok\n\nReviewed-Head: $H")" "true true"
+at_head "a REQUEST_CHANGES-headed comment at the head" '[]' "$(cm "## Adversarial review — verdict: REQUEST_CHANGES\n\nno\n\nReviewed-Head: $H")" "true false"
+at_head "a COMMENT-headed comment at the head" '[]' "$(cm "## Adversarial review — verdict: COMMENT\n\nhm\n\nReviewed-Head: $H")" "true false"
+at_head "a plain comment (no verdict heading) carrying the trailer" '[]' "$(cm "LGTM, verdict: APPROVE\n\nReviewed-Head: $H")" "true false"
+at_head "an APPROVE-headed comment at an older head" '[]' "$(cm "## Adversarial review — verdict: APPROVE\n\nok\n\nReviewed-Head: $O")" "false false"
+at_head "approved at an older head, request-changes at the head" \
+  "$(rv APPROVED "ok\n\nReviewed-Head: $O")" "$(cm "## Adversarial review — verdict: REQUEST_CHANGES\n\nno\n\nReviewed-Head: $H")" "true false"
+at_head "an approve trailer in upper case matches the head" '[]' \
+  "$(cm "## Adversarial review — verdict: APPROVE\n\nReviewed-Head: $(tr a-f A-F <<<"$H")")" "true true"
+
 # --- GC33 / GC46: task_id linkage precedence (§4.3) ---------------------------
 reset
 check_task() { # <pr> <expected task_id json> <label> [GRAPH_BACKEND]

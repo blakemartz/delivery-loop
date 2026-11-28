@@ -11,6 +11,7 @@
   "labels": [],
   "patch_iteration": 1,
   "reviewed_at_head": true,
+  "approved_at_head": true,
   "agent": true,
   "author": "astra"
 }

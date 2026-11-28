@@ -4,8 +4,9 @@
 # comment/reconcile, `graph.sh transition`/`claim`/`reconcile --fix`, and the
 # task-queue.sh / claim-task.sh compatibility wrappers. Golden cases GC33 (the
 # reaper), GC42 (the issue is closed), GC61 (task-queue.sh byte-identical to
-# v0.1.4), GC68 (external nodes), GC71 (task+epic is a task) and GC75 (a keyword
-# close survives a reopen); plus the H0 bootstrap (close-on-merge into a
+# v0.1.4), GC68 (external nodes), GC71 (task+epic is a task), GC75 (a keyword
+# close survives a reopen) and GC77 (rule 9 applied by `reconcile --fix`, on
+# github and on local); plus the H0 bootstrap (close-on-merge into a
 # non-default BASE_BRANCH, once per (issue, PR)), the reconcile compare-and-set
 # on updatedAt, exit 4/75 handling, and comments past gh's 100-per-issue cap.
 #
@@ -163,6 +164,50 @@ eq "GC42: closed COMPLETED, with a comment naming the PR" \
 eq "GC42: the dependent is relabelled ready in the same pass" '["size:S","status:ready","task"]' "$(labels 21)"
 g -- reconcile
 eq "GC42: the next pass has nothing to do (the marker makes the PR applied)" "" "$out"
+
+# --- GC77: rule 9 applied by reconcile --fix, on github and on local ------------------
+# Each approved task has an open agent PR with no approve verdict at its head:
+# #30's PR was approved at an older head, #31's head carries only a
+# REQUEST_CHANGES verdict. #32's PR is approved at its head (the control).
+# pr.jq gives PR <n> the head <n>000…0.
+board '[ i(30; "approved, head moved"; ["task","status:approved","size:S"]; "x"),
+         i(31; "approved, changes requested at head"; ["task","status:approved","size:S"]; "x"),
+         i(32; "approved at head"; ["task","status:approved","size:S"]; "x") ]' "$tmp/gc77.json"
+prs '[ pr(130; "OPEN"; "main"; "Delivery-Task: 30"; "task/30--x"),
+       pr(131; "OPEN"; "main"; "Delivery-Task: 31"; "task/31--x"),
+       pr(132; "OPEN"; "main"; "Delivery-Task: 32"; "task/32--x") ]
+     | map(.headRefOid as $h
+           | def v($verdict; $sha): {author: {login: "shim-user"}, createdAt: "2026-06-01T00:00:00Z",
+               body: "## Adversarial review — verdict: \($verdict)\n\nReviewed-Head: \($sha)"};
+             .comments = (if .number == 130 then [v("APPROVE"; "0dd" + $h[3:])]
+                          elif .number == 131 then [v("APPROVE"; "0dd" + $h[3:]), v("REQUEST_CHANGES"; $h)]
+                          else [v("APPROVE"; $h)] end))' "$tmp/gc77-prs.json"
+gc77_fix="$(printf 'fix: transition 30 approved -> in-review: PR #130 head moved to 1300000 since its approval\nfix: transition 31 approved -> in-review: PR #131 head moved to 1310000 since its approval')"
+load "$tmp/gc77.json" "$tmp/gc77-prs.json"
+g -- reconcile --fix
+# Record order follows each backend's list order, so the lines are compared sorted.
+eq "GC77 github: reconcile --fix applies rule 9 and prints each record (exit 0)" "0|$gc77_fix" "$rc|$(sort <<<"$out")"
+eq "GC77 github: the head-moved task is relabelled in-review" '["size:S","status:in-review","task"]' "$(labels 30)"
+eq "GC77 github: the task with only a request-changes verdict at its head is relabelled in-review" \
+  '["size:S","status:in-review","task"]' "$(labels 31)"
+eq "GC77 github: the task approved at its head stays approved" '["size:S","status:approved","task"]' "$(labels 32)"
+g -- list
+eq "GC77 github: the nodes read back in-review, in-review, approved" '["in-review","in-review","approved"]' \
+  "$(jq -c '[.[] | select(.id == "30" or .id == "31" or .id == "32")] | sort_by(.id) | map(.status)' <<<"$out")"
+g -- reconcile --fix
+eq "GC77 github: the next pass has nothing to do" "0|" "$rc|$out"
+# The same board on the local backend (the forge is still the gh shim).
+sd77="$tmp/gc77-state"
+for id in 30 31 32; do
+  g GRAPH_BACKEND=local STATE_DIR="$sd77" -- create "{\"id\":\"$id\",\"kind\":\"task\",\"title\":\"task $id\",\"size\":\"S\",\"status\":\"approved\"}"
+done
+g GRAPH_BACKEND=local STATE_DIR="$sd77" -- reconcile --fix
+eq "GC77 local: reconcile --fix applies rule 9 and prints each record (exit 0)" "0|$gc77_fix" "$rc|$(sort <<<"$out")"
+g GRAPH_BACKEND=local STATE_DIR="$sd77" -- list
+eq "GC77 local: the nodes end in-review, in-review, approved" '["in-review","in-review","approved"]' \
+  "$(jq -c 'sort_by(.id) | map(.status)' <<<"$out")"
+g GRAPH_BACKEND=local STATE_DIR="$sd77" -- reconcile --fix
+eq "GC77 local: the next pass has nothing to do" "0|" "$rc|$out"
 
 # --- GC33: the reaper sees only linked PRs, past gh's default page of 30 ------------
 stale_claim='| .assignees = [{login: "shim-user"}] | .comments = [c("CLAIM agent-1 h-1-1 t"; "2026-01-02T00:00:00Z")]'

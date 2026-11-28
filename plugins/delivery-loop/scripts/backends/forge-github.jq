@@ -8,6 +8,9 @@
 #   gh_reviews             — `gh pr view --json reviews,comments` → [{author, verdict, body, at, commit}]:
 #                            every formal review, then every verdict-headed comment
 #                            (forge-verdict.jq).
+#   gh_approved_at_head    — the same object (plus `headRefOid`) → bool: one of its
+#                            gh_reviews is an approve whose `Reviewed-Head:` line
+#                            names the head (§4.2 `approved_at_head`).
 #   gh_comments            — `gh pr view --json comments` → [{author, body, at, url}]
 #   gh_merged_since($t)    — keep list elements whose `mergedAt` ≥ ISO-8601 $t
 #
@@ -81,6 +84,22 @@ def gh_reviewed_at_head:
              | ascii_downcase;
              . == $sha);
 
+def gh_reviews:
+  [ (.reviews // [])[]
+    | { author: (.author | _login),
+        verdict: ({"APPROVED": "approve", "CHANGES_REQUESTED": "request-changes",
+                   "COMMENTED": "comment", "DISMISSED": "dismissed",
+                   "PENDING": "pending"}[.state] // (.state | ascii_downcase)),
+        body: (.body // ""),
+        at: .submittedAt,
+        commit: (.commit.oid // null) } ]
+  + ([ (.comments // [])[] | {author: (.author | _login), body: (.body // ""), at: .createdAt} ]
+     | verdict_comments);
+
+# An approve verdict (a formal APPROVED review, or an APPROVE-headed comment)
+# carries a `Reviewed-Head: <sha>` line equal to the head.
+def gh_approved_at_head: (.headRefOid // "") as $sha | gh_reviews | approved_at_head($sha);
+
 def gh_pr($graph_backend):
   ([ (.labels // [])[] | .name ]) as $labels
   | { number: .number,
@@ -95,21 +114,10 @@ def gh_pr($graph_backend):
       labels: $labels,
       patch_iteration: gh_patch_iteration,
       reviewed_at_head: gh_reviewed_at_head,
+      approved_at_head: gh_approved_at_head,
       agent: ($labels | any(.[]; . == agent_label)),
       author: (.author | _login) }
   | validate_pr;
-
-def gh_reviews:
-  [ (.reviews // [])[]
-    | { author: (.author | _login),
-        verdict: ({"APPROVED": "approve", "CHANGES_REQUESTED": "request-changes",
-                   "COMMENTED": "comment", "DISMISSED": "dismissed",
-                   "PENDING": "pending"}[.state] // (.state | ascii_downcase)),
-        body: (.body // ""),
-        at: .submittedAt,
-        commit: (.commit.oid // null) } ]
-  + ([ (.comments // [])[] | {author: (.author | _login), body: (.body // ""), at: .createdAt} ]
-     | verdict_comments);
 
 def gh_comments:
   [ (.comments // [])[]
