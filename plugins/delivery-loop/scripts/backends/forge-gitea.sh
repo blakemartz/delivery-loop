@@ -415,18 +415,9 @@ missing_labels() {
      '($have[0] | map(.name)) as $h | map(select(. as $w | $h | index([$w]) | not)) | join(", ")' "$tmp/want.json"
 }
 
-# need_color <color> <usage>: <color> is exactly 6 hex digits (no `#`), else usage.
-need_color() {
-  case "$1" in
-    [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) : ;;
-    *) usage "$2" ;;
-  esac
-}
-
 op_label_ensure() {
   local u="label-ensure <name> <color: 6 hex digits, no #> <description>"
-  [ $# -eq 3 ] && [ -n "$1" ] || usage "$u"
-  need_color "$2" "$u"
+  [ $# -eq 3 ] && [ -n "$1" ] || usage "$u"   # forge.sh has checked <color>
   check_label_names "$1"
   find_labels "$1"
   if [ -n "$(missing_labels)" ]; then
