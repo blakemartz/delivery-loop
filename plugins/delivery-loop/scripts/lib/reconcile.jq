@@ -38,6 +38,13 @@
 #      an epic is left to rules 1/2/7). Runs before rules 1 and 2, so a
 #      drifted node is never shuffled between ready and blocked first: an open
 #      PR outranks the deps.
+#   9. an approved task + an open agent PR with its task_id whose
+#      reviewed_at_head is false -> in-review (GC77): the head moved since the
+#      approval (a push, or the loop's own rebase action), so no verdict covers
+#      what would merge. The reason names the PR and its new head
+#      (`PR #N head moved to <sha7> since its approval`); the tick's review
+#      rule then re-reviews it. With several such PRs the lowest number names
+#      the record. Only reconcile may make this move (transitions.jq).
 #   1. blocked -> ready when deps_done and not needs_human (GC4).
 #   2. ready -> blocked when not deps_done.
 #   5. agent claim on an open node, no open PR for the node, now - updated_at
@@ -52,9 +59,10 @@
 #   8. warnings: `blocked on cancelled dep`, `unknown dep` (open nodes), and
 #      `cycle: a → … → a`, one per strongly connected component, naming the
 #      SCC's members when the cycle misses some (graph.jq cycle_text).
-# Rules 1-7 act on task, epic and promote nodes only (_subjects): an `external`
-# node (§4.1) gets no record of any rule, filtered here rather than left for the
-# transition table to reject, so a board with externals prints no "skipped"
+# Rules 1-7 and 9 act on task, epic and promote nodes only (_subjects; rule 9 on
+# tasks only): an `external` node (§4.1) gets no record of any rule, filtered
+# here rather than left for the transition table to reject, so a board with
+# externals prints no "skipped"
 # warnings. Externals still count as deps (satisfied only when done) and as epic
 # children (rule 7), since both read the whole board.
 # A node gets at most one record per pass: the first rule that fires wins.
@@ -172,6 +180,20 @@ def _rule4($open):
     | first($open[] | select(.agent and .task_id == $id)) as $pr
     | _rec("transition"; "in-review"; "open PR #\($pr.number)"));
 
+# _rule9 — an approval covers one head. `reviewed_at_head` (§4.2) is false once
+# the PR's head has no verdict, so the approved node goes back to in-review and
+# tick-plan's review rule picks the new head up.
+def _rule9($open):
+  _offer_all(
+    _subjects
+    | select(.kind == "task" and .status == "approved")
+    | .id as $id
+    | ([$open[] | select(.agent and .task_id == $id and (.reviewed_at_head | not))]
+       | min_by(.number)) as $pr
+    | select($pr != null)
+    | _rec("transition"; "in-review";
+           "PR #\($pr.number) head moved to \($pr.head_sha[0:7]) since its approval"));
+
 def _rule5($open; $now):
   _offer_all(
     _subjects
@@ -209,7 +231,7 @@ def reconcile_plan:
   | .now as $now
   | {order: ($nodes | map(.id)), idx: ($nodes | index_by_id),
      touched: {}, records: [], warnings: []}
-  | _rule3($prs) | _rule7 | _rule4($open) | _rules12 | _rule5($open; $now)
+  | _rule3($prs) | _rule7 | _rule4($open) | _rule9($open) | _rules12 | _rule5($open; $now)
   | _rule6($now) | _rule8
   | {records, warnings};
 

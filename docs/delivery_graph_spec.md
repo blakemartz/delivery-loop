@@ -292,7 +292,7 @@ A4) and are used by reconcile, tick-plan and plan lint:
 **`external` nodes (§4.1)** are inert references:
 - They never produce actions. `ready.jq` admits only `kind=="task"`, `tick-plan.jq`
   emits no action for them, and `reconcile.jq` emits no fix record for them (its
-  rules 1–7 apply to `task`, `epic` and `promote` nodes only).
+  rules 1–7 and 9 apply to `task`, `epic` and `promote` nodes only).
 - They are excluded from `tick-plan`'s `board` counts and from `waiting`.
 - As a dep, an external is satisfied iff it is `done`. An open external
   (`blocked`) or a `cancelled` one keeps the dependent blocked (GC68, GC2). That is
@@ -343,6 +343,7 @@ spec's §5 table, which is amended to match (§16):
 | in-review | changes-requested | agent (reviewer) | verdict REQUEST_CHANGES |
 | changes-requested | in-review | agent (patcher) | fixes pushed |
 | in-review | approved | agent (reviewer) | verdict APPROVE |
+| approved | in-review | reconcile | the open agent PR's head moved since its approval (`reviewed_at_head` false): it is re-reviewed before any merge (reconcile rule 9, GC77). No other actor may make this move. |
 | blocked \| ready \| claimed \| in-review \| changes-requested \| approved | done | reconcile | PR with this `task_id` merged into the node's `target_branch` (GC42). `claimed` covers a merge that lands before the label edit; `blocked`/`ready` cover label drift and human-driven PRs (reconcile rule 3: any open status). |
 | ready | done | reconcile | `kind=="epic"` only: an open epic with ≥ 1 child, every child `done` or `cancelled` (reconcile rule 7, GC45) |
 | claimed | done | promote | promote node with identical trees (§9) |
@@ -424,6 +425,17 @@ reads the PR from the record instead of parsing the reason. Other records have n
    - `unknown dep <id>`
    - `cycle: <id> → … → <id>`, one per non-trivial SCC, with ` (SCC: <ids>)` appended
      when the cycle misses some of the SCC's members
+9. **Approved at an older head → in-review.** An `approved` task with an open agent
+   PR (its `task_id`) whose `reviewed_at_head` is false (§4.2) goes back to
+   `in-review` (GC77). An approval covers one head: once the head moves (a push, or
+   the loop's own `rebase` action) no verdict covers what would merge, so the
+   tick's review rule (rule 4 below) re-reviews it. The record's reason names the
+   PR and its new head, so `--fix` prints
+   `fix: transition <id> approved -> in-review: PR #<n> head moved to <sha7> since its approval`.
+   With several such PRs for one task, the lowest PR number names the record.
+   `needs_human` does not stop the move: a head a human pushed while resolving an
+   escalation is re-reviewed as well. Rule 9 is applied after rule 4 and before
+   rules 1 and 2; a PR that merged meanwhile is rule 3's (`done`), which runs first.
 
 **`tick-plan.jq`.** Input: `{nodes, prs, flags: {parallel, auto_merge}, now}`.
 Output: `{mode, actions: [{action, pr?, id?, reason}], board: {<status>: count},
@@ -435,7 +447,12 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
 
 1. **merge.** Only when `auto_merge` is set. The PR is `open`, `mergeable=="clean"`
    and `checks` is `success` **or `none`** (parity: v0.1.4's "every check SUCCESS"
-   is vacuously true with no checks). Its node is a `task` with status `approved`.
+   is vacuously true with no checks). Its node is a `task` with status `approved`,
+   and the approval is at the PR's current head: `reviewed_at_head` is true. An
+   approved PR without it is listed in `waiting`
+   (`… approved at an older head: awaiting reconcile/re-review`) and never merged,
+   with or without `auto_merge`; reconcile rule 9 returns its node to `in-review`
+   (GC77).
    The PR has no `needs-human` label, and the node's `needs_human` is false.
    The PR's `base` equals the node's `target_branch`; an off-base PR is listed in
    `waiting` for a human. **At most one merge per `task_id`** per plan: among a
@@ -447,8 +464,10 @@ rules, in priority order, encode today's `delivery-tick` (GC12–GC20, GC39):
    dispatched `patch-task` performs the escalation itself: it sets `needs-human`,
    runs `NOTIFY_ESCALATE_CMD` and stops. So a task at the cap is escalated once
    rather than silently stranded (GC62).
-3. **rebase.** The node is `approved`, `mergeable=="conflicting"`,
-   `patch_iteration < 3`, and `needs_human` is false.
+3. **rebase.** The node is `approved`, `reviewed_at_head` is true,
+   `mergeable=="conflicting"`, `patch_iteration < 3`, and `needs_human` is false.
+   The rebase pushes a new head, so the next tick's reconcile sends the node back
+   to `in-review` (rule 9) and rule 4 reviews that head before any merge (GC77).
 4. **review.** The node is `in-review`, `reviewed_at_head` is false, and
    `needs_human` is false; a PR labeled `needs-human` is not reviewed either
    (parity with v0.1.4: never act on needs-human items).
@@ -1144,6 +1163,7 @@ the case assertions it owns.
 | GC68 | github fixture: task T with `Depends-on: #A`, A an unlabelled CLOSED (`COMPLETED`) issue; task U with `Depends-on: #B`, B an unlabelled OPEN issue; task V with `Depends-on: #D`, D an unlabelled CLOSED (`NOT_PLANNED`) issue; an unlabelled issue C that nothing references | A, B and D normalize to `kind:"external"` (`done` / `blocked` / `cancelled`) and C is not emitted; T is in `ready`; U and V are not ready (§2 exception 1); reconcile stderr `V: blocked on cancelled dep D` (GC2), and no `unknown dep` warning and no fix record for A, B or D |
 | GC71 | github fixture (§2 exception 6): issue X labelled both `task` and `epic`, open, size S, no deps, unclaimed; ready task T (size S, `unblocks` 0) with body `Part of epic #X`, and a CLOSED (`COMPLETED`) task C with body `Part of epic #X`; ready task U (size S, `unblocks` 0, no epic) created before T; issue Y labelled both `task` and `epic` whose only child, a task with body `Part of epic #Y`, is CLOSED | X and Y normalize to `kind:"task"` with `checklist: []`; X is in `ready`; T has `started:false` and U precedes T (v0.1.4 put T first); reconcile emits no `→ done` record for X or Y (v0.1.4 auto-closed Y) |
 | GC72 | node X `ready` (a human reopened it) whose merged agent PR P into X's target is in `applied_prs`, and a dependent `blocked` on X; the same board with `applied_prs: []`; then a newer merged PR Q not in `applied_prs`; github: comments `AUTO-CLOSE: PR #12 …`, `AUTO-CLOSE: PR #9 …`, `AUTO-CLOSE: PR #12 …`, `AUTO-CLOSE: epic …` | no record for X or the dependent / X → `done` and the dependent → `ready` / X → `done` naming Q; github `applied_prs` `[9,12]` (`[]` with no such comment); local: the same from journal `comment` events (`AUTO-CLOSE: PR #12`, `… #7 merged`, `… #12`, `… #30`, with a torn line and a NUL line beside the markers, and non-markers `… #0`, `… #x9`, `re: AUTO-CLOSE: PR #99`, a `transition` event with that body) → `[7,12,30]`; `create`/`update` refuse `applied_prs` and stored nodes carry none |
+| GC77 | (a) reconcile: `approved` tasks with an open agent PR whose `reviewed_at_head` is false (one with three PRs, one `needs_human`); controls: a PR reviewed at its head, a non-agent PR, a closed PR, `in-review` and `changes-requested` nodes. (b) tick-plan, `--auto-merge`: approved PRs, one not reviewed at its head, one conflicting; then the rebase's new head | (a) one `approved → in-review` record per task, reason `PR #<n> head moved to <sha7> since its approval` (lowest PR number), none for the controls; legal for actor `reconcile` only. (b) no `merge` and no `rebase` for the unreviewed head, a `waiting` line `… approved at an older head: awaiting reconcile/re-review`; after the rebase: no `merge`, reconcile → `in-review`, the next plan emits `review` at the new head, and `merge` only once that head is approved. Parity: both backends plan the same record (board F3) |
 | GC73 | stale (> 4h) agent claims, no open PR, on `in-review` (its PR closed unmerged), `changes-requested`, `approved` and `ready` (a live `CLAIM`, no assignee) nodes; controls: an `in-review` node with an open PR, a fresh agent claim, a human claim | one `RECLAIMED` record each, `→ ready` with the claim cleared; no record for the controls; with `needs_human` set, none |
 
 **Tick plan:**
@@ -1210,6 +1230,7 @@ the case assertions it owns.
 | GC50 | promote node, red `PROMOTE_GATE_CMD` | `needs_human`, claim released, no PR, exit 1 |
 | GC51 | promote node, green gate | PR head T base P, body contains `Delivery-Task: <id>`; node `in-review` |
 | GC52 | `tick-merge.sh <pr> <sha>` when the head moved / checks became `failure` | exit 1, no merge request |
+| GC77 | `tick-merge.sh <pr> <sha>` on an `approved` node whose PR is clean and green but has `reviewed_at_head: false` (its only verdict names an older head) | exit 1, no merge request, no gate run; the node stays `approved` for reconcile rule 9 |
 | GC53 | `apply` with a missing target branch (git shim) | prints, then runs, `git push origin origin/<P>:refs/heads/<T>` |
 | GC54 | `apply` where an existing node's title differs | `drift: <id> title`, node unchanged, exit 0 |
 | GC55 | worktree for id `ready-policy`; an existing dir `task-ready-policy-extra--x`; numeric id 12 with a legacy dir `task-12-old` | creates `task-ready-policy--<slug>` (no false match); reuses `task-12-old` |

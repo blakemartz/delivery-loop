@@ -13,7 +13,10 @@
 # fixtures/parity/gh-shim.sh, which hands issue reads to the merged graph-github
 # shim and PR reads to the merged forge-github shim. F2 is F after the same
 # status drift is applied to each shape (labels on github, `graph.sh update` on
-# local), so the review/merge rules are exercised too.
+# local), so the review/merge rules are exercised too. F3 is F2 after PR #205's
+# head moved past its approval (GC77, issue #102): both shapes refuse to merge
+# it and plan the same `approved -> in-review` record (a plain transition
+# record, applied like rule 4's by each backend).
 #
 # Offline; runs in a throwaway git repo under ${TMPDIR:-/tmp}.
 set -euo pipefail
@@ -37,6 +40,8 @@ fail() { echo "FAIL - $1" >&2; shift; for l in "$@"; do echo "        $l" >&2; d
 
 # side <github|local> <out-file> <script> [args…]: run one entry point against
 # one shape of the board; the shim log is kept per side in $tmp/<side>.log.
+# The forge's PRs come from $forge_fx.
+forge_fx="$fx"
 side() {
   local shape="$1" outf="$2" script="$3"; shift 3
   : > "$tmp/shim/log"
@@ -44,7 +49,7 @@ side() {
   (cd "$repo" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_REPO -u GH_HOST -u FORGE_URL -u FORGE_REPO \
      -u LIST_LIMIT -u GITLAB_TOKEN -u GITEA_TOKEN -u SHIM_GH_VERSION \
      PATH="$tmp/bin:$PATH" SHIM_STATE="$tmp/shim" SHIM_GRAPH_FX="$tmp/board" SHIM_BOARD=issues.json \
-     SHIM_FORGE_FX="$fx" BASE_BRANCH=main FORGE=github GRAPH_BACKEND="$shape" STATE_DIR="$tmp/store" \
+     SHIM_FORGE_FX="$forge_fx" BASE_BRANCH=main FORGE=github GRAPH_BACKEND="$shape" STATE_DIR="$tmp/store" \
      bash "$scripts/$script" "$@" > "$outf" 2> "$outf.err") || rc=$?
   cp "$tmp/shim/log" "$tmp/$shape.log"
   [ "$rc" = 0 ] || fail "$shape: $script $* exits 0" "rc=$rc" "$(cat "$outf.err")"
@@ -113,6 +118,37 @@ case "$acts" in
   *'"merge 205"'*'"review 204"'*) ok "F2: the plan merges #205 and reviews #204 ($acts)" ;;
   *) fail "F2: the plan merges #205 and reviews #204" "$acts" ;;
 esac
+
+# --- board F3: PR #205's head moved after its approval (GC77) ------------------------
+# The verdict on #205 still names the old head, so `reviewed_at_head` is false.
+mkdir "$tmp/forge"
+cp "$fx/lists.json" "$tmp/forge/lists.json"
+jq '.["205"].headRefOid = "d4c5c18000000000000000000000000000000000"' \
+  "$fx/prs.json" > "$tmp/forge/prs.json"
+forge_fx="$tmp/forge"
+
+parity F3 tick-plan.sh --parallel 3 --auto-merge
+acts=$(jq -c '[.actions[] | "\(.action) \(.pr // .id)"]' "$tmp/gh.out")
+case "$acts" in
+  *'"merge 205"'*) fail "F3: no merge of #205 at a head nobody reviewed" "$acts" ;;
+  *) ok "F3: no merge of #205 at a head nobody reviewed ($acts)" ;;
+esac
+want='PR #205 (15) is approved at an older head: awaiting reconcile/re-review'
+if jq -e --arg w "$want" 'any(.waiting[]; . == $w)' "$tmp/gh.out" > /dev/null; then ok "F3: #205 waits for reconcile/re-review"
+else fail "F3: #205 waits for reconcile/re-review" "$(jq -c .waiting "$tmp/gh.out")"; fi
+
+# The plan (no write): the same rule-9 record on both shapes.
+want='{"op":"transition","id":"15","from":"approved","to":"in-review","reason":"PR #205 head moved to d4c5c18 since its approval"}'
+side github "$tmp/gh.rec" graph.sh reconcile
+side local "$tmp/lo.rec" graph.sh reconcile
+if [ "$(grep -F '"id":"15"' "$tmp/gh.rec")" = "$want" ] && [ "$(grep -F '"id":"15"' "$tmp/lo.rec")" = "$want" ]; then
+  ok "F3: graph.sh reconcile plans approved -> in-review for 15 on github and local"
+else
+  fail "F3: graph.sh reconcile plans approved -> in-review for 15 on github and local" \
+    "github: $(grep -F '"id":"15"' "$tmp/gh.rec" || true)" "local:  $(grep -F '"id":"15"' "$tmp/lo.rec" || true)"
+fi
+if [ "$(sort "$tmp/gh.rec")" = "$(sort "$tmp/lo.rec")" ]; then ok "F3: the whole reconcile plan agrees on github and local"
+else fail "F3: the whole reconcile plan agrees on github and local" "$(diff <(sort "$tmp/gh.rec") <(sort "$tmp/lo.rec") || true)"; fi
 
 if [ "$fails" -ne 0 ]; then
   echo "parity tests FAILED" >&2
