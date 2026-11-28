@@ -7,7 +7,8 @@
 #                            field by field and passed through validate_pr.
 #   gh_reviews             — `gh pr view --json reviews,comments` → [{author, verdict, body, at, commit}]:
 #                            every formal review, then every verdict-headed comment
-#                            (forge-verdict.jq).
+#                            (forge-verdict.jq). A review with no `state` (null
+#                            or missing) carries no verdict and is left out.
 #   gh_approved_at_head    — the same object (plus `headRefOid`) → bool: one of its
 #                            gh_reviews is an approve whose `Reviewed-Head:` line
 #                            names the head (§4.2 `approved_at_head`).
@@ -84,8 +85,11 @@ def gh_reviewed_at_head:
              | ascii_downcase;
              . == $sha);
 
+# A review whose `state` is null or missing carries no verdict: it is ignored
+# rather than indexed into the state map (a null key is a jq error).
 def gh_reviews:
   [ (.reviews // [])[]
+    | select((.state? // "") != "")
     | { author: (.author | _login),
         verdict: ({"APPROVED": "approve", "CHANGES_REQUESTED": "request-changes",
                    "COMMENTED": "comment", "DISMISSED": "dismissed",

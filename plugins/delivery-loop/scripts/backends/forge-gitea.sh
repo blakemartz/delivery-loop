@@ -38,18 +38,22 @@
 #     has no field telling them apart. Right after the base or head moves it
 #     reads false for a few seconds while the conflict check re-runs, so one
 #     false is not a conflict. An open PR that does not read `true` is re-read
-#     up to 3 times with backoff (2 s, 4 s, 6 s: at most 12 s per PR), stopping
-#     at the first `true` (`clean`). It is `conflicting` only when all 4 reads
-#     were false; any other outcome (absent/null on an older server, or false
-#     and null mixed) is `unknown`. A closed PR is never re-read. Only `true` is
-#     `clean`.
-#   - that wait is capped at 12 s per call, not per PR: `pr-list` and `pr-find`
-#     run the one backoff (2 s, 4 s, 6 s) for the whole call and, after each
-#     sleep, re-read every PR still unsettled. So each PR keeps the read
-#     schedule `pr-view` gives it, and a list holding N conflicted or WIP PRs
-#     waits 12 s in total, not 12·N s (it still costs up to 3 extra GETs per
-#     such PR). A PR whose false was not confirmed by the end of that one wait
+#     up to 3 times with backoff (2 s, 4 s, 6 s), stopping at the first `true`
+#     (`clean`). It is `conflicting` only when all 4 reads were false; any
+#     other outcome (absent/null on an older server, or false and null mixed)
+#     is `unknown`. A closed PR is never re-read. Only `true` is `clean`.
+#   - that wait is 12 s per call, whatever the number of PRs: `pr-view`,
+#     `pr-list` and `pr-find` each run the one backoff for the whole call and,
+#     after each sleep, re-read every PR still unsettled. So a listed PR keeps
+#     the read schedule `pr-view` gives it, and a list holding N conflicted or
+#     WIP PRs sleeps once through that backoff, not N times. The cap bounds
+#     the sleeps, not the number of re-reads: such a list still makes up to 3
+#     extra GETs per unsettled PR, so its wall time grows with N by the request
+#     latency. A PR whose false was not confirmed by the end of that one wait
 #     reads `unknown`.
+#   - a re-read that fails (network/TLS error, a non-2xx answer, a body that is
+#     not a PullRequest object) fails the call: exit 1 with a message naming
+#     the PR. It is never taken for a null read, so never a silent `unknown`.
 #   - `checks` is rolled up in the adapter over every `statuses[].status` of
 #     GET /commits/{sha}/status, paged in full like any list (LIST_LIMIT exit 3
 #     included); `warning` and `skipped` count as success. That endpoint is
@@ -297,6 +301,8 @@ paged() {
 get_pr() {
   api GET "$RP/pulls/$1"
   ok2xx || die_http "GET pull #$1"
+  jq -e 'type == "object"' "$tmp/resp" >/dev/null 2>&1 \
+    || die "GET pull #$1: the response is not a JSON object"
   cp "$tmp/resp" "$2"
 }
 
@@ -308,17 +314,22 @@ get_pr() {
 # read on the schedule a lone PR gets. A `false` is a conflict only when every
 # read of that wait was false (Gitea reads false while its conflict check
 # runs); a false left unconfirmed is rewritten to null, so it reads `unknown`.
+# The cap bounds the sleeps, not the re-reads (up to $POLLS GETs per unsettled
+# PR). A read that cannot be classified, or a re-read that fails, fails the
+# call naming the PR: it is never counted as a null read.
 settle() {
-  local count="$1" i=0 k pending="" still mixed=" " f
+  local count="$1" i=0 k pending="" still mixed=" " f n st
   k=0
   while [ "$k" -lt "$count" ]; do pending="$pending $k"; k=$((k + 1)); done
   while :; do
     still=""
     for k in $pending; do
+      f="$tmp/pr-$k.json"
       # settled | true (unsettled, reads false) | false (unsettled, reads null)
-      case "$(fjq -r 'include "forge-gitea";
-                      if gt_mergeable_unsettled then .mergeable == false else "settled" end' \
-                "$tmp/pr-$k.json")" in
+      st=$(fjq -r 'include "forge-gitea";
+                   if gt_mergeable_unsettled then .mergeable == false else "settled" end' "$f") \
+        || die "pull #$(jq -r '.number? // "?"' "$f" 2>/dev/null || echo '?'): cannot read its mergeability"
+      case "$st" in
         settled) continue ;;
         true) : ;;
         *) case "$mixed" in *" $k "*) : ;; *) mixed="$mixed$k " ;; esac ;;
@@ -331,7 +342,10 @@ settle() {
     sleep $((i * 2))
     for k in $pending; do
       f="$tmp/pr-$k.json"
-      get_pr "$(jq -r .number "$f")" "$f"
+      n=$(jq -r .number "$f")
+      # In a subshell, so that a failed read (it exits there, with its own
+      # message) is reported here against the PR being confirmed.
+      ( get_pr "$n" "$f" ) || die "pull #$n: the re-read confirming its mergeability failed"
     done
   done
   for k in $pending; do
