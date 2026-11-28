@@ -310,7 +310,8 @@ task claimed in-review agent 1
 task claimed in-review reconcile 1
 promote claimed in-review promote 1
 task in-review changes-requested agent 1
-task in-review changes-requested reconcile 0
+task in-review changes-requested reconcile 1
+task in-review changes-requested human 0
 task changes-requested in-review agent 1
 task in-review approved agent 1
 task ready approved agent 0

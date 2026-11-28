@@ -23,7 +23,8 @@
 # The §4.3 linkage precedence, `patch_iteration`, `reviewed_at_head` and the
 # ISO-8601 parser are forge-neutral rules: they are reused from forge-github.jq
 # (fed github-named fields) rather than restated, so the two adapters cannot drift.
-# `approved_at_head` is forge-verdict.jq's rule over this adapter's `gt_reviews`.
+# `verdict_at_head`, `approved_at_head` and `approved_head_sha` are
+# forge-verdict.jq's rules over this adapter's `gt_reviews`.
 include "pr";
 include "shape";
 include "forge-github";
@@ -100,6 +101,8 @@ def gt_pr($graph_backend):
       patch_iteration: ({comments: $comments} | gh_patch_iteration),
       reviewed_at_head: ({headRefOid: $p.head.sha, reviews: $reviews, comments: $comments} | gh_reviewed_at_head),
       approved_at_head: ($reviews | gt_reviews($comments) | approved_at_head($p.head.sha)),
+      verdict_at_head: ($reviews | gt_reviews($comments) | verdict_at_head($p.head.sha)),
+      approved_head_sha: ($reviews | gt_reviews($comments) | approved_head_sha($p.head.sha)),
       agent: ($labels | any(.[]; . == agent_label)),
       author: ($p.user | _gt_login) }
   | validate_pr;

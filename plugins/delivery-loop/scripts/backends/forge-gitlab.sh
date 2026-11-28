@@ -91,7 +91,9 @@
 #   - `pr-reviews` lists the approvals (GET …/approvals) as `approve`, then the
 #     non-system notes whose first non-blank line is a verdict heading
 #     (`^## .*verdict: (APPROVE|REQUEST_CHANGES|COMMENT)`, any case: the shared
-#     rule of backends/forge-verdict.jq).
+#     rule of backends/forge-verdict.jq). An APPROVE note whose author revoked
+#     the approval afterwards (the `unapproved this merge request` system note)
+#     is listed as `dismissed`, so it no longer approves its head.
 #   - notes carry no URL; it is `<web_url>#note_<id>`, the MR page anchor.
 #   - `pr-merge` PUTs …/merge `{squash, should_remove_source_branch, sha}` (405
 #     cannot merge, 409 sha mismatch, 422 merge failed: each exits 1 at once),

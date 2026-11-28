@@ -38,14 +38,27 @@
 #      an epic is left to rules 1/2/7). Runs before rules 1 and 2, so a
 #      drifted node is never shuffled between ready and blocked first: an open
 #      PR outranks the deps.
+#  10. an in-review or approved task + an open agent PR with its task_id
+#      whose verdict_at_head is request-changes -> changes-requested (GC78):
+#      the latest verdict at the PR's current head asks for changes, and the
+#      reviewer's own transition was not made (in-review) or is not legal
+#      (approved), so the tick's patch rule takes the PR next. The reason
+#      names the PR and its head (`PR #N has a request-changes verdict at its
+#      head <sha7>`). With several such PRs the lowest number names the
+#      record. From approved, only reconcile may make this move
+#      (transitions.jq). Runs before rule 9, so such a node is not sent to
+#      in-review first.
 #   9. an approved task + an open agent PR with its task_id whose
-#      approved_at_head is false -> in-review (GC77): the head moved since the
-#      approval (a push, or the loop's own rebase action), so no approve
-#      verdict covers what would merge; a request-changes or comment verdict
-#      at the new head is not one. The reason names the PR and its new head
-#      (`PR #N head moved to <sha7> since its approval`); the tick's review
-#      rule then re-reviews a head that has no verdict. With several such PRs
-#      the lowest number names the record. Only reconcile may make this move
+#      approved_at_head is false -> in-review (GC77): no approve verdict
+#      covers what would merge. The reason names the PR, its head and the
+#      actual cause: `PR #N head moved to <sha7> since its approval` when the
+#      PR's latest approve verdict names another head (approved_head_sha: a
+#      push, or the loop's own rebase action), else `PR #N has no approve
+#      verdict at its current head <sha7>` (an approval recorded with no
+#      verdict, or an approve there that a later comment verdict superseded
+#      or that was dismissed or revoked). The tick's review rule then
+#      re-reviews a head that has no verdict. With several such PRs the
+#      lowest number names the record. Only reconcile may make this move
 #      (transitions.jq).
 #   1. blocked -> ready when deps_done and not needs_human (GC4).
 #   2. ready -> blocked when not deps_done.
@@ -61,8 +74,8 @@
 #   8. warnings: `blocked on cancelled dep`, `unknown dep` (open nodes), and
 #      `cycle: a → … → a`, one per strongly connected component, naming the
 #      SCC's members when the cycle misses some (graph.jq cycle_text).
-# Rules 1-7 and 9 act on task, epic and promote nodes only (_subjects; rule 9 on
-# tasks only): an `external` node (§4.1) gets no record of any rule, filtered
+# Rules 1-7, 9 and 10 act on task, epic and promote nodes only (_subjects; rules
+# 9 and 10 on tasks only): an `external` node (§4.1) gets no record of any rule, filtered
 # here rather than left for the transition table to reject, so a board with
 # externals prints no "skipped" warnings. Externals still count as deps
 # (satisfied only when done) and as epic children (rule 7), since both read the
@@ -115,10 +128,10 @@ def _offer_all(f): reduce f as $rec (.; _offer($rec));
 # _nodes — the working copy as a node array, in input order.
 def _nodes: .idx as $idx | .order | map($idx[.]);
 
-# _is_subject — input: a node. Rules 1-7 and 9 act on it (§5: task, epic, promote).
+# _is_subject — input: a node. Rules 1-7, 9 and 10 act on it (§5: task, epic, promote).
 def _is_subject: .kind == "task" or .kind == "epic" or .kind == "promote";
 
-# _subjects — the working copy's rule 1-7 and 9 subjects, as a stream, in input order.
+# _subjects — the working copy's rule 1-7, 9 and 10 subjects, as a stream, in input order.
 def _subjects: _nodes[] | select(_is_subject);
 
 def _rec($op; $to; $reason): {op: $op, id, from: .status, to: $to, reason: $reason};
@@ -182,9 +195,25 @@ def _rule4($open):
     | first($open[] | select(.agent and .task_id == $id)) as $pr
     | _rec("transition"; "in-review"; "open PR #\($pr.number)"));
 
+# _rule10 — the latest verdict at the PR's current head is a request-changes
+# (§4.2 `verdict_at_head`) but the node never left in-review, or is approved (an
+# approve the request-changes superseded): reconcile makes the move the
+# reviewer did not, or may not, make, so tick-plan's patch rule takes the PR.
+def _rule10($open):
+  _offer_all(
+    _subjects
+    | select(.kind == "task" and (.status == "in-review" or .status == "approved"))
+    | .id as $id
+    | ([$open[] | select(.agent and .task_id == $id and .verdict_at_head == "request-changes")]
+       | min_by(.number)) as $pr
+    | select($pr != null)
+    | _rec("transition"; "changes-requested";
+           "PR #\($pr.number) has a request-changes verdict at its head \($pr.head_sha[0:7])"));
+
 # _rule9 — an approval covers one head. `approved_at_head` (§4.2) is false once
-# the PR's head has no approve verdict, so the approved node goes back to
-# in-review and tick-plan's review rule picks up a head with no verdict.
+# no approve verdict stands at the PR's head, so the approved node goes back to
+# in-review and tick-plan's review rule picks up a head with no verdict. The
+# head moved only when the latest approve verdict names another one.
 def _rule9($open):
   _offer_all(
     _subjects
@@ -193,8 +222,12 @@ def _rule9($open):
     | ([$open[] | select(.agent and .task_id == $id and (.approved_at_head | not))]
        | min_by(.number)) as $pr
     | select($pr != null)
+    | $pr.head_sha[0:7] as $at
     | _rec("transition"; "in-review";
-           "PR #\($pr.number) head moved to \($pr.head_sha[0:7]) since its approval"));
+           if $pr.approved_head_sha != null
+              and ($pr.approved_head_sha | ascii_downcase) != ($pr.head_sha | ascii_downcase)
+           then "PR #\($pr.number) head moved to \($at) since its approval"
+           else "PR #\($pr.number) has no approve verdict at its current head \($at)" end));
 
 def _rule5($open; $now):
   _offer_all(
@@ -233,7 +266,7 @@ def reconcile_plan:
   | .now as $now
   | {order: ($nodes | map(.id)), idx: ($nodes | index_by_id),
      touched: {}, records: [], warnings: []}
-  | _rule3($prs) | _rule7 | _rule4($open) | _rule9($open) | _rules12 | _rule5($open; $now)
+  | _rule3($prs) | _rule7 | _rule4($open) | _rule10($open) | _rule9($open) | _rules12 | _rule5($open; $now)
   | _rule6($now) | _rule8
   | {records, warnings};
 

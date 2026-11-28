@@ -33,11 +33,14 @@
 # node (§4.1) is inert: no action, no `board` count, no `waiting` line (§5).
 #
 # Review at head (GC77): an approved task's PR acts (merge, rebase) only while
-# `approved_at_head` holds: an approve verdict names the PR's current head. A
-# head with no verdict, or with only a request-changes or comment verdict, is
-# not approved. Such a PR is a `waiting` line; reconcile rule 9 sends the node
-# back to in-review, where rule 4 reviews a head that has no verdict yet.
-# tick-merge.sh re-applies this rule, so it refuses such a PR too.
+# `approved_at_head` holds: the latest verdict naming the PR's current head is
+# an approve. A head with no verdict, or one whose latest verdict is a
+# request-changes or a comment (also after an approve at that same head, GC78),
+# is not approved. Such a PR is a `waiting` line; reconcile moves the node on:
+# rule 10 to changes-requested when that verdict is a request-changes (the
+# patch rule takes it), else rule 9 back to in-review, where rule 4 reviews a
+# head that has no verdict yet. tick-merge.sh re-applies this rule, so it
+# refuses such a PR too.
 #
 # Hardening (GC70): a merge needs the PR's base to equal the node's
 # target_branch, and a task gets at most one merge per tick (the lowest PR
@@ -71,12 +74,12 @@ def _pr_rule($n; $auto):
     elif $n.kind != "task" then empty
     elif $n.status == "approved" then
       "mergeable=\(.mergeable), checks=\(.checks)" as $state
-      # An approval covers one head (GC77). Without an approve verdict at the
-      # current head nothing here acts, not even a rebase: reconcile rule 9
-      # returns the node to in-review, and the review rule below takes a head
-      # that has no verdict.
+      # An approval covers one head (GC77). Without an approve verdict standing
+      # at the current head nothing here acts, not even a rebase: reconcile
+      # moves the node to changes-requested (rule 10) or back to in-review
+      # (rule 9), where the patch or review rule below takes it.
       | if .approved_at_head | not then
-          {wait: "\($ref) is approved at an older head: awaiting reconcile/re-review"}
+          {wait: "\($ref) is approved, but no approve verdict stands at its head \(.head_sha[0:7]): awaiting reconcile"}
         elif .mergeable == "conflicting" then
           if .patch_iteration < patch_budget then
             {action: "rebase", pr: .number, id: $n.id,

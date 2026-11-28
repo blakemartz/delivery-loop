@@ -198,6 +198,35 @@ gt_at_head "a REQUEST_CHANGES review at the head" "$(gt_rv REQUEST_CHANGES "no\n
 gt_at_head "a dismissed APPROVED review at the head" "$(gt_rv APPROVED "ok\n\nReviewed-Head: $H" true)" '[]' "true false"
 gt_at_head "an APPROVE-headed comment at the head" '[]' "$(gt_cm "## Adversarial review — verdict: APPROVE\n\nReviewed-Head: $H")" "true true"
 gt_at_head "a REQUEST_CHANGES-headed comment at the head" '[]' "$(gt_cm "## Adversarial review — verdict: REQUEST_CHANGES\n\nReviewed-Head: $H")" "true false"
+# GC78: the verdict at a head is the latest verdict naming it (§4.2
+# verdict_at_head), across reviews and comment-form verdicts; a dismissed
+# review is no verdict.
+gt_head_verdict() { # <name> <reviews json> <comments json> <want "verdict approved approved-head">
+  got=$(jq -r -L "$here/../lib" -L "$here/../backends" --arg h "$H" --argjson r "$2" --argjson c "$3" \
+    'include "forge-gitea";
+     {pr: {number: 1, html_url: "u", state: "open", merged: false, mergeable: true, body: "",
+           head: {ref: "h", sha: $h}, base: {ref: "main"}, labels: [], user: {login: "a"}},
+      statuses: [], comments: $c, reviews: $r}
+     | gt_pr("local") | "\(.verdict_at_head) \(.approved_at_head) \(.approved_head_sha)"' <<<null)
+  rc=0; out="$got"; err=""; want="$4"
+  expect "GC78: $1 -> verdict/approved at head, approved head: $want" '[ "$got" = "$want" ]'
+}
+# gt_rvt <state> <hh:mm> [dismissed] / gt_cmt <VERDICT> <hh:mm>: one review / one
+# verdict comment at the head, timed (gitea stamps carry an offset).
+gt_rvt() { jq -cn --arg s "$1" --arg h "$H" --arg t "$2" --argjson d "${3:-false}" '[{state: $s, dismissed: $d, body: "body\n\nReviewed-Head: \($h)", user: {login: "r"}, submitted_at: "2026-11-08T\($t):00+01:00", commit_id: "x"}]'; }
+gt_cmt() { jq -cn --arg v "$1" --arg h "$H" --arg t "$2" '[{body: "## Adversarial review — verdict: \($v)\n\nReviewed-Head: \($h)", user: {login: "r"}, created_at: "2026-11-08T\($t):00+01:00"}]'; }
+gt_both() { jq -cn --argjson a "$1" --argjson b "$2" '$a + $b'; }
+gt_head_verdict "an APPROVED review, then a REQUEST_CHANGES review at the same head" \
+  "$(gt_both "$(gt_rvt APPROVED 15:00)" "$(gt_rvt REQUEST_CHANGES 16:00)")" '[]' "request-changes false $H"
+gt_head_verdict "a REQUEST_CHANGES review, then an APPROVED review at the same head" \
+  "$(gt_both "$(gt_rvt REQUEST_CHANGES 15:00)" "$(gt_rvt APPROVED 16:00)")" '[]' "approve true $H"
+gt_head_verdict "an APPROVED review, then a REQUEST_CHANGES-headed comment at the same head" \
+  "$(gt_rvt APPROVED 15:00)" "$(gt_cmt REQUEST_CHANGES 16:00)" "request-changes false $H"
+gt_head_verdict "an APPROVE-headed comment, then a REQUEST_CHANGES-headed comment at the same head" '[]' \
+  "$(gt_both "$(gt_cmt APPROVE 15:00)" "$(gt_cmt REQUEST_CHANGES 16:00)")" "request-changes false $H"
+gt_head_verdict "an APPROVED review, then a dismissed REQUEST_CHANGES review: the approve stands" \
+  "$(gt_both "$(gt_rvt APPROVED 15:00)" "$(gt_rvt REQUEST_CHANGES 16:00 true)")" '[]' "approve true $H"
+gt_head_verdict "a dismissed APPROVED review (unchanged: it does not count)" "$(gt_rvt APPROVED 15:00 true)" '[]' "null false null"
 
 # §4.3 on gitea: GRAPH_BACKEND is local, so `Closes #16` (102) is not linkage;
 # the legacy head branch is.

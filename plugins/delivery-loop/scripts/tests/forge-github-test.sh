@@ -120,6 +120,66 @@ at_head "approved at an older head, request-changes at the head" \
 at_head "an approve trailer in upper case matches the head" '[]' \
   "$(cm "## Adversarial review — verdict: APPROVE\n\nReviewed-Head: $(tr a-f A-F <<<"$H")")" "true true"
 
+# GC78: the verdict at a head is the latest verdict naming it (§4.2
+# verdict_at_head), across formal reviews and comment-form verdicts; a dismissed
+# review is no verdict, so the one before it stands. approved_head_sha is the
+# head the latest approve names.
+head_verdict() { # <name> <reviews json> <comments json> <want "verdict approved approved-head">
+  got=$(jq -r -L "$here/../lib" -L "$here/../backends" --arg h "$H" --argjson r "$2" --argjson c "$3" \
+    'include "forge-github"; {headRefOid: $h, reviews: $r, comments: $c}
+     | "\(gh_verdict_at_head) \(gh_approved_at_head) \(gh_approved_head_sha)"' <<<null)
+  rc=0; out="$got"; err=""; want="$4"
+  expect "GC78: $1 -> verdict/approved at head, approved head: $want" '[ "$got" = "$want" ]'
+}
+# rvt <state> <verdict head> <hh:mm> / cmt <VERDICT> <verdict head> <hh:mm>: one
+# formal review / one verdict comment, timed; an empty <hh:mm> leaves it undated.
+rvt() { jq -cn --arg s "$1" --arg h "$2" --arg t "$3" '[{state: $s, body: "body\n\nReviewed-Head: \($h)", author: {login: "r"},
+          submittedAt: (if $t == "" then null else "2026-11-08T\($t):00Z" end), commit: {oid: "x"}}]'; }
+cmt() { jq -cn --arg v "$1" --arg h "$2" --arg t "$3" '[{body: "## Adversarial review — verdict: \($v)\n\nReviewed-Head: \($h)", author: {login: "r"},
+          createdAt: (if $t == "" then null else "2026-11-08T\($t):00Z" end)}]'; }
+# both <json array> <json array>: the two concatenated.
+both() { jq -cn --argjson a "$1" --argjson b "$2" '$a + $b'; }
+head_verdict "no verdict" '[]' '[]' "null false null"
+head_verdict "formal approve, then formal request-changes at the same head" \
+  "$(both "$(rvt APPROVED "$H" 15:00)" "$(rvt CHANGES_REQUESTED "$H" 16:00)")" '[]' "request-changes false $H"
+head_verdict "formal request-changes, then formal approve at the same head" \
+  "$(both "$(rvt CHANGES_REQUESTED "$H" 15:00)" "$(rvt APPROVED "$H" 16:00)")" '[]' "approve true $H"
+head_verdict "the review list order does not decide: the later approve is listed first" \
+  "$(both "$(rvt APPROVED "$H" 16:00)" "$(rvt CHANGES_REQUESTED "$H" 15:00)")" '[]' "approve true $H"
+head_verdict "approve comment, then request-changes comment at the same head" '[]' \
+  "$(both "$(cmt APPROVE "$H" 15:00)" "$(cmt REQUEST_CHANGES "$H" 16:00)")" "request-changes false $H"
+head_verdict "formal approve, then a request-changes comment at the same head" \
+  "$(rvt APPROVED "$H" 15:00)" "$(cmt REQUEST_CHANGES "$H" 16:00)" "request-changes false $H"
+head_verdict "a request-changes comment, then a formal approve at the same head" \
+  "$(rvt APPROVED "$H" 16:00)" "$(cmt REQUEST_CHANGES "$H" 15:00)" "approve true $H"
+head_verdict "approve, then a comment verdict at the same head" \
+  "$(rvt APPROVED "$H" 15:00)" "$(cmt COMMENT "$H" 16:00)" "comment false $H"
+head_verdict "approve, then a request-changes that was dismissed: the approve stands" \
+  "$(both "$(rvt APPROVED "$H" 15:00)" "$(rvt DISMISSED "$H" 16:00)")" '[]' "approve true $H"
+head_verdict "a dismissed approval (unchanged: it does not count)" "$(rvt DISMISSED "$H" 15:00)" '[]' "null false null"
+head_verdict "request-changes, then an approve that was dismissed: the request-changes stands" \
+  "$(both "$(rvt CHANGES_REQUESTED "$H" 15:00)" "$(rvt DISMISSED "$H" 16:00)")" '[]' "request-changes false null"
+head_verdict "approve and request-changes at the same instant: the approve does not win" \
+  "$(rvt APPROVED "$H" 15:00)" "$(cmt REQUEST_CHANGES "$H" 15:00)" "request-changes false $H"
+head_verdict "an undated approve never outranks a dated request-changes" \
+  "$(rvt APPROVED "$H" "")" "$(cmt REQUEST_CHANGES "$H" 15:00)" "request-changes false $H"
+head_verdict "an undated request-changes outranks a dated approve" \
+  "$(rvt APPROVED "$H" 16:00)" "$(cmt REQUEST_CHANGES "$H" "")" "request-changes false $H"
+head_verdict "approve at the head, then a request-changes naming an older head: the head's verdict is the approve" \
+  "$(rvt APPROVED "$H" 15:00)" "$(cmt REQUEST_CHANGES "$O" 16:00)" "approve true $H"
+head_verdict "approve at an older head, request-changes at the head: the approved head is the older one" \
+  "$(rvt APPROVED "$O" 15:00)" "$(cmt REQUEST_CHANGES "$H" 16:00)" "request-changes false $O"
+head_verdict "approves at two heads: the approved head is the latest approve's" \
+  "$(both "$(rvt APPROVED "$H" 15:00)" "$(rvt APPROVED "$O" 16:00)")" '[]' "approve true $O"
+head_verdict "fractional seconds order two verdicts of one second" '[]' \
+  "$(jq -cn --arg h "$H" '[{body: "## Review — verdict: REQUEST_CHANGES\n\nReviewed-Head: \($h)", author: {login: "r"}, createdAt: "2026-11-08T15:00:00.900Z"},
+                           {body: "## Review — verdict: APPROVE\n\nReviewed-Head: \($h)", author: {login: "r"}, createdAt: "2026-11-08T15:00:00.100Z"}]')" \
+  "request-changes false $H"
+head_verdict "an offset timestamp is compared as an instant" '[]' \
+  "$(jq -cn --arg h "$H" '[{body: "## Review — verdict: APPROVE\n\nReviewed-Head: \($h)", author: {login: "r"}, createdAt: "2026-11-08T15:30:00Z"},
+                           {body: "## Review — verdict: REQUEST_CHANGES\n\nReviewed-Head: \($h)", author: {login: "r"}, createdAt: "2026-11-08T17:00:00+02:00"}]')" \
+  "approve true $H"
+
 # --- GC33 / GC46: task_id linkage precedence (§4.3) ---------------------------
 reset
 check_task() { # <pr> <expected task_id json> <label> [GRAPH_BACKEND]

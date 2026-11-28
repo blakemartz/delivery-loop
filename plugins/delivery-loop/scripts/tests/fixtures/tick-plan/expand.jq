@@ -6,7 +6,9 @@
 #                board (the claimant stays assigned through review).
 #   full_pr    — defaults: an open agent PR into `main`, clean, checks success;
 #                no verdict at its head (`reviewed_at_head` and
-#                `approved_at_head` false); `agent` always follows `labels`
+#                `approved_at_head` false). `verdict_at_head` and
+#                `approved_head_sha` follow `approved_at_head` unless given
+#                ("approve" at `head_sha`, or null). `agent` always follows `labels`
 #                (default ["agent-authored"]).
 #   full_input — {flags, nodes, prs} → the tick_plan input.
 def full_node:
@@ -30,7 +32,11 @@ def full_pr:
    labels: ["agent-authored"], patch_iteration: 0, reviewed_at_head: false,
    approved_at_head: false, author: "agent"}
   + .
-  | .agent = any(.labels[]; . == "agent-authored");
+  | .agent = any(.labels[]; . == "agent-authored")
+  | if has("verdict_at_head") then .
+    else .verdict_at_head = (if .approved_at_head then "approve" else null end) end
+  | if has("approved_head_sha") then .
+    else .approved_head_sha = (if .approved_at_head then .head_sha else null end) end;
 
 def full_input:
   {nodes: ((.nodes // []) | map(full_node)), prs: ((.prs // []) | map(full_pr)),

@@ -13,6 +13,8 @@
     "patch_iteration": 2,
     "reviewed_at_head": true,
     "approved_at_head": true,
+    "verdict_at_head": "approve",
+    "approved_head_sha": "dbc0f004854457f59fb16ab863a3a1722cef553f",
     "agent": true,
     "author": "astra"
   },
@@ -30,6 +32,8 @@
     "patch_iteration": 0,
     "reviewed_at_head": true,
     "approved_at_head": true,
+    "verdict_at_head": "approve",
+    "approved_head_sha": "c8306ae139ac98f432932286151dc0ec55580eca",
     "agent": true,
     "author": "astra"
   },
@@ -47,6 +51,8 @@
     "patch_iteration": 0,
     "reviewed_at_head": false,
     "approved_at_head": false,
+    "verdict_at_head": null,
+    "approved_head_sha": null,
     "agent": false,
     "author": "ghost"
   },
@@ -64,6 +70,8 @@
     "patch_iteration": 0,
     "reviewed_at_head": false,
     "approved_at_head": false,
+    "verdict_at_head": null,
+    "approved_head_sha": null,
     "agent": true,
     "author": "astra"
   },
@@ -81,6 +89,8 @@
     "patch_iteration": 0,
     "reviewed_at_head": false,
     "approved_at_head": false,
+    "verdict_at_head": null,
+    "approved_head_sha": null,
     "agent": true,
     "author": "astra"
   },
@@ -98,6 +108,8 @@
     "patch_iteration": 0,
     "reviewed_at_head": false,
     "approved_at_head": false,
+    "verdict_at_head": null,
+    "approved_head_sha": null,
     "agent": true,
     "author": "astra"
   }

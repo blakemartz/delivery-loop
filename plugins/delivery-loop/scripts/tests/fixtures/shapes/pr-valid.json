@@ -13,6 +13,8 @@
     "patch_iteration": 1,
     "reviewed_at_head": true,
     "approved_at_head": true,
+    "verdict_at_head": "approve",
+    "approved_head_sha": "767b6884d1c0f1e2a3b4c5d6e7f8091a2b3c4d5e",
     "agent": true,
     "author": "astra"
   },
@@ -30,6 +32,8 @@
     "patch_iteration": 0,
     "reviewed_at_head": false,
     "approved_at_head": false,
+    "verdict_at_head": null,
+    "approved_head_sha": null,
     "agent": false,
     "author": "ann"
   }

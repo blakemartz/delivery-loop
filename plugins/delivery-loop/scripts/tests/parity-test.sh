@@ -134,9 +134,9 @@ case "$acts" in
   *'"merge 205"'*) fail "F3: no merge of #205 at a head nobody reviewed" "$acts" ;;
   *) ok "F3: no merge of #205 at a head nobody reviewed ($acts)" ;;
 esac
-want='PR #205 (15) is approved at an older head: awaiting reconcile/re-review'
-if jq -e --arg w "$want" 'any(.waiting[]; . == $w)' "$tmp/gh.out" > /dev/null; then ok "F3: #205 waits for reconcile/re-review"
-else fail "F3: #205 waits for reconcile/re-review" "$(jq -c .waiting "$tmp/gh.out")"; fi
+want='PR #205 (15) is approved, but no approve verdict stands at its head d4c5c18: awaiting reconcile'
+if jq -e --arg w "$want" 'any(.waiting[]; . == $w)' "$tmp/gh.out" > /dev/null; then ok "F3: #205 waits for reconcile"
+else fail "F3: #205 waits for reconcile" "$(jq -c .waiting "$tmp/gh.out")"; fi
 
 # The plan (no write): the same rule-9 record on both shapes.
 want='{"op":"transition","id":"15","from":"approved","to":"in-review","reason":"PR #205 head moved to d4c5c18 since its approval"}'

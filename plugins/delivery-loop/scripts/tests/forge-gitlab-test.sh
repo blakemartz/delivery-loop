@@ -116,6 +116,53 @@ gl_at_head "a REQUEST_CHANGES note at the head" "$(printf '## Adversarial review
 gl_at_head "a COMMENT note at the head" "$(printf '## Adversarial review — verdict: COMMENT\n\nReviewed-Head: %s' "$GH")" false "true false"
 gl_at_head "an APPROVE note at an older head" "$(printf '## Adversarial review — verdict: APPROVE\n\nReviewed-Head: %s' bbbbbbb000000000000000000000000000000000)" false "false false"
 gl_at_head "a system note is no verdict" "$(printf '## Adversarial review — verdict: APPROVE\n\nReviewed-Head: %s' "$GH")" true "false false"
+# GC78: the verdict at a head is the latest verdict note naming it (§4.2
+# verdict_at_head), and a revoked approval does not count: GitLab leaves the
+# APPROVE note behind and records the revocation as the revoking user's system
+# note `unapproved this merge request`.
+gl_head_verdict() { # <name> <notes json> <want "reviewed verdict approved approved-head">
+  got=$(gljq -r --arg h "$GH" --argjson n "$2" 'include "forge-gitlab";
+    {mr: {iid: 1, web_url: "u", state: "opened", source_branch: "h", target_branch: "main", sha: $h,
+          detailed_merge_status: "mergeable", description: "", labels: [], author: {username: "a"}},
+     notes: $n}
+    | gl_pr("local") | "\(.reviewed_at_head) \(.verdict_at_head) \(.approved_at_head) \(.approved_head_sha)"' <<<null)
+  rc=0; out="$got"; err=""; want="$3"
+  expect "GC78: $1 -> reviewed, verdict/approved at head, approved head: $want" '[ "$got" = "$want" ]'
+}
+# vn <VERDICT> <user> <hh:mm:ss.mmm>: a verdict note at the head; sn <body>
+# <user> <hh:mm:ss.mmm>: a system note; notes <note>…: the note list.
+vn() { jq -cn --arg v "$1" --arg u "$2" --arg t "$3" --arg h "$GH" '{body: "## Adversarial review — verdict: \($v)\n\nReviewed-Head: \($h)", system: false, author: {username: $u}, created_at: "2026-11-08T\($t)Z"}'; }
+sn() { jq -cn --arg b "$1" --arg u "$2" --arg t "$3" '{body: $b, system: true, author: {username: $u}, created_at: "2026-11-08T\($t)Z"}'; }
+notes() { printf '%s\n' "$@" | jq -cs .; }
+UN='unapproved this merge request'
+gl_head_verdict "an approval and its APPROVE note" \
+  "$(notes "$(sn 'approved this merge request' r 15:00:00.000)" "$(vn APPROVE r 15:00:01.000)")" "true approve true $GH"
+gl_head_verdict "a revoked approval: its APPROVE note does not count" \
+  "$(notes "$(sn 'approved this merge request' r 15:00:00.000)" "$(vn APPROVE r 15:00:01.000)" "$(sn "$UN" r 16:00:00.000)")" \
+  "true null false null"
+gl_head_verdict "an approval revoked in the note's own millisecond is revoked" \
+  "$(notes "$(vn APPROVE r 15:00:01.000)" "$(sn "$UN" r 15:00:01.000)")" "true null false null"
+gl_head_verdict "another user's revocation leaves the approval standing" \
+  "$(notes "$(vn APPROVE r 15:00:01.000)" "$(sn "$UN" other 16:00:00.000)")" "true approve true $GH"
+gl_head_verdict "a revocation before the APPROVE note (revoked, then approved again) leaves it standing" \
+  "$(notes "$(sn "$UN" r 15:00:00.900)" "$(vn APPROVE r 15:00:01.000)")" "true approve true $GH"
+gl_head_verdict "revoked, then approved again with a new note: the new note stands" \
+  "$(notes "$(vn APPROVE r 15:00:01.000)" "$(sn "$UN" r 16:00:00.000)" "$(vn APPROVE r 17:00:00.000)")" "true approve true $GH"
+gl_head_verdict "a revoked approval under an earlier request-changes: the request-changes stands" \
+  "$(notes "$(vn REQUEST_CHANGES q 14:00:00.000)" "$(vn APPROVE r 15:00:01.000)" "$(sn "$UN" r 16:00:00.000)")" \
+  "true request-changes false null"
+gl_head_verdict "a human note that only says so is no revocation" \
+  "$(notes "$(vn APPROVE r 15:00:01.000)" "$(jq -c '.system = false' <<<"$(sn "$UN" r 16:00:00.000)")")" "true approve true $GH"
+gl_head_verdict "a revocation with an unreadable timestamp revokes" \
+  "$(notes "$(vn APPROVE r 15:00:01.000)" "$(jq -c '.created_at = null' <<<"$(sn "$UN" r 16:00:00.000)")")" "true null false null"
+gl_head_verdict "an APPROVE note, then a REQUEST_CHANGES note at the same head" \
+  "$(notes "$(vn APPROVE r 15:00:01.000)" "$(vn REQUEST_CHANGES r 16:00:00.000)")" "true request-changes false $GH"
+gl_head_verdict "a REQUEST_CHANGES note, then an APPROVE note at the same head" \
+  "$(notes "$(vn REQUEST_CHANGES r 15:00:01.000)" "$(vn APPROVE r 16:00:00.000)")" "true approve true $GH"
+got=$(gljq -c 'include "forge-gitlab"; gl_reviews({approved_by: []}) | map(.verdict)' \
+  <<<"$(notes "$(vn REQUEST_CHANGES q 14:00:00.000)" "$(vn APPROVE r 15:00:01.000)" "$(sn "$UN" r 16:00:00.000)" "$(vn APPROVE r 17:00:00.000)")")
+rc=0; out="$got"; err=""
+expect "GC78: pr-reviews lists a revoked approval's note as dismissed" '[ "$got" = "[\"request-changes\",\"dismissed\",\"approve\"]" ]'
 expect "GC28: system notes are not comments (201: patch_iteration 2 from human notes)" '[ "$(jq -s -r ".[0].patch_iteration" "$tmp/gc28.jsonl")" = 2 ]'
 expect "§4.3: Closes #N ignored off the github graph; legacy head task/16-… -> \"16\"" \
   '[ "$(jq -s -r ".[1].task_id" "$tmp/gc28.jsonl")" = 16 ]'

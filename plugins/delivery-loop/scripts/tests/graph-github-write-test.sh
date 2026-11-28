@@ -5,8 +5,8 @@
 # task-queue.sh / claim-task.sh compatibility wrappers. Golden cases GC33 (the
 # reaper), GC42 (the issue is closed), GC61 (task-queue.sh byte-identical to
 # v0.1.4), GC68 (external nodes), GC71 (task+epic is a task), GC75 (a keyword
-# close survives a reopen) and GC77 (rule 9 applied by `reconcile --fix`, on
-# github and on local); plus the H0 bootstrap (close-on-merge into a
+# close survives a reopen), GC77 and GC78 (rules 9 and 10 applied by
+# `reconcile --fix`, on github and on local, and the plan that follows); plus the H0 bootstrap (close-on-merge into a
 # non-default BASE_BRANCH, once per (issue, PR)), the reconcile compare-and-set
 # on updatedAt, exit 4/75 handling, and comments past gh's 100-per-issue cap.
 #
@@ -165,49 +165,83 @@ eq "GC42: the dependent is relabelled ready in the same pass" '["size:S","status
 g -- reconcile
 eq "GC42: the next pass has nothing to do (the marker makes the PR applied)" "" "$out"
 
-# --- GC77: rule 9 applied by reconcile --fix, on github and on local ------------------
-# Each approved task has an open agent PR with no approve verdict at its head:
-# #30's PR was approved at an older head, #31's head carries only a
-# REQUEST_CHANGES verdict. #32's PR is approved at its head (the control).
-# pr.jq gives PR <n> the head <n>000…0.
+# --- GC77, GC78: rules 9 and 10 applied by reconcile --fix, on github and on local ----
+# Each task has an open agent PR, and no approve verdict stands at its head:
+#   #30 approved; its PR was approved at an older head (rule 9: head moved).
+#   #31 approved at an older head; the head carries a REQUEST_CHANGES verdict.
+#   #33 in-review; a REQUEST_CHANGES verdict at the head and no transition
+#       followed it (the stall).
+#   #34 approved; an APPROVE and then a REQUEST_CHANGES verdict at the same head.
+# Rule 10 sends #31, #33 and #34 to changes-requested. The controls stay
+# approved: #32's PR is approved at its head, and #35's carries a
+# REQUEST_CHANGES and then an APPROVE at the same head (the latest verdict wins
+# either way). pr.jq gives PR <n> the head <n>000…0.
 board '[ i(30; "approved, head moved"; ["task","status:approved","size:S"]; "x"),
          i(31; "approved, changes requested at head"; ["task","status:approved","size:S"]; "x"),
-         i(32; "approved at head"; ["task","status:approved","size:S"]; "x") ]' "$tmp/gc77.json"
-prs '[ pr(130; "OPEN"; "main"; "Delivery-Task: 30"; "task/30--x"),
-       pr(131; "OPEN"; "main"; "Delivery-Task: 31"; "task/31--x"),
-       pr(132; "OPEN"; "main"; "Delivery-Task: 32"; "task/32--x") ]
+         i(32; "approved at head"; ["task","status:approved","size:S"]; "x"),
+         i(33; "in review, changes requested at head"; ["task","status:in-review","size:S"]; "x"),
+         i(34; "approved, then changes requested at that head"; ["task","status:approved","size:S"]; "x"),
+         i(35; "changes requested, then approved at that head"; ["task","status:approved","size:S"]; "x") ]' "$tmp/gc77.json"
+prs '[ range(130; 136) as $n | pr($n; "OPEN"; "main"; "Delivery-Task: \($n - 100)"; "task/\($n - 100)--x") ]
      | map(.headRefOid as $h
-           | def v($verdict; $sha): {author: {login: "shim-user"}, createdAt: "2026-06-01T00:00:00Z",
+           | def v($verdict; $sha; $hour): {author: {login: "shim-user"}, createdAt: "2026-06-01T0\($hour):00:00Z",
                body: "## Adversarial review — verdict: \($verdict)\n\nReviewed-Head: \($sha)"};
-             .comments = (if .number == 130 then [v("APPROVE"; "0dd" + $h[3:])]
-                          elif .number == 131 then [v("APPROVE"; "0dd" + $h[3:]), v("REQUEST_CHANGES"; $h)]
-                          else [v("APPROVE"; $h)] end))' "$tmp/gc77-prs.json"
-gc77_fix="$(printf 'fix: transition 30 approved -> in-review: PR #130 head moved to 1300000 since its approval\nfix: transition 31 approved -> in-review: PR #131 head moved to 1310000 since its approval')"
+             .comments = (if .number == 130 then [v("APPROVE"; "0dd" + $h[3:]; 1)]
+                          elif .number == 131 then [v("APPROVE"; "0dd" + $h[3:]; 1), v("REQUEST_CHANGES"; $h; 2)]
+                          elif .number == 133 then [v("REQUEST_CHANGES"; $h; 1)]
+                          elif .number == 134 then [v("APPROVE"; $h; 1), v("REQUEST_CHANGES"; $h; 2)]
+                          elif .number == 135 then [v("REQUEST_CHANGES"; $h; 1), v("APPROVE"; $h; 2)]
+                          else [v("APPROVE"; $h; 1)] end))' "$tmp/gc77-prs.json"
+gc77_fix="$(printf '%s\n' \
+  'fix: transition 30 approved -> in-review: PR #130 head moved to 1300000 since its approval' \
+  'fix: transition 31 approved -> changes-requested: PR #131 has a request-changes verdict at its head 1310000' \
+  'fix: transition 33 in-review -> changes-requested: PR #133 has a request-changes verdict at its head 1330000' \
+  'fix: transition 34 approved -> changes-requested: PR #134 has a request-changes verdict at its head 1340000')"
+gc77_end='["in-review","changes-requested","approved","changes-requested","changes-requested","approved"]'
+# plan_acts: the last tick-plan.sh output as sorted "<action> <pr|id>" strings.
+plan_acts() { jq -c '[.actions[] | "\(.action) \(.pr // .id)"] | sort' <<<"$out"; }
+gc78_plan='["merge 132","merge 135","patch 131","patch 133","patch 134","review 130"]'
 load "$tmp/gc77.json" "$tmp/gc77-prs.json"
+run -- "$scripts/tick-plan.sh" --parallel 9 --auto-merge
+eq "GC78 github: before reconcile, approve-then-request-changes at one head is not proposed for merge" \
+  '["merge 132","merge 135"]' "$(plan_acts)"
 g -- reconcile --fix
 # Record order follows each backend's list order, so the lines are compared sorted.
-eq "GC77 github: reconcile --fix applies rule 9 and prints each record (exit 0)" "0|$gc77_fix" "$rc|$(sort <<<"$out")"
+eq "GC77 GC78 github: reconcile --fix applies rules 9 and 10 and prints each record (exit 0)" "0|$gc77_fix" "$rc|$(sort <<<"$out")"
 eq "GC77 github: the head-moved task is relabelled in-review" '["size:S","status:in-review","task"]' "$(labels 30)"
-eq "GC77 github: the task with only a request-changes verdict at its head is relabelled in-review" \
-  '["size:S","status:in-review","task"]' "$(labels 31)"
+eq "GC78 github: the task with a request-changes verdict at its new head is relabelled changes-requested" \
+  '["size:S","status:changes-requested","task"]' "$(labels 31)"
 eq "GC77 github: the task approved at its head stays approved" '["size:S","status:approved","task"]' "$(labels 32)"
+eq "GC78 github: the stalled in-review task is relabelled changes-requested" \
+  '["size:S","status:changes-requested","task"]' "$(labels 33)"
+eq "GC78 github: the task approved and then refused at one head is relabelled changes-requested" \
+  '["size:S","status:changes-requested","task"]' "$(labels 34)"
+eq "GC78 github: the task refused and then approved at one head stays approved" \
+  '["size:S","status:approved","task"]' "$(labels 35)"
 g -- list
-eq "GC77 github: the nodes read back in-review, in-review, approved" '["in-review","in-review","approved"]' \
-  "$(jq -c '[.[] | select(.id == "30" or .id == "31" or .id == "32")] | sort_by(.id) | map(.status)' <<<"$out")"
+eq "GC77 GC78 github: the nodes read back at their repaired statuses" "$gc77_end" \
+  "$(jq -c '[.[] | select((.id | tonumber) >= 30 and (.id | tonumber) <= 35)] | sort_by(.id) | map(.status)' <<<"$out")"
+run -- "$scripts/tick-plan.sh" --parallel 9 --auto-merge
+eq "GC78 github: the following plan emits patch for each request-changes head (and reviews the moved one)" \
+  "$gc78_plan" "$(plan_acts)"
 g -- reconcile --fix
-eq "GC77 github: the next pass has nothing to do" "0|" "$rc|$out"
+eq "GC77 GC78 github: the next pass has nothing to do" "0|" "$rc|$out"
 # The same board on the local backend (the forge is still the gh shim).
 sd77="$tmp/gc77-state"
-for id in 30 31 32; do
-  g GRAPH_BACKEND=local STATE_DIR="$sd77" -- create "{\"id\":\"$id\",\"kind\":\"task\",\"title\":\"task $id\",\"size\":\"S\",\"status\":\"approved\"}"
+for id in 30 31 32 33 34 35; do
+  status=approved; [ "$id" != 33 ] || status=in-review
+  g GRAPH_BACKEND=local STATE_DIR="$sd77" -- create "{\"id\":\"$id\",\"kind\":\"task\",\"title\":\"task $id\",\"size\":\"S\",\"status\":\"$status\"}"
 done
 g GRAPH_BACKEND=local STATE_DIR="$sd77" -- reconcile --fix
-eq "GC77 local: reconcile --fix applies rule 9 and prints each record (exit 0)" "0|$gc77_fix" "$rc|$(sort <<<"$out")"
+eq "GC77 GC78 local: reconcile --fix applies rules 9 and 10 and prints each record (exit 0)" "0|$gc77_fix" "$rc|$(sort <<<"$out")"
 g GRAPH_BACKEND=local STATE_DIR="$sd77" -- list
-eq "GC77 local: the nodes end in-review, in-review, approved" '["in-review","in-review","approved"]' \
+eq "GC77 GC78 local: the nodes end at the same statuses" "$gc77_end" \
   "$(jq -c 'sort_by(.id) | map(.status)' <<<"$out")"
+run GRAPH_BACKEND=local STATE_DIR="$sd77" -- "$scripts/tick-plan.sh" --parallel 9 --auto-merge
+eq "GC78 local: the following plan emits patch for each request-changes head (and reviews the moved one)" \
+  "$gc78_plan" "$(plan_acts)"
 g GRAPH_BACKEND=local STATE_DIR="$sd77" -- reconcile --fix
-eq "GC77 local: the next pass has nothing to do" "0|" "$rc|$out"
+eq "GC77 GC78 local: the next pass has nothing to do" "0|" "$rc|$out"
 
 # --- GC33: the reaper sees only linked PRs, past gh's default page of 30 ------------
 stale_claim='| .assignees = [{login: "shim-user"}] | .comments = [c("CLAIM agent-1 h-1-1 t"; "2026-01-02T00:00:00Z")]'

@@ -13,7 +13,9 @@ include "shape";
 def pr_fields:
   ["number", "url", "state", "head", "base", "head_sha", "mergeable", "checks",
    "task_id", "labels", "patch_iteration", "reviewed_at_head", "approved_at_head",
-   "agent", "author"];
+   "verdict_at_head", "approved_head_sha", "agent", "author"];
+
+def pr_verdicts: ["approve", "request-changes", "comment"];
 
 def pr_states: ["open", "merged", "closed"];
 
@@ -43,6 +45,8 @@ def pr_errors:
     check("patch_iteration"; is_int and . >= 0; "must be a non-negative integer"),
     check("reviewed_at_head"; is_bool; "must be a boolean"),
     check("approved_at_head"; is_bool; "must be a boolean"),
+    check("verdict_at_head"; . == null or is_enum(pr_verdicts); "must be one of \(pr_verdicts | join("|")) or null"),
+    check("approved_head_sha"; . == null or is_nonempty_string; "must be a non-empty string or null"),
     check("agent"; is_bool; "must be a boolean"),
     # §4.2 types `author` as a string, not nullable: a deleted account is the
     # forge's placeholder login (github/gitea "ghost"), never null.
@@ -52,7 +56,14 @@ def pr_errors:
      then "`agent` must equal whether `labels` contains \"\(agent_label)\"" else empty end),
     # An approve verdict at the head is a verdict at the head (§4.2).
     (if .approved_at_head == true and .reviewed_at_head == false
-     then "`approved_at_head` cannot be true while `reviewed_at_head` is false" else empty end)
+     then "`approved_at_head` cannot be true while `reviewed_at_head` is false" else empty end),
+    # The verdict at the head is one verdict (§4.2): `approved_at_head` restates
+    # whether it is an approve, and any verdict there is a review there.
+    (if (.approved_at_head | type) == "boolean" and has("verdict_at_head")
+        and .approved_at_head != (.verdict_at_head == "approve")
+     then "`approved_at_head` must equal whether `verdict_at_head` is \"approve\"" else empty end),
+    (if (.verdict_at_head // null) != null and .reviewed_at_head == false
+     then "`verdict_at_head` cannot be set while `reviewed_at_head` is false" else empty end)
   ] end;
 
 def validate_pr:
