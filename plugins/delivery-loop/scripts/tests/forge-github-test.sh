@@ -328,6 +328,14 @@ run -- label-ensure needs-human B60205 "Escalated: a human must intervene"
 expect "label-ensure: a missing label -> one gh label create (no --force), {created:true}" \
   '[ "$rc" = 0 ] && jq_true ".name == \"needs-human\" and .created == true" && log_line "gh label create --color B60205 --description Escalated: a human must intervene -- needs-human" && [ "$(log_count "--force")" = 0 ]'
 reset
+run FORGE_DRY_RUN=1 -- label-ensure needs-human B60205 "Escalated: a human must intervene"
+expect "FORGE_DRY_RUN: label-ensure on a missing label lists, sends no gh label create, prints the call instead" \
+  '[ "$rc" = 0 ] && log_line "gh label list --json name --limit 5000" && [ "$(log_count "label create")" = 0 ] && [ "$out" = "gh label create --color B60205 --description Escalated:\\ a\\ human\\ must\\ intervene -- needs-human" ]'
+reset
+run FORGE_DRY_RUN=1 -- label-ensure agent-authored EDEDED "d"
+expect "FORGE_DRY_RUN: label-ensure on a label that exists -> {created:false}, no create" \
+  '[ "$rc" = 0 ] && jq_true ".created == false" && [ "$(log_count "label create")" = 0 ]'
+reset
 touch "$tmp/state/fail-label-create"
 run -- label-ensure needs-human B60205 "d"
 expect "label-ensure: gh label create fails -> exit 1, no JSON" '[ "$rc" = 1 ] && grep -qF "nothing created" <<<"$err" && [ -z "$out" ]'
@@ -337,6 +345,8 @@ expect "label-ensure: the label list reaching LIST_LIMIT -> exit 3, nothing crea
 reset
 run -- label-ensure needs-human "#B60205" "d"
 expect "label-ensure: a color that is not 6 hex digits -> usage exit 2, no gh call" '[ "$rc" = 2 ] && [ ! -s "$tmp/state/log" ]'
+run -- label-ensure needs-human
+expect "label-ensure: no color at all -> usage exit 2, no gh call" '[ "$rc" = 2 ] && grep -qF "usage: label-ensure" <<<"$err" && [ ! -s "$tmp/state/log" ]'
 run -- label-ensure "a,b" B60205 "d"
 expect "label-ensure: a name with a comma -> exit 1, no gh call" '[ "$rc" = 1 ] && [ ! -s "$tmp/state/log" ]'
 

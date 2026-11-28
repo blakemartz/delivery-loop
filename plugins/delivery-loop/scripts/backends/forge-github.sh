@@ -52,12 +52,16 @@
 #     (never `--force`: an existing label is not edited). GitHub compares label
 #     names case-insensitively, so a label differing only in case makes the
 #     create fail: rename it, since the loop matches its labels exactly.
+#     Under FORGE_DRY_RUN=1 the list is still read but a missing label is not
+#     created: the `gh label create …` call is printed instead (exit 0). It is
+#     the only op here that honours FORGE_DRY_RUN.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB="$SCRIPT_DIR/../lib"
 
 : "${LIST_LIMIT:=5000}"
+: "${FORGE_DRY_RUN:=}"
 : "${GRAPH_BACKEND:=github}"
 : "${FORGE_URL:=}"
 : "${FORGE_REPO:=}"
@@ -151,23 +155,16 @@ check_label_names() {
   done
 }
 
-# need_color <color> <usage>: <color> is exactly 6 hex digits (no `#`), else usage.
-need_color() {
-  case "$1" in
-    [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) : ;;
-    *) usage "$2" ;;
-  esac
-}
-
 op_label_ensure() {
   local u="label-ensure <name> <color: 6 hex digits, no #> <description>"
-  [ $# -eq 3 ] && [ -n "$1" ] || usage "$u"
-  need_color "$2" "$u"
+  [ $# -eq 3 ] && [ -n "$1" ] || usage "$u"   # forge.sh has checked <color>
   check_label_names "$1"
   gh label list --json name --limit "$LIST_LIMIT" > "$tmp/labels.json" || die "gh label list failed"
   check_limit "$tmp/labels.json" "gh label list"
   if jq -e --arg n "$1" 'any(.[]; .name == $n)' "$tmp/labels.json" >/dev/null; then
     jq -cn --arg n "$1" '{name: $n, created: false}'
+  elif [ "$FORGE_DRY_RUN" = 1 ]; then
+    printf 'gh label create --color %s --description %q -- %q\n' "$2" "$3" "$1"
   else
     gh label create --color "$2" --description "$3" -- "$1" >/dev/null \
       || die "gh label create '$1' failed; nothing created"

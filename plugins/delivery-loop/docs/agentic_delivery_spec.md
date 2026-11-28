@@ -507,7 +507,8 @@ one forge onto a normalized PR shape and translate; eligibility rules live in
 ssh forms). Tokens come from the environment only and are passed to curl in a
 private header file, never on the command line. `FORGE_DRY_RUN=1` makes the curl
 adapters print each write as `METHOD PATH` plus its JSON body instead of sending
-it.
+it; the github adapter honours it for `label-ensure` only, printing the
+`gh label create` call instead of running it.
 
 **The PR shape** (`lib/pr.jq`): `number` (GitLab's `iid`), `url`, `state`
 (`open` \| `merged` \| `closed`), `head`, `base`, `head_sha`, `mergeable`

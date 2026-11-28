@@ -832,7 +832,9 @@ are derived on read (`list`, `show`) from the node's journal `comment` events, a
   - Tokens come from the environment only. They are never stored in
     `.claude/delivery.conf` (a checked-in file).
 - **`FORGE_DRY_RUN=1`** makes the curl adapters print `METHOD PATH` plus the JSON
-  body instead of sending it. Tests assert against that (GC31).
+  body instead of sending it. Tests assert against that (GC31). The github
+  adapter honours it for `label-ensure` only: it prints the `gh label create`
+  call instead of running it.
 
 ### 7.3 Normalization map
 

@@ -22,11 +22,12 @@
 # auth via `forge.sh whoami`; the PR labels the loop relies on (`agent-authored`,
 # `needs-human`), ensured on the forge through `forge.sh label-ensure` on every
 # forge and both graph backends (an existing label is left as it is; under
-# FORGE_DRY_RUN nothing is created); and on the github backend the label taxonomy
-# (including `promote`). With no remote, the script says how to connect one and
-# exits 2 — re-run after connecting to finish. Optional args become extra
-# module:<name> labels (github backend); you can also list modules in
-# .claude/delivery.conf (MODULES=...).
+# FORGE_DRY_RUN=1 no forge adapter creates one, and the step says "not sent");
+# and on the github backend the label taxonomy (including `promote`), a graph
+# write that FORGE_DRY_RUN does not cover. With no remote, the script says how
+# to connect one and exits 2 — re-run after connecting to finish. Optional args
+# become extra module:<name> labels (github backend); you can also list modules
+# in .claude/delivery.conf (MODULES=...).
 #
 # It deliberately does NOT change repo settings (outward-facing changes like
 # merge strategy or enabling Issues) — it only prints the advice. That advice
@@ -442,7 +443,11 @@ forge_label() {
   case "$(jq -r '.created' <<<"$res" 2>/dev/null || true)" in
     true)  echo "  label: $1 (created)" ;;
     false) echo "  label: $1 (exists)" ;;
-    *)     echo "  label: $1 (not sent: FORGE_DRY_RUN)" ;;
+    *)     # Neither answer: the adapter printed the write instead of sending
+           # it (FORGE_DRY_RUN), or its output cannot be trusted.
+           [ "${FORGE_DRY_RUN:-}" = 1 ] \
+             || die "ensuring forge label '$1': \`forge.sh label-ensure\` printed neither created:true nor created:false, so the label's state is unknown: $res"
+           echo "  label: $1 (not sent: FORGE_DRY_RUN)" ;;
   esac
 }
 echo "==> forge labels ($FORGE): the PR labels the loop relies on"
