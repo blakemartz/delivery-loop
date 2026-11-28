@@ -39,12 +39,14 @@
 #      drifted node is never shuffled between ready and blocked first: an open
 #      PR outranks the deps.
 #   9. an approved task + an open agent PR with its task_id whose
-#      reviewed_at_head is false -> in-review (GC77): the head moved since the
-#      approval (a push, or the loop's own rebase action), so no verdict covers
-#      what would merge. The reason names the PR and its new head
+#      approved_at_head is false -> in-review (GC77): the head moved since the
+#      approval (a push, or the loop's own rebase action), so no approve
+#      verdict covers what would merge; a request-changes or comment verdict
+#      at the new head is not one. The reason names the PR and its new head
 #      (`PR #N head moved to <sha7> since its approval`); the tick's review
-#      rule then re-reviews it. With several such PRs the lowest number names
-#      the record. Only reconcile may make this move (transitions.jq).
+#      rule then re-reviews a head that has no verdict. With several such PRs
+#      the lowest number names the record. Only reconcile may make this move
+#      (transitions.jq).
 #   1. blocked -> ready when deps_done and not needs_human (GC4).
 #   2. ready -> blocked when not deps_done.
 #   5. agent claim on an open node, no open PR for the node, now - updated_at
@@ -62,9 +64,9 @@
 # Rules 1-7 and 9 act on task, epic and promote nodes only (_subjects; rule 9 on
 # tasks only): an `external` node (§4.1) gets no record of any rule, filtered
 # here rather than left for the transition table to reject, so a board with
-# externals prints no "skipped"
-# warnings. Externals still count as deps (satisfied only when done) and as epic
-# children (rule 7), since both read the whole board.
+# externals prints no "skipped" warnings. Externals still count as deps
+# (satisfied only when done) and as epic children (rule 7), since both read the
+# whole board.
 # A node gets at most one record per pass: the first rule that fires wins.
 # Every transition/reclaim record is validated with transitions.jq (actor
 # reconcile) before it is accepted; a rejected one becomes a warning and is
@@ -113,10 +115,10 @@ def _offer_all(f): reduce f as $rec (.; _offer($rec));
 # _nodes — the working copy as a node array, in input order.
 def _nodes: .idx as $idx | .order | map($idx[.]);
 
-# _is_subject — input: a node. Rules 1-7 act on it (§5: task, epic, promote).
+# _is_subject — input: a node. Rules 1-7 and 9 act on it (§5: task, epic, promote).
 def _is_subject: .kind == "task" or .kind == "epic" or .kind == "promote";
 
-# _subjects — the working copy's rule 1-7 subjects, as a stream, in input order.
+# _subjects — the working copy's rule 1-7 and 9 subjects, as a stream, in input order.
 def _subjects: _nodes[] | select(_is_subject);
 
 def _rec($op; $to; $reason): {op: $op, id, from: .status, to: $to, reason: $reason};
@@ -180,15 +182,15 @@ def _rule4($open):
     | first($open[] | select(.agent and .task_id == $id)) as $pr
     | _rec("transition"; "in-review"; "open PR #\($pr.number)"));
 
-# _rule9 — an approval covers one head. `reviewed_at_head` (§4.2) is false once
-# the PR's head has no verdict, so the approved node goes back to in-review and
-# tick-plan's review rule picks the new head up.
+# _rule9 — an approval covers one head. `approved_at_head` (§4.2) is false once
+# the PR's head has no approve verdict, so the approved node goes back to
+# in-review and tick-plan's review rule picks up a head with no verdict.
 def _rule9($open):
   _offer_all(
     _subjects
     | select(.kind == "task" and .status == "approved")
     | .id as $id
-    | ([$open[] | select(.agent and .task_id == $id and (.reviewed_at_head | not))]
+    | ([$open[] | select(.agent and .task_id == $id and (.approved_at_head | not))]
        | min_by(.number)) as $pr
     | select($pr != null)
     | _rec("transition"; "in-review";

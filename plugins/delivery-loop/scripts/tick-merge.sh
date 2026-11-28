@@ -12,8 +12,9 @@
 #      every node (`graph.sh list`) and the open PRs (`forge.sh pr-list`, this
 #      PR's fresh read in place), with auto_merge on, must emit `merge` for this
 #      PR at <sha>. So: an approved `task` node without needs_human, the PR
-#      agent-authored, reviewed at its head (`reviewed_at_head`: a head pushed
-#      after the approval is never merged unreviewed, GC77), mergeable clean,
+#      agent-authored, approved at its head (`approved_at_head`: a head pushed
+#      after the approval, or one carrying only a request-changes verdict, is
+#      never merged, GC77), mergeable clean,
 #      checks success (or none), no `needs-human` label, base == the node's
 #      target_branch, and the lowest such PR of its task (GC70).
 #   3. The merged result: a fresh detached worktree of origin/<base> with <sha>

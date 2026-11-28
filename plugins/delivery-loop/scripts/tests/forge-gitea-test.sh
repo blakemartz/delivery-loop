@@ -175,6 +175,29 @@ done < <(jq -c '.[]' "$fx/status-cases.json")
 # review; 105 false: its only review carries an older head).
 expect "GC28: Reviewed-Head trailer equal to head -> reviewed_at_head true; older head -> false" \
   '[ "$(jq -sc "map(.reviewed_at_head)" "$tmp/gc28.jsonl")" = "[true,false,false,false,false,false]" ]'
+expect "GC28: an APPROVED review at the head -> approved_at_head true (101); no approve at the head -> false" \
+  '[ "$(jq -sc "map(.approved_at_head)" "$tmp/gc28.jsonl")" = "[true,false,false,false,false,false]" ]'
+# approved_at_head (§4.2) over gitea's review states and its comment fallback:
+# only an approve verdict at the head counts. H is the head.
+H=aaaaaaa000000000000000000000000000000000
+gt_at_head() { # <name> <reviews json> <comments json> <want "reviewed approved">
+  got=$(jq -r -L "$here/../lib" -L "$here/../backends" --arg h "$H" --argjson r "$2" --argjson c "$3" \
+    'include "forge-gitea";
+     {pr: {number: 1, html_url: "u", state: "open", merged: false, mergeable: true, body: "",
+           head: {ref: "h", sha: $h}, base: {ref: "main"}, labels: [], user: {login: "a"}},
+      statuses: [], comments: $c, reviews: $r}
+     | gt_pr("local") | "\(.reviewed_at_head) \(.approved_at_head)"' <<<null)
+  rc=0; out="$got"; err=""; want="$4"
+  expect "GC28: $1 -> reviewed/approved at head: $want" '[ "$got" = "$want" ]'
+}
+# gt_rv <state> <body> [dismissed] / gt_cm <body>: `\n` in <body> is a newline.
+gt_rv() { jq -cn --arg s "$1" --arg b "$(printf '%b' "$2")" --argjson d "${3:-false}" '[{state: $s, dismissed: $d, body: $b, user: {login: "r"}, submitted_at: "2026-11-08T15:00:00Z", commit_id: "x"}]'; }
+gt_cm() { jq -cn --arg b "$(printf '%b' "$1")" '[{body: $b, user: {login: "r"}, created_at: "2026-11-08T15:00:00Z"}]'; }
+gt_at_head "an APPROVED review at the head" "$(gt_rv APPROVED "ok\n\nReviewed-Head: $H")" '[]' "true true"
+gt_at_head "a REQUEST_CHANGES review at the head" "$(gt_rv REQUEST_CHANGES "no\n\nReviewed-Head: $H")" '[]' "true false"
+gt_at_head "a dismissed APPROVED review at the head" "$(gt_rv APPROVED "ok\n\nReviewed-Head: $H" true)" '[]' "true false"
+gt_at_head "an APPROVE-headed comment at the head" '[]' "$(gt_cm "## Adversarial review — verdict: APPROVE\n\nReviewed-Head: $H")" "true true"
+gt_at_head "a REQUEST_CHANGES-headed comment at the head" '[]' "$(gt_cm "## Adversarial review — verdict: REQUEST_CHANGES\n\nReviewed-Head: $H")" "true false"
 
 # §4.3 on gitea: GRAPH_BACKEND is local, so `Closes #16` (102) is not linkage;
 # the legacy head branch is.

@@ -108,6 +108,7 @@ reject pr validate_pr pr-bad-task-id.json         '`task_id` must be a node id o
 reject pr validate_pr pr-bad-mergeable.json       '`mergeable` must be one of'
 reject pr validate_pr pr-bad-patch-iteration.json '`patch_iteration` must be a non-negative integer'
 reject pr validate_pr pr-bad-agent-label.json     '`agent` must equal whether `labels` contains'
+reject pr validate_pr pr-bad-approved-unreviewed.json '`approved_at_head` cannot be true while `reviewed_at_head` is false'
 reject pr validate_pr pr-bad-missing-field.json   'missing field `head_sha`'
 reject pr validate_pr pr-bad-extra-field.json     'unexpected field `title`'
 

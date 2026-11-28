@@ -2,6 +2,6 @@
  "nodes": [{"id": "t-a", "status": "approved"},
            {"id": "t-b", "status": "approved"},
            {"id": "t-c", "status": "approved"}],
- "prs": [{"number": 11, "task_id": "t-a", "head_sha": "aaaaaaa000000000000000000000000000000000", "reviewed_at_head": true},
-         {"number": 12, "task_id": "t-b", "mergeable": "conflicting", "reviewed_at_head": true},
-         {"number": 13, "task_id": "t-c", "checks": "none", "head_sha": "ccccccc000000000000000000000000000000000", "reviewed_at_head": true}]}
+ "prs": [{"number": 11, "task_id": "t-a", "head_sha": "aaaaaaa000000000000000000000000000000000", "reviewed_at_head": true, "approved_at_head": true},
+         {"number": 12, "task_id": "t-b", "mergeable": "conflicting", "reviewed_at_head": true, "approved_at_head": true},
+         {"number": 13, "task_id": "t-c", "checks": "none", "head_sha": "ccccccc000000000000000000000000000000000", "reviewed_at_head": true, "approved_at_head": true}]}

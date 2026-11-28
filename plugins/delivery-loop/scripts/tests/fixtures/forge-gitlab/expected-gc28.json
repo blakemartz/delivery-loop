@@ -15,6 +15,7 @@
     ],
     "patch_iteration": 2,
     "reviewed_at_head": true,
+    "approved_at_head": true,
     "agent": true,
     "author": "astra"
   },
@@ -33,6 +34,7 @@
     ],
     "patch_iteration": 0,
     "reviewed_at_head": false,
+    "approved_at_head": false,
     "agent": true,
     "author": "astra"
   },
@@ -51,6 +53,7 @@
     ],
     "patch_iteration": 0,
     "reviewed_at_head": false,
+    "approved_at_head": false,
     "agent": true,
     "author": "astra"
   },
@@ -67,6 +70,7 @@
     "labels": [],
     "patch_iteration": 0,
     "reviewed_at_head": false,
+    "approved_at_head": false,
     "agent": false,
     "author": "ghost"
   },
@@ -86,6 +90,7 @@
     ],
     "patch_iteration": 0,
     "reviewed_at_head": false,
+    "approved_at_head": false,
     "agent": true,
     "author": "astra"
   },
@@ -104,6 +109,7 @@
     ],
     "patch_iteration": 0,
     "reviewed_at_head": false,
+    "approved_at_head": false,
     "agent": true,
     "author": "astra"
   },
@@ -120,6 +126,7 @@
     "labels": [],
     "patch_iteration": 0,
     "reviewed_at_head": false,
+    "approved_at_head": false,
     "agent": false,
     "author": "astra"
   },
@@ -136,6 +143,7 @@
     "labels": [],
     "patch_iteration": 0,
     "reviewed_at_head": false,
+    "approved_at_head": false,
     "agent": false,
     "author": "astra"
   },
@@ -152,6 +160,7 @@
     "labels": [],
     "patch_iteration": 0,
     "reviewed_at_head": false,
+    "approved_at_head": false,
     "agent": false,
     "author": "astra"
   },
@@ -168,6 +177,7 @@
     "labels": [],
     "patch_iteration": 0,
     "reviewed_at_head": false,
+    "approved_at_head": false,
     "agent": false,
     "author": "astra"
   },
@@ -184,6 +194,7 @@
     "labels": [],
     "patch_iteration": 0,
     "reviewed_at_head": false,
+    "approved_at_head": false,
     "agent": false,
     "author": "astra"
   },
@@ -200,6 +211,7 @@
     "labels": [],
     "patch_iteration": 0,
     "reviewed_at_head": false,
+    "approved_at_head": false,
     "agent": false,
     "author": "astra"
   },
@@ -216,6 +228,7 @@
     "labels": [],
     "patch_iteration": 0,
     "reviewed_at_head": false,
+    "approved_at_head": false,
     "agent": false,
     "author": "astra"
   },
@@ -232,6 +245,7 @@
     "labels": [],
     "patch_iteration": 0,
     "reviewed_at_head": false,
+    "approved_at_head": false,
     "agent": false,
     "author": "astra"
   }

@@ -6,15 +6,18 @@
   {"id": "gc77-changes", "status": "changes-requested"},
   {"id": "gc77-two", "status": "approved"},
   {"id": "gc77-flagged", "status": "approved", "needs_human": true},
-  {"id": "gc77-closed-pr", "status": "approved"}
+  {"id": "gc77-closed-pr", "status": "approved"},
+  {"id": "gc77-rc", "status": "approved"}
  ],
  "prs": [{"number": 771, "task_id": "gc77-moved", "head_sha": "d4c5c18000000000000000000000000000000000"},
-         {"number": 772, "task_id": "gc77-current", "reviewed_at_head": true},
+         {"number": 772, "task_id": "gc77-current", "reviewed_at_head": true, "approved_at_head": true},
          {"number": 773, "task_id": "gc77-human-pr", "labels": []},
          {"number": 774, "task_id": "gc77-in-review"},
          {"number": 775, "task_id": "gc77-changes"},
          {"number": 778, "task_id": "gc77-two", "head_sha": "8888888000000000000000000000000000000000"},
-         {"number": 776, "task_id": "gc77-two", "reviewed_at_head": true},
+         {"number": 776, "task_id": "gc77-two", "reviewed_at_head": true, "approved_at_head": true},
          {"number": 777, "task_id": "gc77-two", "head_sha": "7777777000000000000000000000000000000000"},
          {"number": 779, "task_id": "gc77-flagged", "head_sha": "9999999000000000000000000000000000000000"},
-         {"number": 780, "task_id": "gc77-closed-pr", "state": "closed"}]}
+         {"number": 780, "task_id": "gc77-closed-pr", "state": "closed"},
+         {"number": 781, "task_id": "gc77-rc", "reviewed_at_head": true,
+          "head_sha": "4c4c4c4000000000000000000000000000000000"}]}
