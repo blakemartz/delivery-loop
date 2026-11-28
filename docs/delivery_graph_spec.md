@@ -863,7 +863,10 @@ are derived on read (`list`, `show`) from the node's journal `comment` events, a
 - **`FORGE_DRY_RUN=1`** makes the curl adapters print `METHOD PATH` plus the JSON
   body instead of sending it. Tests assert against that (GC31). The github
   adapter honours it for `label-ensure` only: it prints the `gh label create`
-  call instead of running it.
+  call instead of running it. `delivery-init.sh` honours it for every label it
+  would create: it accepts only that documented output from `label-ensure`, and
+  on the github graph backend it prints the label taxonomy's `gh label create`
+  calls instead of running them.
 
 ### 7.3 Normalization map
 

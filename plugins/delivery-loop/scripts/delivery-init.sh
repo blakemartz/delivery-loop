@@ -21,13 +21,19 @@
 # of §6.3), so a repo with no remote still gets it. Then, with a remote: forge
 # auth via `forge.sh whoami`; the PR labels the loop relies on (`agent-authored`,
 # `needs-human`), ensured on the forge through `forge.sh label-ensure` on every
-# forge and both graph backends (an existing label is left as it is; under
-# FORGE_DRY_RUN=1 no forge adapter creates one, and the step says "not sent");
-# and on the github backend the label taxonomy (including `promote`), a graph
-# write that FORGE_DRY_RUN does not cover. With no remote, the script says how
-# to connect one and exits 2 — re-run after connecting to finish. Optional args
-# become extra module:<name> labels (github backend); you can also list modules
-# in .claude/delivery.conf (MODULES=...).
+# forge and both graph backends (an existing label is left as it is); and on
+# the github backend the label taxonomy (including `promote`). With no remote,
+# the script says how to connect one and exits 2 — re-run after connecting to
+# finish. Optional args become extra module:<name> labels (github backend); you
+# can also list modules in .claude/delivery.conf (MODULES=...).
+#
+# FORGE_DRY_RUN=1 sends no label-creating call to the host, on any forge and
+# either graph backend; reads (auth, label lists, `gh repo view`) are still
+# sent and the local scaffolding is still written. A forge PR label that is
+# missing is reported "not sent", and only when `forge.sh label-ensure` printed
+# exactly the write its adapter documents for a dry run; any other output fails
+# the step, naming the label. Each github taxonomy label is reported "not sent"
+# with the `gh label create … --force` call it would have run.
 #
 # It deliberately does NOT change repo settings (outward-facing changes like
 # merge strategy or enabling Issues) — it only prints the advice. That advice
@@ -436,18 +442,65 @@ echo "==> forge: $FORGE, authenticated as $login"
 # without it is not the loop's) and `needs-human` (a PR carrying it is never
 # acted on). `pr-create` never creates a label, so they must exist before the
 # first PR. Only through the forge seam: no forge CLI or API call here.
+
+# forge_dry_write_ok RES NAME COLOR DESC: RES is exactly what FORGE's adapter
+# documents for a missing label under FORGE_DRY_RUN (forge.sh header): github's
+# `gh label create …` line, or the curl adapters' two lines. Line 1 is `POST`
+# and the adapter's one label-creating path, under the API root (which may sit
+# below a URL prefix): gitea `…/api/v1/repos/{o}/{r}/labels`, gitlab
+# `…/api/v4/projects/<enc>/labels`, every segment URL-encoded, so no
+# whitespace and no other route. Line 2 is one JSON value, exactly
+# `{name, color: "#rrggbb", description}`.
+forge_dry_write_ok() {
+  local res="$1" want seg='[[:alnum:]._~%-]+' path_re
+  case "$FORGE" in
+    github)
+      want="$(printf 'gh label create --color %s --description %q -- %q' "$3" "$4" "$2")"
+      [ "$res" = "$want" ]
+      return ;;
+    gitea)  path_re="^POST (/$seg)*/api/v1/repos/$seg/$seg/labels\$" ;;
+    gitlab) path_re="^POST (/$seg)*/api/v4/projects/$seg/labels\$" ;;
+    *)      return 1 ;;
+  esac
+  case "$res" in
+    *$'\n'*$'\n'*) return 1 ;;
+    *$'\n'*)       : ;;
+    *)             return 1 ;;
+  esac
+  [[ ${res%%$'\n'*} =~ $path_re ]] || return 1
+  jq -e -s --arg n "$2" --arg c "#$3" --arg d "$4" '. == [{name: $n, color: $c, description: $d}]' \
+    <<<"${res#*$'\n'}" >/dev/null 2>&1
+}
 forge_label() {
-  local res
+  local res created
   res="$(bash "$SCRIPT_DIR/forge.sh" label-ensure "$1" "$2" "$3")" \
     || { echo "ERROR: ensuring forge label '$1' failed (see above) — the loop's PRs need it; fix the cause (token scopes: runbook §10.3) and re-run (idempotent)." >&2; exit 1; }
-  case "$(jq -r '.created' <<<"$res" 2>/dev/null || true)" in
+  # `created` is read only from the documented answer: one JSON value, exactly
+  # `{name: <this label>, created: <boolean>}`. Trailing output, another
+  # label's answer or an extra key leaves it "unknown" (empty when not JSON).
+  created="$(jq -r -s --arg n "$1" '
+    if   . == [{name: $n, created: true}]  then "true"
+    elif . == [{name: $n, created: false}] then "false"
+    else "unknown" end' <<<"$res" 2>/dev/null || true)"
+  if [ "${FORGE_DRY_RUN:-}" = 1 ]; then
+    # A dry run has two documented answers: this label's created:false, or
+    # the write the adapter printed instead of sending. Anything else cannot
+    # be trusted.
+    if [ "$created" = false ]; then
+      echo "  label: $1 (exists)"
+    elif [ "$created" = true ]; then
+      die "ensuring forge label '$1' under FORGE_DRY_RUN: \`forge.sh label-ensure\` reported created:true, so a write was sent: $res"
+    elif forge_dry_write_ok "$res" "$1" "$2" "$3"; then
+      echo "  label: $1 (not sent: FORGE_DRY_RUN)"
+    else
+      die "ensuring forge label '$1' under FORGE_DRY_RUN: \`forge.sh label-ensure\` printed neither exactly this label's created:false answer nor the $FORGE adapter's dry-run write for it, so nothing is known about it: $res"
+    fi
+    return 0
+  fi
+  case "$created" in
     true)  echo "  label: $1 (created)" ;;
     false) echo "  label: $1 (exists)" ;;
-    *)     # Neither answer: the adapter printed the write instead of sending
-           # it (FORGE_DRY_RUN), or its output cannot be trusted.
-           [ "${FORGE_DRY_RUN:-}" = 1 ] \
-             || die "ensuring forge label '$1': \`forge.sh label-ensure\` printed neither created:true nor created:false, so the label's state is unknown: $res"
-           echo "  label: $1 (not sent: FORGE_DRY_RUN)" ;;
+    *)     die "ensuring forge label '$1': \`forge.sh label-ensure\` did not print exactly this label's {name, created} answer, so the label's state is unknown: $res" ;;
   esac
 }
 echo "==> forge labels ($FORGE): the PR labels the loop relies on"
@@ -472,8 +525,13 @@ if [ "$GRAPH_BACKEND" = github ]; then
     *)     echo "WARNING: could not verify Issues are enabled on $repo_slug — check manually; enable with: gh repo edit --enable-issues" >&2 ;;
   esac
 
-  # labels (idempotent via --force)
+  # labels (idempotent via --force); under FORGE_DRY_RUN the call is printed,
+  # not run.
   label() {
+    if [ "${FORGE_DRY_RUN:-}" = 1 ]; then
+      printf '  label: %s (not sent: FORGE_DRY_RUN): gh label create %q --color %s --description %q --force\n' "$1" "$1" "$2" "$3"
+      return 0
+    fi
     gh label create "$1" --color "$2" --description "$3" --force >/dev/null \
       || { echo "ERROR: creating label '$1' failed (see above) — the label set is incomplete; fix the cause and re-run (idempotent)." >&2; exit 1; }
     echo "  label: $1"

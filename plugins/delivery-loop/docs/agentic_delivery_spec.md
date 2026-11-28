@@ -514,7 +514,10 @@ ssh forms). Tokens come from the environment only and are passed to curl in a
 private header file, never on the command line. `FORGE_DRY_RUN=1` makes the curl
 adapters print each write as `METHOD PATH` plus its JSON body instead of sending
 it; the github adapter honours it for `label-ensure` only, printing the
-`gh label create` call instead of running it.
+`gh label create` call instead of running it. `delivery-init.sh` honours it for
+every label it would create: it accepts only that documented output from
+`label-ensure`, and on the github graph backend it prints the label taxonomy's
+`gh label create` calls instead of running them.
 
 **The PR shape** (`lib/pr.jq`): `number` (GitLab's `iid`), `url`, `state`
 (`open` \| `merged` \| `closed`), `head`, `base`, `head_sha`, `mergeable`

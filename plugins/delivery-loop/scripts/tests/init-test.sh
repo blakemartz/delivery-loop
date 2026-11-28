@@ -13,8 +13,9 @@
 # gitea / gitlab: whoami, label list and label create), and, per case,
 # version-faking git/jq wrappers. The GC60 cases set FORGE_DRY_RUN=1, under
 # which no forge write is sent (also asserted on the github forge); the other
-# forge-label cases run without it. One case runs a copy of the scripts with a
-# stub adapter, to feed `forge_label` output no real adapter prints.
+# forge-label cases run without it. On the github graph backend a dry run also
+# sends no taxonomy `gh label create`. A few cases run a copy of the scripts
+# with a stub adapter, to feed `forge_label` output no real adapter prints.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -239,16 +240,50 @@ run GH_SHIM_MODE=ok GH_SHIM_VERSION=2.80.0 GRAPH_BACKEND=local FORGE_DRY_RUN=1 -
 expect "local+github under FORGE_DRY_RUN: exits 0, labels listed, no gh label create, each reported not sent" \
   '[ "$rc" = 0 ] && grep -q "^label list " "$repo/.shim/gh.log" && [ "$(grep -c "^label create" "$repo/.shim/gh.log" || true)" = 0 ] && grep -qF "label: agent-authored (not sent: FORGE_DRY_RUN)" "$tmp/out" && grep -qF "label: needs-human (not sent: FORGE_DRY_RUN)" "$tmp/out"'
 
-# --- label-ensure output that is not a {created} answer -------------------------
+# --- FORGE_DRY_RUN on the gitlab forge: the real adapter's dry-run write passes --
+newrepo dry-gitlab git@gitlab.example.com:example/repo.git
+run GITLAB_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 --
+expect "local+gitlab under FORGE_DRY_RUN: exits 0, no POST, each label reported not sent" \
+  '[ "$rc" = 0 ] && [ "$(posts)" = 0 ] && grep -qxF "  label: agent-authored (not sent: FORGE_DRY_RUN)" "$tmp/out" && grep -qxF "  label: needs-human (not sent: FORGE_DRY_RUN)" "$tmp/out"'
+
+# --- FORGE_DRY_RUN on the github graph backend: no label-creating call at all ---
+newrepo dry-ghgraph https://github.com/example/repo.git
+run GH_SHIM_MODE=ok FORGE_DRY_RUN=1 -- extra
+expect "github+github under FORGE_DRY_RUN: exits 0, zero gh label create calls (forge seam and taxonomy)" \
+  '[ "$rc" = 0 ] && grep -q "^label list " "$repo/.shim/gh.log" && [ "$(grep -c "^label create" "$repo/.shim/gh.log" || true)" = 0 ]'
+expect "github+github under FORGE_DRY_RUN: the forge PR labels are reported not sent" \
+  'grep -qxF "  label: agent-authored (not sent: FORGE_DRY_RUN)" "$tmp/out" && grep -qxF "  label: needs-human (not sent: FORGE_DRY_RUN)" "$tmp/out"'
+expect "github+github under FORGE_DRY_RUN: every taxonomy call is printed, not run (19 labels incl. modules)" \
+  '[ "$(grep -c "(not sent: FORGE_DRY_RUN): gh label create .* --force$" "$tmp/out")" = 19 ] && grep -qxF "  label: status:ready (not sent: FORGE_DRY_RUN): gh label create status:ready --color 0E8A16 --description Claimable\\ now --force" "$tmp/out" && grep -qF "gh label create module:extra --color 5319E7 " "$tmp/out"'
+
+# --- label-ensure output that is not a documented answer ------------------------
 # No shim can make a real adapter print one, so run a copy of the scripts whose
-# gitea adapter answers `label-ensure` with a line that is not JSON.
+# gitea adapter answers `label-ensure` as STUB_MODE says: a line that is not
+# JSON (the default), created:true, a dry-run write that is not exactly this
+# label's (another label, extra JSON on the body line, a line 1 that is not the
+# adapter's label path), or a created answer that is not exactly this label's
+# (trailing output, another label's name).
 mkdir -p "$tmp/stub/backends"
 cp "$here"/../*.sh "$tmp/stub/"; cp -R "$here/../lib" "$tmp/stub/lib"
 cat > "$tmp/stub/backends/forge-gitea.sh" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
   whoami) echo stub-bot ;;
-  label-ensure) echo "<html>502 Bad Gateway</html>" ;;
+  label-ensure)
+    case "${STUB_MODE:-garbage}" in
+      garbage) echo "<html>502 Bad Gateway</html>" ;;
+      created) printf '{"name":"%s","created":true}\n' "$2" ;;
+      other)   printf 'POST /api/v1/repos/example/repo/labels\n{"name":"other","color":"#%s","description":"%s"}\n' "$3" "$4" ;;
+      exists)  printf '{"name":"%s","created":false}\n' "$2" ;;
+      trailing) printf '{"name":"%s","created":%s}\n<html>502 Bad Gateway</html>\n' "$2" "${STUB_CREATED:-false}" ;;
+      wrongname) printf '{"name":"zzz","created":%s}\n' "${STUB_CREATED:-false}" ;;
+      write)   printf 'POST /api/v1/repos/example/repo/labels\n{"name":"%s","color":"#%s","description":"%s"}\n' "$2" "$3" "$4" ;;
+      prefixed) printf 'POST /api/v1/repos/example/repo/labels\n"<html>502 Bad Gateway</html>" {"name":"%s","color":"#%s","description":"%s"}\n' "$2" "$3" "$4" ;;
+      twice)   printf 'POST /api/v1/repos/example/repo/labels\n{"name":"%s","color":"#%s","description":"%s"} {"name":"%s","color":"#%s","description":"%s"}\n' "$2" "$3" "$4" "$2" "$3" "$4" ;;
+      badpath) printf 'POST <html>502 Bad Gateway</html>/labels\n{"name":"%s","color":"#%s","description":"%s"}\n' "$2" "$3" "$4" ;;
+      elsewhere) printf 'POST /api/v1/orgs/someone-else/labels\n{"name":"%s","color":"#%s","description":"%s"}\n' "$2" "$3" "$4" ;;
+      subpath) printf 'POST /git/api/v1/repos/example/repo/labels\n{"name":"%s","color":"#%s","description":"%s"}\n' "$2" "$3" "$4" ;;
+    esac ;;
   *) exit 4 ;;
 esac
 EOF
@@ -259,8 +294,60 @@ expect "unparseable label-ensure output on a real run: exits 1 naming the label,
   '[ "$rc" = 1 ] && grep -qF "ensuring forge label" "$tmp/out" && grep -qF "agent-authored" "$tmp/out" && grep -qF "502 Bad Gateway" "$tmp/out" && ! grep -qF "not sent" "$tmp/out" && ! grep -qF "label: needs-human" "$tmp/out"'
 newrepo garbled-dry git@gitea.example.com:example/repo.git
 run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 --
-expect "the same output under FORGE_DRY_RUN: exits 0, reported not sent" \
-  '[ "$rc" = 0 ] && grep -qF "label: agent-authored (not sent: FORGE_DRY_RUN)" "$tmp/out"'
+expect "the same output under FORGE_DRY_RUN: exits 1 naming the label, never reported as not sent" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"' under FORGE_DRY_RUN" "$tmp/out" && grep -qF "502 Bad Gateway" "$tmp/out" && ! grep -qF "(not sent" "$tmp/out" && ! grep -qF "label: needs-human" "$tmp/out"'
+newrepo other-dry git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=other --
+expect "a dry-run write for another label under FORGE_DRY_RUN: exits 1 naming the label" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"' under FORGE_DRY_RUN" "$tmp/out" && ! grep -qF "(not sent" "$tmp/out"'
+newrepo created-dry git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=created --
+expect "created:true under FORGE_DRY_RUN: exits 1 naming the label (a write was sent)" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"' under FORGE_DRY_RUN" "$tmp/out" && grep -qF "created:true" "$tmp/out" && ! grep -qF "(not sent" "$tmp/out"'
+newrepo write-dry git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=write --
+expect "the documented dry-run write under FORGE_DRY_RUN: exits 0, both labels reported not sent" \
+  '[ "$rc" = 0 ] && grep -qxF "  label: agent-authored (not sent: FORGE_DRY_RUN)" "$tmp/out" && grep -qxF "  label: needs-human (not sent: FORGE_DRY_RUN)" "$tmp/out"'
+newrepo prefixed-dry git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=prefixed --
+expect "a JSON value before the body of the dry-run write under FORGE_DRY_RUN: exits 1 naming the label, never reported as not sent" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"' under FORGE_DRY_RUN" "$tmp/out" && ! grep -qF "(not sent" "$tmp/out" && ! grep -qF "label: needs-human" "$tmp/out"'
+newrepo twice-dry git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=twice --
+expect "the body of the dry-run write printed twice under FORGE_DRY_RUN: exits 1 naming the label, never reported as not sent" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"' under FORGE_DRY_RUN" "$tmp/out" && ! grep -qF "(not sent" "$tmp/out" && ! grep -qF "label: needs-human" "$tmp/out"'
+newrepo badpath-dry git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=badpath --
+expect "a dry-run write whose path is not a path under FORGE_DRY_RUN: exits 1 naming the label, never reported as not sent" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"' under FORGE_DRY_RUN" "$tmp/out" && ! grep -qF "(not sent" "$tmp/out" && ! grep -qF "label: needs-human" "$tmp/out"'
+newrepo elsewhere-dry git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=elsewhere --
+expect "a dry-run write to another route under FORGE_DRY_RUN: exits 1 naming the label, never reported as not sent" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"' under FORGE_DRY_RUN" "$tmp/out" && ! grep -qF "(not sent" "$tmp/out" && ! grep -qF "label: needs-human" "$tmp/out"'
+newrepo subpath-dry git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=subpath --
+expect "the documented dry-run write below a URL prefix under FORGE_DRY_RUN: exits 0, both labels reported not sent" \
+  '[ "$rc" = 0 ] && grep -qxF "  label: agent-authored (not sent: FORGE_DRY_RUN)" "$tmp/out" && grep -qxF "  label: needs-human (not sent: FORGE_DRY_RUN)" "$tmp/out"'
+newrepo exists-dry git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=exists --
+expect "exactly this label's created:false under FORGE_DRY_RUN: exits 0, both labels reported as existing" \
+  '[ "$rc" = 0 ] && grep -qxF "  label: agent-authored (exists)" "$tmp/out" && grep -qxF "  label: needs-human (exists)" "$tmp/out"'
+newrepo trailing-dry git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=trailing --
+expect "created:false followed by other output under FORGE_DRY_RUN: exits 1 naming the label, never reported as existing" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"' under FORGE_DRY_RUN" "$tmp/out" && grep -qF "502 Bad Gateway" "$tmp/out" && ! grep -qF "(exists)" "$tmp/out" && ! grep -qF "(not sent" "$tmp/out"'
+newrepo wrongname-dry git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=wrongname --
+expect "another label's created:false under FORGE_DRY_RUN: exits 1 naming the label, never reported as existing" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"' under FORGE_DRY_RUN" "$tmp/out" && grep -qF "zzz" "$tmp/out" && ! grep -qF "(exists)" "$tmp/out" && ! grep -qF "(not sent" "$tmp/out"'
+newrepo trailing-real git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok STUB_MODE=trailing STUB_CREATED=true --
+expect "created:true followed by other output on a real run: exits 1 naming the label, never reported as created" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"'" "$tmp/out" && grep -qF "502 Bad Gateway" "$tmp/out" && ! grep -qF "(created)" "$tmp/out" && ! grep -qF "(exists)" "$tmp/out"'
+newrepo wrongname-real git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok STUB_MODE=wrongname --
+expect "another label's created:false on a real run: exits 1 naming the label, never reported as existing" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"'" "$tmp/out" && grep -qF "zzz" "$tmp/out" && ! grep -qF "(exists)" "$tmp/out"'
 init="$real_init"
 
 # --- detection: a gitea host defaults to the local backend ----------------------
