@@ -107,6 +107,11 @@ at_head "a DISMISSED approval at the head" "$(rv DISMISSED "ok\n\nReviewed-Head:
 at_head "a formal APPROVED review at an older head" "$(rv APPROVED "ok\n\nReviewed-Head: $O")" '[]' "false false"
 at_head "an APPROVE-headed comment at the head" '[]' "$(cm "## Adversarial review — verdict: APPROVE\n\nok\n\nReviewed-Head: $H")" "true true"
 at_head "a REQUEST_CHANGES-headed comment at the head" '[]' "$(cm "## Adversarial review — verdict: REQUEST_CHANGES\n\nno\n\nReviewed-Head: $H")" "true false"
+# A review with a null or missing `state` carries no verdict: ignored, no jq error.
+at_head "a review with a null state at the head" \
+  "$(jq -cn --arg h "$H" '[{state: null, body: "ok\n\nReviewed-Head: \($h)", author: {login: "r"}}]')" '[]' "true false"
+at_head "a review with no state field at the head" \
+  "$(jq -cn --arg h "$H" '[{body: "ok\n\nReviewed-Head: \($h)", author: {login: "r"}}]')" '[]' "true false"
 at_head "a COMMENT-headed comment at the head" '[]' "$(cm "## Adversarial review — verdict: COMMENT\n\nhm\n\nReviewed-Head: $H")" "true false"
 at_head "a plain comment (no verdict heading) carrying the trailer" '[]' "$(cm "LGTM, verdict: APPROVE\n\nReviewed-Head: $H")" "true false"
 at_head "an APPROVE-headed comment at an older head" '[]' "$(cm "## Adversarial review — verdict: APPROVE\n\nok\n\nReviewed-Head: $O")" "false false"
@@ -327,6 +332,17 @@ run -- pr-find --head no-such-branch
 expect "pr-find --head with no PR -> empty, exit 0" '[ "$rc" = 0 ] && [ -z "$out" ]'
 run -- pr-reviews 101
 expect "pr-reviews -> [{author, verdict, body, at, commit}]" '[ "$rc" = 0 ] && jq_true "map(.verdict) == [\"request-changes\", \"approve\"] and .[1].commit == \"$(sha 101)\" and (.[0] | keys) == [\"at\",\"author\",\"body\",\"commit\",\"verdict\"]"'
+# PR 160 carries a review whose `state` is null, one with no `state` field, and
+# a formal APPROVED one at its head: the first two are ignored, never a jq error.
+reset
+run -- pr-view 160
+expect "pr-view: a review with a null or missing state does not fail the read" \
+  '[ "$rc" = 0 ] && [ -z "$err" ] && jq_true ".number == 160 and .reviewed_at_head == true and .approved_at_head == true"'
+run -- pr-reviews 160
+expect "pr-reviews: a review with a null or missing state is left out; the approve is returned" \
+  '[ "$rc" = 0 ] && [ -z "$err" ] && jq_true "length == 1 and .[0].verdict == \"approve\" and .[0].commit == \"$(sha 160)\""'
+expect "pr-reviews: the fixture does hold the two stateless reviews (the case is real)" \
+  '[ "$(jq -c ".[\"160\"].reviews | map(.state)" "$fx/prs.json")" = "[null,null,\"APPROVED\"]" ]'
 run -- pr-comment 101 --body-file "$tmp/body.md"
 expect "pr-comment -> posted" '[ "$rc" = 0 ] && jq_true '\''.posted == true and (.url | test("issuecomment"))'\'''
 touch "$tmp/state/fail-comment"

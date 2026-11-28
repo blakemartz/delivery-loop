@@ -874,5 +874,62 @@
     "closingIssuesReferences": [],
     "autoMergeRequest": null,
     "mergedAt": "2026-11-08T10:00:00Z"
+  },
+  "160": {
+    "number": 160,
+    "url": "https://github.com/example/repo/pull/160",
+    "state": "OPEN",
+    "headRefName": "task/160-stateless-review",
+    "baseRefName": "release/0.2.0",
+    "headRefOid": "5e1f0de2a9d4c7b38f6a1e0c9b2d4f6a8c0e1b3d",
+    "mergeable": "MERGEABLE",
+    "mergeStateStatus": "CLEAN",
+    "statusCheckRollup": [],
+    "body": "Delivery-Task: 160",
+    "labels": [],
+    "comments": [],
+    "reviews": [
+      {
+        "id": "PRR_null",
+        "author": {
+          "login": "reviewer"
+        },
+        "body": "A review whose state is null.\n\nReviewed-Head: 5e1f0de2a9d4c7b38f6a1e0c9b2d4f6a8c0e1b3d",
+        "submittedAt": "2026-11-08T12:00:00Z",
+        "state": null,
+        "commit": {
+          "oid": "5e1f0de2a9d4c7b38f6a1e0c9b2d4f6a8c0e1b3d"
+        }
+      },
+      {
+        "id": "PRR_missing",
+        "author": {
+          "login": "reviewer"
+        },
+        "body": "A review with no state field.",
+        "submittedAt": "2026-11-08T12:30:00Z",
+        "commit": {
+          "oid": "5e1f0de2a9d4c7b38f6a1e0c9b2d4f6a8c0e1b3d"
+        }
+      },
+      {
+        "id": "PRR_ok",
+        "author": {
+          "login": "reviewer"
+        },
+        "body": "Fine.\n\nReviewed-Head: 5e1f0de2a9d4c7b38f6a1e0c9b2d4f6a8c0e1b3d",
+        "submittedAt": "2026-11-08T13:00:00Z",
+        "state": "APPROVED",
+        "commit": {
+          "oid": "5e1f0de2a9d4c7b38f6a1e0c9b2d4f6a8c0e1b3d"
+        }
+      }
+    ],
+    "author": {
+      "login": "astra"
+    },
+    "closingIssuesReferences": [],
+    "autoMergeRequest": null,
+    "mergedAt": null
   }
 }

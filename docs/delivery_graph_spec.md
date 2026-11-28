@@ -919,16 +919,21 @@ different verdict.
   bool reads `false` for a few seconds while its conflict check re-runs (right
   after the base or head moved), and the API does not say which. So an open PR
   that does not read `true` shares the same bounded re-poll (3 re-reads, backoff
-  2 s, 4 s, 6 s: at most 12 s per PR): the first `true` is `clean`; `false` on all
-  4 reads is `conflicting`; anything else is `unknown`, never `clean`. A genuine
-  conflict is therefore still reported within that wait, and a transient `false`
-  no longer costs a rebase dispatch (§5 `tick-plan.jq` rule 3; GC76).
-  **The wait is capped at 12 s per call, whatever the number of PRs.** `pr-list`
-  and `pr-find` run that one backoff for the whole call and, after each sleep,
-  re-read every PR still unsettled, so each PR is read on the schedule `pr-view`
-  gives it and N conflicted or WIP PRs cost 12 s per list, not 12·N s. A `false`
-  not confirmed by the end of the call's wait reads `unknown`, never `clean`
-  and never `conflicting`.
+  2 s, 4 s, 6 s): the first `true` is `clean`; `false` on all 4 reads is
+  `conflicting`; anything else is `unknown`, never `clean`. A genuine conflict is
+  therefore still reported within that wait, and a transient `false` no longer
+  costs a rebase dispatch (§5 `tick-plan.jq` rule 3; GC76).
+  **The wait is 12 s per call, whatever the number of PRs.** `pr-view`, `pr-list`
+  and `pr-find` each run that one backoff for the whole call and, after each
+  sleep, re-read every PR still unsettled, so a listed PR is read on the schedule
+  `pr-view` gives it and N conflicted or WIP PRs cost a list that one wait, not N
+  of them. The cap bounds the sleeps, not the number of re-reads: a list still
+  makes up to 3 extra GETs per unsettled PR, so its wall time grows with N by the
+  request latency. A `false` not confirmed by the end of the call's wait reads
+  `unknown`, never `clean` and never `conflicting`. A re-read that fails (a
+  transport error, a non-2xx answer, a body that is not a PullRequest) fails the
+  call with exit 1 and a message naming the PR; it is never taken for a null
+  read.
 - **Separate reviewer identity, optional.** Self-review rejection is the norm on
   every forge. If `GITLAB_REVIEW_TOKEN` / `GITEA_REVIEW_TOKEN` / `GH_REVIEW_TOKEN` is
   set in the environment, `pr-review` posts under it, which restores formal reviews.
