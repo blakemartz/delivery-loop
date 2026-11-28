@@ -237,6 +237,33 @@ reset
 run SHIM_OPEN_LIST=open-unsettled -- pr-find --head task/113-wip
 expect "§7.3 cap: pr-find waits for the one PR it returns, never for the list it searched (113: 3 re-reads, conflicting)" \
   '[ "$rc" = 0 ] && jq_true ".number == 113 and .mergeable == \"conflicting\"" && [ "$(grep -cE "^GET $R/pulls/[0-9]+ " "$tmp/state/log")" = 3 ] && [ "$(grep -F sleep "$tmp/state/log" | tr "\n" ",")" = "sleep 2,sleep 4,sleep 6," ]'
+# §7.3: a re-read that fails is a failed call naming the PR, never a null read
+# (which would end as a silent `unknown`). PR 104 reads false on every good
+# read; its 2nd GET (the first re-read) fails in each way a read can.
+for how in transport http garbage; do
+  reset
+  echo "$how" > "$tmp/state/view-104.2.fail"
+  run -- pr-view 104
+  expect "§7.3 re-read failure [$how]: pr-view exits 1 naming pull #104, prints no PR" \
+    '[ "$rc" = 1 ] && [ -z "$out" ] && grep -qF "pull #104" <<<"$err"'
+  expect "§7.3 re-read failure [$how]: the call stops at the failed read (2 GETs, one sleep)" \
+    '[ "$(log_count "GET $R/pulls/104 ")" = 2 ] && [ "$(log_count sleep)" = 1 ]'
+  # In a list the listing is read 1, so the first re-read is the 1st GET of the pull.
+  reset
+  echo "$how" > "$tmp/state/view-104.1.fail"
+  run -- pr-list
+  expect "§7.3 re-read failure [$how]: pr-list exits 1 naming pull #104, prints no list" \
+    '[ "$rc" = 1 ] && [ -z "$out" ] && grep -qF "pull #104" <<<"$err"'
+done
+expect "§7.3 re-read failure: a transport error is reported as one, with the PR" \
+  '{ reset; echo transport > "$tmp/state/view-104.3.fail"; run -- pr-view 104; [ "$rc" = 1 ] && grep -qF "network/TLS error" <<<"$err" && grep -qF "pull #104: the re-read confirming its mergeability failed" <<<"$err"; }'
+expect "§7.3 re-read failure: an HTTP error keeps its status code" \
+  '{ reset; echo http > "$tmp/state/view-104.3.fail"; run -- pr-view 104; [ "$rc" = 1 ] && grep -qF "GET pull #104 -> HTTP 500" <<<"$err"; }'
+reset
+echo garbage > "$tmp/state/view-104.1.fail"
+run -- pr-view 104
+expect "§7.3: a first read that is not a PullRequest object fails too, without re-reading" \
+  '[ "$rc" = 1 ] && [ -z "$out" ] && grep -qF "pull #104" <<<"$err" && [ "$(log_count "GET $R/pulls/104 ")" = 1 ] && [ "$(log_count sleep)" = 0 ]'
 reset
 run LIST_LIMIT=3 -- pr-list
 expect "GC32: a list reaching LIST_LIMIT exits 3 naming LIST_LIMIT, prints nothing" '[ "$rc" = 3 ] && grep -qF LIST_LIMIT <<<"$err" && [ -z "$out" ]'

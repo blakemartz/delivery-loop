@@ -45,6 +45,10 @@
 #                        without read:organization (sent for any owner, org or
 #                        user: the scope is checked before the owner is looked up).
 #   repo-labels-403    — GET labels (the repo's) gets a 403.
+#   view-<n>.<k>.fail  — the k-th GET of pull <n> fails, as the file's one word
+#                        says: `transport` (curl's own failure: no response,
+#                        exit 7), `http` (a 500), or `garbage` (a 200 whose
+#                        body is not JSON, as a proxy's error page is).
 set -euo pipefail
 
 : "${SHIM_FX:?}" "${SHIM_STATE:?}"
@@ -156,7 +160,12 @@ else
       cf="$SHIM_STATE/view-$n.count"
       k=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 )); echo "$k" > "$cf"
       obj=$(pr_obj "$n.$k"); [ -n "$obj" ] || obj=$(pr_obj "$n")
-      if [ -n "$obj" ]; then respond 200 "$obj"; else err 404 "The target couldn't be found."; fi ;;
+      case "$(cat "$SHIM_STATE/view-$n.$k.fail" 2>/dev/null || true)" in
+        transport) echo "curl: (7) Failed to connect to gitea.example.com port 443" >&2; exit 7 ;;
+        http)      err 500 "internal server error" ;;
+        garbage)   respond 200 '<html><body>502 Bad Gateway</body></html>' ;;
+        *) if [ -n "$obj" ]; then respond 200 "$obj"; else err 404 "The target couldn't be found."; fi ;;
+      esac ;;
     PATCH\ pulls/*)
       n="${route#pulls/}"; obj=$(pr_obj "$n")
       respond 201 "$(jq -c --argjson d "$data" '.base.ref = $d.base' <<<"$obj")" ;;
