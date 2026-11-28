@@ -9,7 +9,9 @@
 # stale-claim reclaim from in-review/changes-requested/approved/ready), and
 # GC72/GC73 (issue #52: applied_prs respects a reopen; stale agent claims are
 # released from every open status that can hold one), and issue #72 (rule 5
-# acts on open nodes only; rule-3 records carry an explicit `pr`), and GC77
+# acts on open nodes only; rule-3 records carry an explicit `pr`), GC78 (issue
+# #115, rule 10: a request-changes verdict at the PR's head sends an in-review
+# or approved task to changes-requested), and GC77
 # (issue #102, rule 9: an approved task whose PR head moved goes back to
 # in-review).
 #
@@ -214,19 +216,27 @@ eq "GC69 open agent PR on a ready/blocked node -> in-review (non-agent PR: none)
   "$(moves)"
 eq "GC69 the drift record names the PR" '"open PR #69"' "$(jq -c '.[0].reason' "$tmp/out")"
 
-# --- rule 9: approved, the PR head moved -> in-review -------------------------------------
-# GC77 (issues #102, #111): an approval covers one head. An approved task with
-# an open agent PR that has no approve verdict at its head goes back to
-# in-review: a head with no verdict, and a head whose only verdict is a
-# request-changes (gc77-rc: reviewed, not approved). A PR approved at its head,
-# a non-agent PR, a closed PR and a node that is not approved get no record;
-# needs_human does not freeze the repair (a human's push is re-reviewed too).
+# --- rule 9: approved, no approve verdict at the PR head -> in-review ----------------------
+# GC77 (issues #102, #111, #115): an approval covers one head. An approved task
+# with an open agent PR that has no approve verdict at its head goes back to
+# in-review: a head pushed after the approval (the latest approve verdict
+# names another head), a head whose approve was superseded by a comment verdict
+# (gc77-rc: reviewed, not approved), and an approval recorded with no verdict
+# at all (gc77-hand). A PR approved at its head, a non-agent PR, a closed PR
+# and a node that is not approved get no record; needs_human does not freeze
+# the repair (a human's push is re-reviewed too).
+gc77_moves='["transition gc77-moved approved->in-review","transition gc77-two approved->in-review","transition gc77-flagged approved->in-review","transition gc77-rc approved->in-review","transition gc77-hand approved->in-review"]'
 run_sparse gc77
 eq "GC77 approved + open agent PR not approved at its head -> in-review (controls: none)" \
-  '["transition gc77-moved approved->in-review","transition gc77-two approved->in-review","transition gc77-flagged approved->in-review","transition gc77-rc approved->in-review"]' \
-  "$(moves)"
-eq "GC77 a head whose only verdict is a request-changes is not approved: the record names it" \
-  '"PR #781 head moved to 4c4c4c4 since its approval"' "$(jq -c '.[3].reason' "$tmp/out")"
+  "$gc77_moves" "$(moves)"
+eq "GC77 the head did not move (an approve there, superseded by a comment verdict): the reason says so" \
+  '"PR #781 has no approve verdict at its current head 4c4c4c4"' "$(jq -c '.[3].reason' "$tmp/out")"
+eq "GC77 the head did not move (an approval with no verdict anywhere): the reason says so" \
+  '"PR #782 has no approve verdict at its current head 4a4d4a4"' "$(jq -c '.[4].reason' "$tmp/out")"
+eq "GC77 an approve trailer that differs from the head only in case is not a moved head" \
+  '"PR #771 has no approve verdict at its current head d4c5c18"' \
+  "$(run_sparse gc77 '.prs[0].approved_head_sha = (.prs[0].head_sha | ascii_upcase)'; jq -c '.[0].reason' "$tmp/out")"
+run_sparse gc77
 eq "GC77 the record names the PR and its new head" \
   '"PR #771 head moved to d4c5c18 since its approval"' "$(jq -c '.[0].reason' "$tmp/out")"
 eq "GC77 several unreviewed PRs for one task: the lowest number names the record" \
@@ -237,16 +247,50 @@ eq "GC77 records carry exactly {op, id, from, to, reason}; no warnings" '[["from
 eq "GC77 the fix line reads approved -> in-review: PR #N head moved to <sha7> since its approval" \
   'transition gc77-moved approved -> in-review: PR #771 head moved to d4c5c18 since its approval' \
   "$(jq -r '.[0] | "\(.op) \(.id) \(.from) -> \(.to): \(.reason)"' "$tmp/out")"
-run_sparse gc77 '.prs |= map(.reviewed_at_head = true | .approved_at_head = true)'
+run_sparse gc77 '.prs |= map(.reviewed_at_head = true | .approved_at_head = true | .verdict_at_head = "approve" | .approved_head_sha = .head_sha)'
 eq "GC77 control: every PR approved at its head -> no record" '[]' "$(moves)"
 run_sparse gc77 '.prs |= map(.reviewed_at_head = true)'
-eq "GC77 every head reviewed, none newly approved: the same four records" \
-  '["transition gc77-moved approved->in-review","transition gc77-two approved->in-review","transition gc77-flagged approved->in-review","transition gc77-rc approved->in-review"]' \
-  "$(moves)"
+eq "GC77 every head reviewed, none newly approved: the same five records" \
+  "$gc77_moves" "$(moves)"
 # A merged PR outranks the bounce (rule 3 runs first): the task is done.
 run_sparse gc77 '.prs |= map(if .number == 771 then .state = "merged" else . end)'
 eq "GC77 the PR merged meanwhile -> done, not in-review" '["transition gc77-moved approved->done"]' \
   "$(jq -c '[.[] | select(.id == "gc77-moved") | "\(.op) \(.id) \(.from)->\(.to)"]' "$tmp/out")"
+
+# --- rule 10: request-changes at the PR head -> changes-requested --------------------------
+# GC78 (issue #115): the latest verdict at the head of an open agent PR is a
+# request-changes, and the node is still in-review (the reviewer's transition
+# was never made) or approved (an approve the request-changes superseded, at
+# the same head or after a push). Reconcile sends the task to
+# changes-requested, so the tick's patch rule takes it. Controls: a claimed
+# node (rule 4 first: in-review), a node already changes-requested, a comment
+# or approve verdict at the head, a non-agent PR, a closed PR, a promote node.
+run_sparse gc78
+eq "GC78 in-review or approved + request-changes at the PR head -> changes-requested (controls: none)" \
+  '["transition gc78-claimed claimed->in-review","transition gc78-stall in-review->changes-requested","transition gc78-same approved->changes-requested","transition gc78-older approved->changes-requested","transition gc78-two in-review->changes-requested","transition gc78-flagged approved->changes-requested"]' \
+  "$(moves)"
+eq "GC78 the record names the PR and its head" \
+  '"PR #881 has a request-changes verdict at its head 57a1157"' "$(jq -c '.[1].reason' "$tmp/out")"
+eq "GC78 several such PRs for one task: the lowest number names the record" \
+  '"PR #885 has a request-changes verdict at its head 5555555"' "$(jq -c '.[4].reason' "$tmp/out")"
+eq "GC78 records carry exactly {op, id, from, to, reason}; no warnings" '[["from","id","op","reason","to"]]|' \
+  "$(jq -c '[.[] | keys] | unique' "$tmp/out")|$(cat "$tmp/err")"
+eq "GC78 the fix line reads approved -> changes-requested: PR #N has a request-changes verdict at its head <sha7>" \
+  'transition gc78-same approved -> changes-requested: PR #882 has a request-changes verdict at its head 5a5e5a5' \
+  "$(jq -r '.[2] | "\(.op) \(.id) \(.from) -> \(.to): \(.reason)"' "$tmp/out")"
+# The next pass: the claimed node that rule 4 moved is in-review now, so rule 10 takes it.
+run_sparse gc78 '.nodes |= map(if .id == "gc78-claimed" then .status = "in-review"
+                                elif (.id | test("stall|same|older|two|flagged")) then .status = "changes-requested"
+                                else . end)'
+eq "GC78 the pass after: only the node rule 4 repaired is left to move" \
+  '["transition gc78-claimed in-review->changes-requested"]' "$(moves)"
+run_sparse gc78 '.prs |= map(if .verdict_at_head == "request-changes" then .verdict_at_head = "comment" else . end)'
+eq "GC78 control: a comment verdict at the head moves nothing to changes-requested" '[]' \
+  "$(jq -c '[.[] | select(.to == "changes-requested")]' "$tmp/out")"
+# A merged PR outranks the move (rule 3 runs first): the task is done.
+run_sparse gc78 '.prs |= map(if .number == 881 then .state = "merged" else . end)'
+eq "GC78 the PR merged meanwhile -> done, not changes-requested" '["transition gc78-stall in-review->done"]' \
+  "$(jq -c '[.[] | select(.id == "gc78-stall") | "\(.op) \(.id) \(.from)->\(.to)"]' "$tmp/out")"
 
 # --- rule 6: stale human claims ----------------------------------------------------------
 run_sparse gc44
@@ -379,6 +423,14 @@ task ready in-review human 0
 task approved in-review reconcile 1
 task approved in-review agent 0
 task approved in-review human 0
+task in-review changes-requested reconcile 1
+task approved changes-requested reconcile 1
+task in-review changes-requested agent 1
+task approved changes-requested agent 0
+task approved changes-requested human 0
+task approved changes-requested promote 0
+task claimed changes-requested reconcile 0
+task ready changes-requested reconcile 0
 task approved in-review promote 0
 promote approved in-review promote 0
 promote blocked in-review reconcile 1
@@ -415,6 +467,11 @@ eq "the stale-reclaim rows: claimed (plus claimant release) and every later open
   '[["claimed"],["approved","changes-requested","in-review","ready"]]' \
   "$(jq -c -n -L "$lib" 'include "transitions";
       [transitions[] | select(.to == "ready" and any(.actors[]; . == "reconcile") and (.from != ["blocked"])) | .from | sort]')"
+eq "the request-changes-at-head row: in-review | approved -> changes-requested, reconcile only (GC78)" \
+  '[{"from":["in-review","approved"],"to":"changes-requested","actors":["reconcile"]}]|[["agent"],["reconcile"]]' \
+  "$(jq -c -n -L "$lib" 'include "transitions";
+      [transitions[] | select(.to == "changes-requested" and any(.from[]; . == "approved")) | {from, to, actors}]')|$(jq -c -n -L "$lib" 'include "transitions";
+      [transitions[] | select(.to == "changes-requested") | .actors] | sort')"
 eq "the review-at-head row: approved -> in-review, reconcile only (GC77)" \
   '[{"from":["approved"],"to":"in-review","actors":["reconcile"]}]' \
   "$(jq -c -n -L "$lib" 'include "transitions";

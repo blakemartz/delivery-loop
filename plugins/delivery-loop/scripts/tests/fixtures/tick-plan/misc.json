@@ -13,7 +13,7 @@
  "prs": [{"number": 50, "task_id": "t-merge", "reviewed_at_head": true, "approved_at_head": true},
          {"number": 51, "task_id": "t-human-pr", "labels": ["agent-authored", "needs-human"]},
          {"number": 52, "task_id": "t-flagged"},
-         {"number": 53, "task_id": "t-reviewed", "reviewed_at_head": true},
+         {"number": 53, "task_id": "t-reviewed", "reviewed_at_head": true, "approved_at_head": true},
          {"number": 54, "task_id": "t-human-auth", "labels": []},
          {"number": 56, "task_id": "t-r2"},
          {"number": 55, "task_id": "t-r1"},

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Tests for lib/tick-plan.jq and tick-plan.sh (docs/delivery_graph_spec.md §5
 # `tick-plan.jq`, §9): golden cases GC12–GC20, GC39 (plan assertion), GC62, GC70,
+# GC78 (issue #115: the latest verdict at a head wins; reconcile rule 10 hands a
+# request-changes head to the patch rule),
 # GC77 (issue #102: review at head; its rebase -> reconcile -> review chain runs
 # lib/reconcile.jq between two plans),
 # the inert `external` node kind (§4.1/§5) and the `tick-plan.sh` part of GC59 (§12; §17 row A6, hardened by issue #47).
@@ -32,9 +34,13 @@ plan() {
 # acts <fixture> [input filter]: the actions as "<action> <pr|id>" strings.
 acts() { plan "$1" '[.actions[] | "\(.action) \(.pr // .id)"]' "${2:-.}"; }
 # waits_for <name> <fixture> <substring> [input filter]: some waiting line
-# contains <substring>.
+# contains <substring>. The lines are captured first: under pipefail, a
+# `grep -q` that exits at its first match can fail the pipeline (jq is killed
+# by SIGPIPE while still writing).
 waits_for() {
-  if plan "$2" '.waiting[]' "${4:-.}" | grep -qF -- "$3"; then pass "$1"
+  local lines
+  lines=$(plan "$2" '.waiting[]' "${4:-.}")
+  if grep -qF -- "$3" <<<"$lines"; then pass "$1"
   else fail "$1" "no waiting line contains: $3" "waiting: $(plan "$2" .waiting "${4:-.}")"; fi
 }
 
@@ -90,35 +96,36 @@ eq "GC16 control: at patch_iteration 2 it is rebased" '["rebase 21"]' \
 eq "GC77 --auto-merge: the PR approved at its head merges; the moved head and the request-changes head do not" \
   '["merge 83","rebase 82"]' "$(acts gc77)"
 waits_for "GC77 a head with only a request-changes verdict is listed in waiting, never merged" gc77 \
-  "PR #84 (t-rc) is approved at an older head: awaiting reconcile/re-review"
+  "PR #84 (t-rc) is approved, but no approve verdict stands at its head 4c4c4c4: awaiting reconcile"
 eq "GC77 a request-changes head that conflicts is not rebased either" '["merge 83","rebase 82"]' \
   "$(acts gc77 '.prs[3].mergeable = "conflicting"')"
 eq "GC77 control: an approve verdict at that head -> it merges" '["merge 83","merge 84","rebase 82"]' \
-  "$(acts gc77 '.prs[3].approved_at_head = true')"
+  "$(acts gc77 '.prs[3] |= (.approved_at_head = true | .verdict_at_head = "approve" | .approved_head_sha = .head_sha)')"
 waits_for "GC77 the moved head is listed in waiting" gc77 \
-  "PR #81 (t-moved) is approved at an older head: awaiting reconcile/re-review"
+  "PR #81 (t-moved) is approved, but no approve verdict stands at its head d4c5c18: awaiting reconcile"
 waits_for "GC77 without --auto-merge it is not offered to a human as approved either" gc77 \
-  "PR #81 (t-moved) is approved at an older head: awaiting reconcile/re-review" '.flags = {}'
+  "PR #81 (t-moved) is approved, but no approve verdict stands at its head d4c5c18: awaiting reconcile" '.flags = {}'
 eq "GC77 without --auto-merge: one 'awaiting a human merge' line, for the reviewed PR" \
   '["PR #83 (t-ok) is approved: awaiting a human merge (mergeable=clean, checks=success)"]' \
   "$(plan gc77 '[.waiting[] | select(test("awaiting a human merge"))]' '.flags = {}')"
 eq "GC77 approved + conflicting at an unreviewed head: no rebase, it waits for the re-review" \
   '["merge 83","rebase 82"]|true' \
   "$(acts gc77 '.prs[0].mergeable = "conflicting"')|$(plan gc77 \
-     'any(.waiting[]; . == "PR #81 (t-moved) is approved at an older head: awaiting reconcile/re-review")' \
+     'any(.waiting[]; . == "PR #81 (t-moved) is approved, but no approve verdict stands at its head d4c5c18: awaiting reconcile")' \
      '.prs[0].mergeable = "conflicting"')"
 # The rebase chain. Tick 1 rebases #82 (above). The rebase pushed a new head:
 # clean, but no verdict covers it.
 rebased='.prs[1] |= (.head_sha = "eeeeeee000000000000000000000000000000000"
                      | .mergeable = "clean" | .reviewed_at_head = false
-                     | .approved_at_head = false)'
+                     | .approved_at_head = false
+                     | .approved_head_sha = "2af79da000000000000000000000000000000000")'
 eq "GC77 after the rebase pushed a new head: no merge of #82 even before reconcile ran" \
   '["merge 83"]' "$(acts gc77 "$rebased")"
-# Tick 2: reconcile first (rule 9), then the plan over the repaired board.
+# Tick 2: reconcile first (rules 10 and 9), then the plan over the repaired board.
 recs=$(jq -c -L "$lib" -L "$fx" "include \"expand\"; include \"reconcile\";
   $rebased | full_input | reconcile_plan | .records" "$fx/gc77.json")
-eq "GC77 tick 2 reconcile: the rebased task (and the moved and request-changes ones) go back to in-review" \
-  '["t-moved approved->in-review: PR #81 head moved to d4c5c18 since its approval","t-rebase approved->in-review: PR #82 head moved to eeeeeee since its approval","t-rc approved->in-review: PR #84 head moved to 4c4c4c4 since its approval"]' \
+eq "GC77 tick 2 reconcile: the rebased and the moved task go back to in-review; the request-changes head goes to changes-requested (GC78)" \
+  '["t-rc approved->changes-requested: PR #84 has a request-changes verdict at its head 4c4c4c4","t-moved approved->in-review: PR #81 head moved to d4c5c18 since its approval","t-rebase approved->in-review: PR #82 head moved to eeeeeee since its approval"]' \
   "$(jq -c 'map("\(.id) \(.from)->\(.to): \(.reason)")' <<<"$recs")"
 # reconciled: the sparse input with the records applied to its nodes.
 reconciled="$rebased | (\$recs | map({key: .id, value: .to}) | from_entries) as \$to
@@ -127,20 +134,83 @@ tick2() {
   jq -c -L "$lib" -L "$fx" --argjson recs "$recs" "include \"expand\"; include \"tick-plan\";
     $reconciled | ${2:-.} | full_input | tick_plan | $1" "$fx/gc77.json"
 }
-eq "GC77 tick 2 plan: the new head is reviewed before any merge of it" \
-  '["merge 83","review 81","review 82"]' \
+eq "GC77 tick 2 plan: the new head is reviewed before any merge of it; the request-changes head is patched" \
+  '["merge 83","patch 84","review 81","review 82"]' \
   "$(tick2 '[.actions[] | "\(.action) \(.pr // .id)"]' '.flags.parallel = 3')"
 eq "GC77 the review action is at the new head" '"in review, no verdict at head eeeeeee"' \
   "$(tick2 '.actions[] | select(.pr == 82) | .reason' '.flags.parallel = 3')"
-eq "GC77 tick 2 plan: the request-changes head already has its verdict, so it is not reviewed twice" \
-  '["PR #84 (t-rc) is reviewed at head 4c4c4c4: awaiting its verdict transition"]' \
-  "$(tick2 '[.waiting[] | select(test("#84"))]' '.flags.parallel = 3')"
+eq "GC78 tick 2 plan: the request-changes head is not reviewed twice and waits for nothing" \
+  '[]|[]' \
+  "$(tick2 '[.actions[] | select(.pr == 84 and .action == "review")]' '.flags.parallel = 3')|$(tick2 \
+       '[.waiting[] | select(test("#84"))]' '.flags.parallel = 3')"
 # Tick 3: the reviewer approved the new head; only now does #82 merge, at that head.
 eq "GC77 tick 3: approved at the new head -> merged at the new head" \
   '["eeeeeee000000000000000000000000000000000"]' \
   "$(tick2 '[.actions[] | select(.action == "merge" and .pr == 82) | .sha]' \
        '.nodes[1].status = "approved" | .prs[1].reviewed_at_head = true
-        | .prs[1].approved_at_head = true')"
+        | .prs[1].approved_at_head = true | .prs[1].approved_head_sha = .prs[1].head_sha')"
+
+# GC78 (issue #115): the latest verdict naming a head is the verdict at that
+# head. #91 was approved and then got a request-changes at the same head, #92 an
+# approve and then a comment verdict there: neither is approved at its head, so
+# neither merges nor is rebased. #93 is the stall: a request-changes at the head
+# of an in-review node whose reviewer never made the transition. #95's approve
+# was revoked (gitlab) or dismissed (github, gitea): the voided verdict still
+# carries the trailer (`reviewed_at_head` true), but no verdict stands at the
+# head (`verdict_at_head` null).
+eq "GC78 --auto-merge: approve-then-request-changes at one head is never proposed for merge" \
+  '["merge 94"]' "$(acts gc78 '.flags.parallel = 3')"
+eq "GC78 nor rebased when it conflicts" '["merge 94"]' \
+  "$(acts gc78 '.flags.parallel = 3 | .prs[0].mergeable = "conflicting" | .prs[1].mergeable = "conflicting"')"
+waits_for "GC78 the superseded approval is listed in waiting" gc78 \
+  "PR #91 (t-same) is approved, but no approve verdict stands at its head 5a5e5a5: awaiting reconcile"
+waits_for "GC78 without --auto-merge it is not offered to a human as approved either" gc78 \
+  "PR #91 (t-same) is approved, but no approve verdict stands at its head 5a5e5a5: awaiting reconcile" '.flags = {}'
+eq "GC78 without --auto-merge: one 'awaiting a human merge' line, for the PR approved at its head" \
+  '["PR #94 (t-ok) is approved: awaiting a human merge (mergeable=clean, checks=success)"]' \
+  "$(plan gc78 '[.waiting[] | select(test("awaiting a human merge"))]' '.flags = {}')"
+# Reconcile (rule 10, then rule 9), then the plan over the repaired board.
+recs78=$(jq -c -L "$lib" -L "$fx" 'include "expand"; include "reconcile";
+  full_input | reconcile_plan | .records' "$fx/gc78.json")
+waits_for "GC78 the revoked approval is listed in waiting, never merged" gc78 \
+  "PR #95 (t-revoked) is approved, but no approve verdict stands at its head d0d0d0d: awaiting reconcile"
+eq "GC78 reconcile: both request-changes heads go to changes-requested; the comment head and the revoked head back to in-review" \
+  '["t-same approved->changes-requested: PR #91 has a request-changes verdict at its head 5a5e5a5","t-stall in-review->changes-requested: PR #93 has a request-changes verdict at its head 57a1157","t-comment approved->in-review: PR #92 has no approve verdict at its current head c0c0c0c","t-revoked approved->in-review: PR #95 has no approve verdict at its current head d0d0d0d"]' \
+  "$(jq -c 'map("\(.id) \(.from)->\(.to): \(.reason)")' <<<"$recs78")"
+# plan78 <plan filter> [input filter]: the plan over gc78 with those records applied.
+plan78() {
+  jq -c -L "$lib" -L "$fx" --argjson recs "$recs78" "include \"expand\"; include \"tick-plan\";
+    (\$recs | map({key: .id, value: .to}) | from_entries) as \$to
+    | .nodes |= map(.status = (\$to[.id] // .status)) | .flags.parallel = 4
+    | ${2:-.} | full_input | tick_plan | $1" "$fx/gc78.json"
+}
+eq "GC78 the following plan emits patch for both request-changes heads, and still no merge of either" \
+  '["merge 94","patch 91","patch 93"]' \
+  "$(plan78 '[.actions[] | select(.action != "review") | "\(.action) \(.pr // .id)"]')"
+# No stall after rule 9 either: an in-review head with no standing approve or
+# request-changes verdict is reviewed again, whatever trailer it carries.
+eq "GC78 the following plan reviews the comment head and the revoked head again" \
+  '["review 92: in review, only a comment verdict at head c0c0c0c","review 95: in review, no standing verdict at head d0d0d0d"]' \
+  "$(plan78 '[.actions[] | select(.action == "review") | "\(.action) \(.pr): \(.reason)"]')"
+eq "GC78 neither waits for a verdict transition, and neither is escalated" '[]' \
+  "$(plan78 '[.waiting[] | select(test("#92|#95|t-comment|t-revoked"))]')"
+eq "GC78 a second reconcile pass plans nothing for them: the review is the tick's move" '[]' \
+  "$(jq -c -L "$lib" -L "$fx" --argjson recs "$recs78" 'include "expand"; include "reconcile";
+       ($recs | map({key: .id, value: .to}) | from_entries) as $to
+       | .nodes |= map(.status = ($to[.id] // .status))
+       | full_input | reconcile_plan | .records' "$fx/gc78.json")"
+# Controls: a standing approve or request-changes at an in-review head is not
+# reviewed twice; it waits for its node to move.
+eq "GC78 control: an in-review head with a standing approve waits for its transition, unreviewed" \
+  '[]|["PR #95 (t-revoked) is reviewed at head d0d0d0d: awaiting its verdict transition"]' \
+  "$(plan78 '[.actions[] | select(.pr == 95)]' '.prs[4] |= (.approved_at_head = true | .verdict_at_head = "approve" | .approved_head_sha = .head_sha)')|$(plan78 \
+       '[.waiting[] | select(test("#95"))]' '.prs[4] |= (.approved_at_head = true | .verdict_at_head = "approve" | .approved_head_sha = .head_sha)')"
+eq "GC78 control: an in-review head with a standing request-changes is not reviewed (reconcile rule 10 moves it)" \
+  '[]|["PR #95 (t-revoked) is reviewed at head d0d0d0d: awaiting its verdict transition"]' \
+  "$(plan78 '[.actions[] | select(.pr == 95)]' '.prs[4].verdict_at_head = "request-changes"')|$(plan78 \
+       '[.waiting[] | select(test("#95"))]' '.prs[4].verdict_at_head = "request-changes"')"
+eq "GC78 a needs-human node is still never reviewed" '[]' \
+  "$(plan78 '[.actions[] | select(.pr == 92)]' '.nodes[1].needs_human = true')"
 
 eq "GC18 same module, different target_branch -> both started" \
   '["start t-main","start t-rel"]' "$(acts gc18)"
@@ -149,7 +219,7 @@ eq "GC18 control: same module and target -> one start" '["start t-main"]' \
 eq "module lock: an in-flight PR on (main, m) blocks a start on (main, m) only" \
   '["start t-rel"]' \
   "$(acts gc18 '.nodes += [{id: "t-busy", module: "m", status: "in-review"}]
-                | .prs = [{number: 9, task_id: "t-busy", reviewed_at_head: true}]')"
+                | .prs = [{number: 9, task_id: "t-busy", reviewed_at_head: true, approved_at_head: true}]')"
 eq "module lock: no-module tasks are exempt" '["start t-main","start t-rel"]' \
   "$(acts gc18 '.nodes |= map(.module = null | .target_branch = "main")')"
 
@@ -323,7 +393,8 @@ EOF
 
 jq '.[0].status = "approved"' "$tmp/stub/graph.json" >"$tmp/g" && mv "$tmp/g" "$tmp/stub/graph.json"
 jq '.[0].mergeable = "clean" | .[0].checks = "success" | .[0].reviewed_at_head = true
-    | .[0].approved_at_head = true' "$tmp/stub/forge.json" >"$tmp/f" \
+    | .[0].approved_at_head = true | .[0].verdict_at_head = "approve"
+    | .[0].approved_head_sha = .[0].head_sha' "$tmp/stub/forge.json" >"$tmp/f" \
   && mv "$tmp/f" "$tmp/stub/forge.json"
 run_sh -- --parallel --auto-merge
 eq "tick-plan.sh --auto-merge enables merge actions" '"merge"' "$(jq -c '.actions[0].action' <<<"$out")"

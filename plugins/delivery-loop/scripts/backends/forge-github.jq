@@ -9,9 +9,13 @@
 #                            every formal review, then every verdict-headed comment
 #                            (forge-verdict.jq). A review with no `state` (null
 #                            or missing) carries no verdict and is left out.
-#   gh_approved_at_head    — the same object (plus `headRefOid`) → bool: one of its
-#                            gh_reviews is an approve whose `Reviewed-Head:` line
-#                            names the head (§4.2 `approved_at_head`).
+#   gh_verdict_at_head     — the same object (plus `headRefOid`) → the latest of its
+#                            gh_reviews verdicts naming the head, or null (§4.2
+#                            `verdict_at_head`; forge-verdict.jq).
+#   gh_approved_at_head    — the same → bool: that verdict is an approve (§4.2
+#                            `approved_at_head`).
+#   gh_approved_head_sha   — the same → the head its latest approve verdict names,
+#                            or null (§4.2 `approved_head_sha`).
 #   gh_comments            — `gh pr view --json comments` → [{author, body, at, url}]
 #   gh_merged_since($t)    — keep list elements whose `mergedAt` ≥ ISO-8601 $t
 #
@@ -100,9 +104,12 @@ def gh_reviews:
   + ([ (.comments // [])[] | {author: (.author | _login), body: (.body // ""), at: .createdAt} ]
      | verdict_comments);
 
-# An approve verdict (a formal APPROVED review, or an APPROVE-headed comment)
-# carries a `Reviewed-Head: <sha>` line equal to the head.
+# The latest verdict (a formal review that is not dismissed, or a verdict-headed
+# comment) carrying a `Reviewed-Head: <sha>` line equal to the head; an approve
+# there counts only while it is that latest verdict.
+def gh_verdict_at_head: (.headRefOid // "") as $sha | gh_reviews | verdict_at_head($sha);
 def gh_approved_at_head: (.headRefOid // "") as $sha | gh_reviews | approved_at_head($sha);
+def gh_approved_head_sha: (.headRefOid // "") as $sha | gh_reviews | approved_head_sha($sha);
 
 def gh_pr($graph_backend):
   ([ (.labels // [])[] | .name ]) as $labels
@@ -119,6 +126,8 @@ def gh_pr($graph_backend):
       patch_iteration: gh_patch_iteration,
       reviewed_at_head: gh_reviewed_at_head,
       approved_at_head: gh_approved_at_head,
+      verdict_at_head: gh_verdict_at_head,
+      approved_head_sha: gh_approved_head_sha,
       agent: ($labels | any(.[]; . == agent_label)),
       author: (.author | _login) }
   | validate_pr;
