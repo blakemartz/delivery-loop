@@ -247,7 +247,7 @@ eq "GC77 records carry exactly {op, id, from, to, reason}; no warnings" '[["from
 eq "GC77 the fix line reads approved -> in-review: PR #N head moved to <sha7> since its approval" \
   'transition gc77-moved approved -> in-review: PR #771 head moved to d4c5c18 since its approval' \
   "$(jq -r '.[0] | "\(.op) \(.id) \(.from) -> \(.to): \(.reason)"' "$tmp/out")"
-run_sparse gc77 '.prs |= map(.reviewed_at_head = true | .approved_at_head = true | .verdict_at_head = "approve")'
+run_sparse gc77 '.prs |= map(.reviewed_at_head = true | .approved_at_head = true | .verdict_at_head = "approve" | .approved_head_sha = .head_sha)'
 eq "GC77 control: every PR approved at its head -> no record" '[]' "$(moves)"
 run_sparse gc77 '.prs |= map(.reviewed_at_head = true)'
 eq "GC77 every head reviewed, none newly approved: the same five records" \

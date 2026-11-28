@@ -100,7 +100,7 @@ waits_for "GC77 a head with only a request-changes verdict is listed in waiting,
 eq "GC77 a request-changes head that conflicts is not rebased either" '["merge 83","rebase 82"]' \
   "$(acts gc77 '.prs[3].mergeable = "conflicting"')"
 eq "GC77 control: an approve verdict at that head -> it merges" '["merge 83","merge 84","rebase 82"]' \
-  "$(acts gc77 '.prs[3] |= (.approved_at_head = true | .verdict_at_head = "approve")')"
+  "$(acts gc77 '.prs[3] |= (.approved_at_head = true | .verdict_at_head = "approve" | .approved_head_sha = .head_sha)')"
 waits_for "GC77 the moved head is listed in waiting" gc77 \
   "PR #81 (t-moved) is approved, but no approve verdict stands at its head d4c5c18: awaiting reconcile"
 waits_for "GC77 without --auto-merge it is not offered to a human as approved either" gc77 \
@@ -203,8 +203,8 @@ eq "GC78 a second reconcile pass plans nothing for them: the review is the tick'
 # reviewed twice; it waits for its node to move.
 eq "GC78 control: an in-review head with a standing approve waits for its transition, unreviewed" \
   '[]|["PR #95 (t-revoked) is reviewed at head d0d0d0d: awaiting its verdict transition"]' \
-  "$(plan78 '[.actions[] | select(.pr == 95)]' '.prs[4] |= (.approved_at_head = true | .verdict_at_head = "approve")')|$(plan78 \
-       '[.waiting[] | select(test("#95"))]' '.prs[4] |= (.approved_at_head = true | .verdict_at_head = "approve")')"
+  "$(plan78 '[.actions[] | select(.pr == 95)]' '.prs[4] |= (.approved_at_head = true | .verdict_at_head = "approve" | .approved_head_sha = .head_sha)')|$(plan78 \
+       '[.waiting[] | select(test("#95"))]' '.prs[4] |= (.approved_at_head = true | .verdict_at_head = "approve" | .approved_head_sha = .head_sha)')"
 eq "GC78 control: an in-review head with a standing request-changes is not reviewed (reconcile rule 10 moves it)" \
   '[]|["PR #95 (t-revoked) is reviewed at head d0d0d0d: awaiting its verdict transition"]' \
   "$(plan78 '[.actions[] | select(.pr == 95)]' '.prs[4].verdict_at_head = "request-changes"')|$(plan78 \
