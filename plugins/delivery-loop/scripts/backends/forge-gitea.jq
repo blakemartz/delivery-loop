@@ -38,10 +38,11 @@ def gt_state:
   else {"open": "open", "closed": "closed"}[.state // ""]
        // error("unknown gitea PR state \(.state | tojson)") end;
 
-# §7.3 mergeable: true → clean, false → conflicting, absent/null → unknown.
-# Only `true` is clean, so `unknown` is never mergeable. The adapter's `repoll`
-# hands over an open PR's `false` only once it is confirmed (false on every read
-# of the bounded wait); an unconfirmed one arrives here as null.
+# §7.3 mergeable: true → clean, a confirmed false → conflicting, absent/null →
+# unknown. Only `true` is clean, so `unknown` is never mergeable. One `false`
+# read of an open PR is not a conflict: the adapter's `settle` hands a `false`
+# over only once it is confirmed (false on every read of the bounded wait), and
+# an unconfirmed one arrives here as null.
 def gt_mergeable:
   if .mergeable == true then "clean"
   elif .mergeable == false then "conflicting"

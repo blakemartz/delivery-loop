@@ -95,7 +95,7 @@ expect "GC28: null then true on the re-poll -> clean" '[ "$rc" = 0 ] && jq_true 
 
 # --- GC76: a gitea `mergeable: false` is confirmed before it is a conflict ----
 # Gitea reads false while its conflict check re-runs (§7.3), so the adapter
-# re-reads: bounded to 3 re-reads with backoff 2 s, 4 s, 6 s (12 s per PR).
+# re-reads: bounded to 3 re-reads with backoff 2 s, 4 s, 6 s (12 s per call).
 reset
 run -- pr-view 109
 expect "GC76: false then true on the re-poll -> clean, after one re-read" \
@@ -192,6 +192,28 @@ expect "GC32: page 1 and page 2 requested with limit=max_response_items, stable 
 expect "GC32: no page past the last Link rel=next" '[ "$(log_count "pulls?state=open&sort=oldest&limit=2&page=3")" = 0 ]'
 expect "GC32: listed PRs hydrated without re-reading settled ones" '[ "$(log_count "GET $R/pulls/101 ")" = 0 ] && [ "$(log_count "GET $R/pulls/105 ")" = 0 ] && log_has "GET $R/commits/$(sha 105)/status"'
 expect "GC32: every listed PR passes validate_pr" 'jq -e -L "$here/../lib" "include \"pr\"; map(validate_pr) | length == 3" <<<"$out" >/dev/null'
+# §7.3: the confirmation wait is capped per call, not per PR. Listed: 104, 112
+# and 113 read false on every read, 114 false then true, 110 false then null
+# then false, 101 true. One backoff (2 s, 4 s, 6 s = 12 s) covers them all; a
+# wait per PR would have slept 3 times for each of the four that stay unsettled.
+reset
+run SHIM_OPEN_LIST=open-unsettled -- pr-list
+expect "§7.3 cap: a list with several persistently-false PRs waits one backoff in total (2 s, 4 s, 6 s)" \
+  '[ "$rc" = 0 ] && [ "$(grep -F sleep "$tmp/state/log" | tr "\n" ",")" = "sleep 2,sleep 4,sleep 6," ]'
+expect "§7.3 cap: each persistently-false PR is still re-read 3 times and confirmed conflicting (104, 112, 113)" \
+  '[ "$(log_count "GET $R/pulls/104 ")" = 3 ] && [ "$(log_count "GET $R/pulls/112 ")" = 3 ] && [ "$(log_count "GET $R/pulls/113 ")" = 3 ] && [ "$(jq -c "map(select(.number == 104 or .number == 112 or .number == 113) | .mergeable)" <<<"$out")" = "[\"conflicting\",\"conflicting\",\"conflicting\"]" ]'
+expect "§7.3 cap: a false not confirmed within the wait reads unknown, never clean or conflicting (110)" \
+  '[ "$(log_count "GET $R/pulls/110 ")" = 3 ] && jq_true "map(select(.number == 110))[0].mergeable == \"unknown\""'
+expect "§7.3 cap: a PR that settles leaves the wait (114: one re-read, clean); a settled one never joins it (101)" \
+  '[ "$(log_count "GET $R/pulls/114 ")" = 1 ] && jq_true "map(select(.number == 114))[0].mergeable == \"clean\"" && [ "$(log_count "GET $R/pulls/101 ")" = 0 ]'
+expect "§7.3 cap: 13 re-reads in all (3+3+3+1+3), every listed PR returned in list order" \
+  '[ "$(grep -cE "^GET $R/pulls/[0-9]+ " "$tmp/state/log")" = 13 ] && [ "$(jq -c "map(.number)" <<<"$out")" = "[104,112,113,114,110,101]" ]'
+expect "§7.3 cap: every re-read of a round follows that round's sleep (rounds are shared, not per PR)" \
+  '[ "$(grep -E "^sleep|^GET $R/pulls/[0-9]+ " "$tmp/state/log" | sed -E "s/^GET .*\/pulls\/([0-9]+) .*/\1/" | tr "\n" " ")" = "sleep 2 104 112 113 114 110 sleep 4 104 112 113 110 sleep 6 104 112 113 110 " ]'
+reset
+run SHIM_OPEN_LIST=open-unsettled -- pr-find --head task/113-wip
+expect "§7.3 cap: pr-find waits for the one PR it returns, never for the list it searched (113: 3 re-reads, conflicting)" \
+  '[ "$rc" = 0 ] && jq_true ".number == 113 and .mergeable == \"conflicting\"" && [ "$(grep -cE "^GET $R/pulls/[0-9]+ " "$tmp/state/log")" = 3 ] && [ "$(grep -F sleep "$tmp/state/log" | tr "\n" ",")" = "sleep 2,sleep 4,sleep 6," ]'
 reset
 run LIST_LIMIT=3 -- pr-list
 expect "GC32: a list reaching LIST_LIMIT exits 3 naming LIST_LIMIT, prints nothing" '[ "$rc" = 3 ] && grep -qF LIST_LIMIT <<<"$err" && [ -z "$out" ]'

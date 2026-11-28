@@ -910,6 +910,12 @@ different verdict.
   4 reads is `conflicting`; anything else is `unknown`, never `clean`. A genuine
   conflict is therefore still reported within that wait, and a transient `false`
   no longer costs a rebase dispatch (§5 `tick-plan.jq` rule 3; GC76).
+  **The wait is capped at 12 s per call, whatever the number of PRs.** `pr-list`
+  and `pr-find` run that one backoff for the whole call and, after each sleep,
+  re-read every PR still unsettled, so each PR is read on the schedule `pr-view`
+  gives it and N conflicted or WIP PRs cost 12 s per list, not 12·N s. A `false`
+  not confirmed by the end of the call's wait reads `unknown`, never `clean`
+  and never `conflicting`.
 - **Separate reviewer identity, optional.** Self-review rejection is the norm on
   every forge. If `GITLAB_REVIEW_TOKEN` / `GITEA_REVIEW_TOKEN` / `GH_REVIEW_TOKEN` is
   set in the environment, `pr-review` posts under it, which restores formal reviews.
@@ -1207,10 +1213,10 @@ the case assertions it owns.
 | GC33 | PR whose body only *mentions* `#12`; PR with `Delivery-Task: 12` | `task_id` null / `"12"`; reaper sees the second as #12's open PR and does not reclaim |
 | GC46 | 5 PRs, each carrying exactly one linkage form (trailer; `Closes #7`; `task/x--s` head; `task/7-s` head; none) plus one carrying both a trailer and `Closes` | `task_id` per §4.3 precedence; the trailer wins |
 | GC57 | forge reports mergeability as computing on 3 polls | `mergeable:"unknown"`; tick-plan emits no merge |
-| GC76 | gitea curl shim: an open PR reading `mergeable:false` then `true`; one reading `false` on every read; one reading null then `false` | `clean` after 1 re-read; `conflicting` after 3 re-reads (4 GETs, backoff 2/4/6 s); `unknown` (never `clean`) |
 | GC58 | `*_REVIEW_TOKEN` set | dry-run request carries the review token; `form:"formal"` |
 | GC63 | github `pr-merge` where the post-merge re-read shows `state:open` with auto-merge enabled (gh shim) | `gh pr merge --disable-auto` invoked; exit 1 |
 | GC67 | merged-PR feed with `--since T`: fixtures with PRs merged before and after T, plus a closed-unmerged PR (gitea) | only PRs merged at or after T; github shim called with `--search "merged:>=T"`; gitea stops paging once `updated_at < T` |
+| GC76 | gitea curl shim: an open PR reading `mergeable:false` then `true`; one reading `false` on every read; one reading null then `false` | `clean` after 1 re-read; `conflicting` after 3 re-reads (4 GETs, backoff 2/4/6 s); `unknown` (never `clean`) |
 
 **Plans, branches, init, config:**
 
