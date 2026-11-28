@@ -445,20 +445,31 @@ echo "==> forge: $FORGE, authenticated as $login"
 
 # forge_dry_write_ok RES NAME COLOR DESC: RES is exactly what FORGE's adapter
 # documents for a missing label under FORGE_DRY_RUN (forge.sh header): github's
-# `gh label create …` line, or the curl adapters' `POST …/labels` line plus the
-# JSON body `{name, color: "#rrggbb", description}`.
+# `gh label create …` line, or the curl adapters' two lines. Line 1 is `POST`
+# and the adapter's one label-creating path, under the API root (which may sit
+# below a URL prefix): gitea `…/api/v1/repos/{o}/{r}/labels`, gitlab
+# `…/api/v4/projects/<enc>/labels`, every segment URL-encoded, so no
+# whitespace and no other route. Line 2 is one JSON value, exactly
+# `{name, color: "#rrggbb", description}`.
 forge_dry_write_ok() {
-  local res="$1" want
+  local res="$1" want seg='[[:alnum:]._~%-]+' path_re
   case "$FORGE" in
     github)
       want="$(printf 'gh label create --color %s --description %q -- %q' "$3" "$4" "$2")"
-      [ "$res" = "$want" ] ;;
-    *)
-      [ "$(wc -l <<<"$res" | tr -d ' ')" = 2 ] || return 1
-      case "$(sed -n 1p <<<"$res")" in "POST "*/labels) : ;; *) return 1 ;; esac
-      sed -n 2p <<<"$res" \
-        | jq -e --arg n "$2" --arg c "#$3" --arg d "$4" '. == {name: $n, color: $c, description: $d}' >/dev/null 2>&1 ;;
+      [ "$res" = "$want" ]
+      return ;;
+    gitea)  path_re="^POST (/$seg)*/api/v1/repos/$seg/$seg/labels\$" ;;
+    gitlab) path_re="^POST (/$seg)*/api/v4/projects/$seg/labels\$" ;;
+    *)      return 1 ;;
   esac
+  case "$res" in
+    *$'\n'*$'\n'*) return 1 ;;
+    *$'\n'*)       : ;;
+    *)             return 1 ;;
+  esac
+  [[ ${res%%$'\n'*} =~ $path_re ]] || return 1
+  jq -e -s --arg n "$2" --arg c "#$3" --arg d "$4" '. == [{name: $n, color: $c, description: $d}]' \
+    <<<"${res#*$'\n'}" >/dev/null 2>&1
 }
 forge_label() {
   local res created
