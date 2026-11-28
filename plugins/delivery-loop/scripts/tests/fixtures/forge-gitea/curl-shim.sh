@@ -6,6 +6,7 @@
 # answers Gitea/Forgejo REST v1 routes from the fixtures in $SHIM_FX:
 #   prs.json       {"<n>": <PullRequest>, "<n>.<k>": <PullRequest for the k-th GET>}
 #   lists.json     {"open"|"closed": [<n>, …]}  (closed in sort=recentupdate order)
+#                  SHIM_OPEN_LIST=<key> serves that key as the open list instead.
 #   statuses.json  {"<sha>": <CombinedStatus>}  (missing sha → no statuses)
 #                  `statuses` holds every status; the route pages it as both
 #                  forges do (src: GetCombinedCommitStatusByRef), recomputing
@@ -123,6 +124,7 @@ else
       elif [ -n "$ls" ]; then page "$ls" link; else err 404 "GetOrgByName"; fi ;;
     "GET pulls")
       st=$(qp state)
+      [ "${st:-open}" != open ] || st="${SHIM_OPEN_LIST:-open}"
       page "$(jq -c --arg s "${st:-open}" --slurpfile prs "$SHIM_FX/prs.json" \
                 '(.[$s] // []) | map(. as $n | $prs[0][$n | tostring])' "$SHIM_FX/lists.json")" link ;;
     "POST pulls")

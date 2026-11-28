@@ -41,9 +41,15 @@
 #     up to 3 times with backoff (2 s, 4 s, 6 s: at most 12 s per PR), stopping
 #     at the first `true` (`clean`). It is `conflicting` only when all 4 reads
 #     were false; any other outcome (absent/null on an older server, or false
-#     and null mixed) is `unknown`. So a genuine conflict, and a WIP PR, costs
-#     the full 12 s on every read; a closed PR is never re-read. Only `true` is
+#     and null mixed) is `unknown`. A closed PR is never re-read. Only `true` is
 #     `clean`.
+#   - that wait is capped at 12 s per call, not per PR: `pr-list` and `pr-find`
+#     run the one backoff (2 s, 4 s, 6 s) for the whole call and, after each
+#     sleep, re-read every PR still unsettled. So each PR keeps the read
+#     schedule `pr-view` gives it, and a list holding N conflicted or WIP PRs
+#     waits 12 s in total, not 12·N s (it still costs up to 3 extra GETs per
+#     such PR). A PR whose false was not confirmed by the end of that one wait
+#     reads `unknown`.
 #   - `checks` is rolled up in the adapter over every `statuses[].status` of
 #     GET /commits/{sha}/status, paged in full like any list (LIST_LIMIT exit 3
 #     included); `warning` and `skipped` count as success. That endpoint is
@@ -51,8 +57,8 @@
 #     so neither is trusted: Gitea Actions posts one status per job, and a failing
 #     job past page 1 must still read as failure.
 #   - `pr-list` hydrates each listed PR (combined status, issue comments,
-#     reviews); it re-reads a PR only while its mergeability is unsettled
-#     (above).
+#     reviews), after the call's one mergeability wait; it re-reads a PR only
+#     while its mergeability is unsettled (above).
 #   - `pr-list --state merged` pages `state=closed&sort=recentupdate` and keeps
 #     `merged == true`. The swagger has no `since`, so with `--since T` paging
 #     stops at the first page holding a PR updated before T (merging updates
@@ -294,25 +300,45 @@ get_pr() {
   cp "$tmp/resp" "$2"
 }
 
-# repoll <file>: while the PR in <file> is open and not `mergeable: true`,
-# re-read it up to $POLLS times with backoff. A `false` is a conflict only when
-# every read of that wait was false (Gitea reads false while its conflict check
+# settle <count>: the one bounded mergeability wait of a call, shared by the
+# PullRequests in $tmp/pr-0.json … $tmp/pr-<count-1>.json (§7.3). While any of
+# them is open and not `mergeable: true`, sleep the next backoff step and
+# re-read every one still unsettled, up to $POLLS times: the wait is the same
+# 2 s + 4 s + 6 s whether one PR is unsettled or all of them, and each PR is
+# read on the schedule a lone PR gets. A `false` is a conflict only when every
+# read of that wait was false (Gitea reads false while its conflict check
 # runs); a false left unconfirmed is rewritten to null, so it reads `unknown`.
-repoll() {
-  local f="$1" i=0 n confirmed=1
-  n=$(jq -r .number "$f")
-  while [ "$(fjq -r 'include "forge-gitea"; gt_mergeable_unsettled' "$f")" = true ]; do
-    [ "$(jq -r '.mergeable == false' "$f")" = true ] || confirmed=0
-    if [ "$i" -ge "$POLLS" ]; then
-      if [ "$confirmed" = 0 ]; then
-        jq '.mergeable = null' "$f" > "$f.unconfirmed"
-        mv "$f.unconfirmed" "$f"
-      fi
-      break
-    fi
+settle() {
+  local count="$1" i=0 k pending="" still mixed=" " f
+  k=0
+  while [ "$k" -lt "$count" ]; do pending="$pending $k"; k=$((k + 1)); done
+  while :; do
+    still=""
+    for k in $pending; do
+      # settled | true (unsettled, reads false) | false (unsettled, reads null)
+      case "$(fjq -r 'include "forge-gitea";
+                      if gt_mergeable_unsettled then .mergeable == false else "settled" end' \
+                "$tmp/pr-$k.json")" in
+        settled) continue ;;
+        true) : ;;
+        *) case "$mixed" in *" $k "*) : ;; *) mixed="$mixed$k " ;; esac ;;
+      esac
+      still="$still $k"
+    done
+    pending="$still"
+    [ -n "$pending" ] && [ "$i" -lt "$POLLS" ] || break
     i=$((i + 1))
     sleep $((i * 2))
-    get_pr "$n" "$f"
+    for k in $pending; do
+      f="$tmp/pr-$k.json"
+      get_pr "$(jq -r .number "$f")" "$f"
+    done
+  done
+  for k in $pending; do
+    case "$mixed" in *" $k "*) : ;; *) continue ;; esac
+    f="$tmp/pr-$k.json"
+    jq '.mergeable = null' "$f" > "$f.unconfirmed"
+    mv "$f.unconfirmed" "$f"
   done
 }
 
@@ -462,9 +488,9 @@ op_pr_create() {
 
 op_pr_view() {
   need_n "${1:-}" "pr-view <n>"
-  get_pr "$1" "$tmp/pr.json"
-  repoll "$tmp/pr.json"
-  hydrate "$tmp/pr.json"
+  get_pr "$1" "$tmp/pr-0.json"
+  settle 1
+  hydrate "$tmp/pr-0.json"
 }
 
 op_pr_list() {
@@ -491,12 +517,15 @@ op_pr_list() {
     paged "$RP/pulls?state=open&sort=oldest" "$tmp/list.json"
     cp "$tmp/list.json" "$tmp/sel.json"
   fi
-  : > "$tmp/prs.jsonl"
   count=$(jq 'length' "$tmp/sel.json"); i=0
   while [ "$i" -lt "$count" ]; do
-    jq --argjson i "$i" '.[$i]' "$tmp/sel.json" > "$tmp/item.json"
-    repoll "$tmp/item.json"
-    hydrate "$tmp/item.json" >> "$tmp/prs.jsonl"
+    jq --argjson i "$i" '.[$i]' "$tmp/sel.json" > "$tmp/pr-$i.json"
+    i=$((i + 1))
+  done
+  settle "$count"
+  : > "$tmp/prs.jsonl"; i=0
+  while [ "$i" -lt "$count" ]; do
+    hydrate "$tmp/pr-$i.json" >> "$tmp/prs.jsonl"
     i=$((i + 1))
   done
   # A PR may change state between the list and its hydration: keep the asked-for state.
@@ -506,10 +535,10 @@ op_pr_list() {
 op_pr_find() {
   [ "${1:-}" = --head ] && [ -n "${2:-}" ] || usage "pr-find --head H"
   paged "$RP/pulls?state=open&sort=oldest" "$tmp/find.json"
-  jq --arg h "$2" 'first(.[] | select(.head.ref == $h)) // empty' "$tmp/find.json" > "$tmp/found.json"
-  [ -s "$tmp/found.json" ] || return 0
-  repoll "$tmp/found.json"
-  hydrate "$tmp/found.json"
+  jq --arg h "$2" 'first(.[] | select(.head.ref == $h)) // empty' "$tmp/find.json" > "$tmp/pr-0.json"
+  [ -s "$tmp/pr-0.json" ] || return 0
+  settle 1
+  hydrate "$tmp/pr-0.json"
 }
 
 op_pr_review() {
