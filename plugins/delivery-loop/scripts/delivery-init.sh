@@ -464,10 +464,17 @@ forge_label() {
   local res created
   res="$(bash "$SCRIPT_DIR/forge.sh" label-ensure "$1" "$2" "$3")" \
     || { echo "ERROR: ensuring forge label '$1' failed (see above) — the loop's PRs need it; fix the cause (token scopes: runbook §10.3) and re-run (idempotent)." >&2; exit 1; }
-  created="$(jq -r '.created' <<<"$res" 2>/dev/null || true)"
+  # `created` is read only from the documented answer: one JSON value, exactly
+  # `{name: <this label>, created: <boolean>}`. Trailing output, another
+  # label's answer or an extra key leaves it "unknown" (empty when not JSON).
+  created="$(jq -r -s --arg n "$1" '
+    if   . == [{name: $n, created: true}]  then "true"
+    elif . == [{name: $n, created: false}] then "false"
+    else "unknown" end' <<<"$res" 2>/dev/null || true)"
   if [ "${FORGE_DRY_RUN:-}" = 1 ]; then
-    # A dry run has two documented answers: created:false, or the write the
-    # adapter printed instead of sending. Anything else cannot be trusted.
+    # A dry run has two documented answers: this label's created:false, or
+    # the write the adapter printed instead of sending. Anything else cannot
+    # be trusted.
     if [ "$created" = false ]; then
       echo "  label: $1 (exists)"
     elif [ "$created" = true ]; then
@@ -475,14 +482,14 @@ forge_label() {
     elif forge_dry_write_ok "$res" "$1" "$2" "$3"; then
       echo "  label: $1 (not sent: FORGE_DRY_RUN)"
     else
-      die "ensuring forge label '$1' under FORGE_DRY_RUN: \`forge.sh label-ensure\` printed neither created:false nor the $FORGE adapter's dry-run write for this label, so nothing is known about it: $res"
+      die "ensuring forge label '$1' under FORGE_DRY_RUN: \`forge.sh label-ensure\` printed neither exactly this label's created:false answer nor the $FORGE adapter's dry-run write for it, so nothing is known about it: $res"
     fi
     return 0
   fi
   case "$created" in
     true)  echo "  label: $1 (created)" ;;
     false) echo "  label: $1 (exists)" ;;
-    *)     die "ensuring forge label '$1': \`forge.sh label-ensure\` printed neither created:true nor created:false, so the label's state is unknown: $res" ;;
+    *)     die "ensuring forge label '$1': \`forge.sh label-ensure\` did not print exactly this label's {name, created} answer, so the label's state is unknown: $res" ;;
   esac
 }
 echo "==> forge labels ($FORGE): the PR labels the loop relies on"

@@ -259,7 +259,9 @@ expect "github+github under FORGE_DRY_RUN: every taxonomy call is printed, not r
 # --- label-ensure output that is not a documented answer ------------------------
 # No shim can make a real adapter print one, so run a copy of the scripts whose
 # gitea adapter answers `label-ensure` as STUB_MODE says: a line that is not
-# JSON (the default), created:true, or a dry-run write for another label.
+# JSON (the default), created:true, a dry-run write for another label, or a
+# created answer that is not exactly this label's (trailing output, another
+# label's name).
 mkdir -p "$tmp/stub/backends"
 cp "$here"/../*.sh "$tmp/stub/"; cp -R "$here/../lib" "$tmp/stub/lib"
 cat > "$tmp/stub/backends/forge-gitea.sh" <<'EOF'
@@ -271,6 +273,9 @@ case "$1" in
       garbage) echo "<html>502 Bad Gateway</html>" ;;
       created) printf '{"name":"%s","created":true}\n' "$2" ;;
       other)   printf 'POST /api/v1/repos/example/repo/labels\n{"name":"other","color":"#%s","description":"%s"}\n' "$3" "$4" ;;
+      exists)  printf '{"name":"%s","created":false}\n' "$2" ;;
+      trailing) printf '{"name":"%s","created":%s}\n<html>502 Bad Gateway</html>\n' "$2" "${STUB_CREATED:-false}" ;;
+      wrongname) printf '{"name":"zzz","created":%s}\n' "${STUB_CREATED:-false}" ;;
       write)   printf 'POST /api/v1/repos/example/repo/labels\n{"name":"%s","color":"#%s","description":"%s"}\n' "$2" "$3" "$4" ;;
     esac ;;
   *) exit 4 ;;
@@ -297,6 +302,26 @@ newrepo write-dry git@gitea.example.com:example/repo.git
 run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=write --
 expect "the documented dry-run write under FORGE_DRY_RUN: exits 0, both labels reported not sent" \
   '[ "$rc" = 0 ] && grep -qxF "  label: agent-authored (not sent: FORGE_DRY_RUN)" "$tmp/out" && grep -qxF "  label: needs-human (not sent: FORGE_DRY_RUN)" "$tmp/out"'
+newrepo exists-dry git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=exists --
+expect "exactly this label's created:false under FORGE_DRY_RUN: exits 0, both labels reported as existing" \
+  '[ "$rc" = 0 ] && grep -qxF "  label: agent-authored (exists)" "$tmp/out" && grep -qxF "  label: needs-human (exists)" "$tmp/out"'
+newrepo trailing-dry git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=trailing --
+expect "created:false followed by other output under FORGE_DRY_RUN: exits 1 naming the label, never reported as existing" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"' under FORGE_DRY_RUN" "$tmp/out" && grep -qF "502 Bad Gateway" "$tmp/out" && ! grep -qF "(exists)" "$tmp/out" && ! grep -qF "(not sent" "$tmp/out"'
+newrepo wrongname-dry git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok FORGE_DRY_RUN=1 STUB_MODE=wrongname --
+expect "another label's created:false under FORGE_DRY_RUN: exits 1 naming the label, never reported as existing" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"' under FORGE_DRY_RUN" "$tmp/out" && grep -qF "zzz" "$tmp/out" && ! grep -qF "(exists)" "$tmp/out" && ! grep -qF "(not sent" "$tmp/out"'
+newrepo trailing-real git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok STUB_MODE=trailing STUB_CREATED=true --
+expect "created:true followed by other output on a real run: exits 1 naming the label, never reported as created" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"'" "$tmp/out" && grep -qF "502 Bad Gateway" "$tmp/out" && ! grep -qF "(created)" "$tmp/out" && ! grep -qF "(exists)" "$tmp/out"'
+newrepo wrongname-real git@gitea.example.com:example/repo.git
+run GRAPH_BACKEND=local FORGE=gitea GITEA_TOKEN=s3cr3t-tok STUB_MODE=wrongname --
+expect "another label's created:false on a real run: exits 1 naming the label, never reported as existing" \
+  '[ "$rc" = 1 ] && grep -qF "ensuring forge label '"'"'agent-authored'"'"'" "$tmp/out" && grep -qF "zzz" "$tmp/out" && ! grep -qF "(exists)" "$tmp/out"'
 init="$real_init"
 
 # --- detection: a gitea host defaults to the local backend ----------------------
