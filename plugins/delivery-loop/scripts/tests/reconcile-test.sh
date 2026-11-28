@@ -9,7 +9,9 @@
 # stale-claim reclaim from in-review/changes-requested/approved/ready), and
 # GC72/GC73 (issue #52: applied_prs respects a reopen; stale agent claims are
 # released from every open status that can hold one), and issue #72 (rule 5
-# acts on open nodes only; rule-3 records carry an explicit `pr`).
+# acts on open nodes only; rule-3 records carry an explicit `pr`), and GC77
+# (issue #102, rule 9: an approved task whose PR head moved goes back to
+# in-review).
 #
 # Offline. GC2/GC4/GC6/GC7 reuse the ready fixtures (fixtures/ready/); the other
 # cases are sparse fixtures in fixtures/reconcile/, filled out by expand.jq.
@@ -212,6 +214,33 @@ eq "GC69 open agent PR on a ready/blocked node -> in-review (non-agent PR: none)
   "$(moves)"
 eq "GC69 the drift record names the PR" '"open PR #69"' "$(jq -c '.[0].reason' "$tmp/out")"
 
+# --- rule 9: approved, the PR head moved -> in-review -------------------------------------
+# GC77 (issue #102): an approval covers one head. An approved task with an open
+# agent PR that has no verdict at its head goes back to in-review. A PR reviewed
+# at its head, a non-agent PR, a closed PR and a node that is not approved get
+# no record; needs_human does not freeze the repair (a human's push is
+# re-reviewed too).
+run_sparse gc77
+eq "GC77 approved + open agent PR not reviewed at its head -> in-review (controls: none)" \
+  '["transition gc77-moved approved->in-review","transition gc77-two approved->in-review","transition gc77-flagged approved->in-review"]' \
+  "$(moves)"
+eq "GC77 the record names the PR and its new head" \
+  '"PR #771 head moved to d4c5c18 since its approval"' "$(jq -c '.[0].reason' "$tmp/out")"
+eq "GC77 several unreviewed PRs for one task: the lowest number names the record" \
+  '"PR #777 head moved to 7777777 since its approval"' "$(jq -c '.[1].reason' "$tmp/out")"
+eq "GC77 records carry exactly {op, id, from, to, reason}; no warnings" '[["from","id","op","reason","to"]]|' \
+  "$(jq -c '[.[] | keys] | unique' "$tmp/out")|$(cat "$tmp/err")"
+# The fix line graph.sh reconcile --fix prints for the record (graph.sh's format).
+eq "GC77 the fix line reads approved -> in-review: PR #N head moved to <sha7> since its approval" \
+  'transition gc77-moved approved -> in-review: PR #771 head moved to d4c5c18 since its approval' \
+  "$(jq -r '.[0] | "\(.op) \(.id) \(.from) -> \(.to): \(.reason)"' "$tmp/out")"
+run_sparse gc77 '.prs |= map(.reviewed_at_head = true)'
+eq "GC77 control: every PR reviewed at its head -> no record" '[]' "$(moves)"
+# A merged PR outranks the bounce (rule 3 runs first): the task is done.
+run_sparse gc77 '.prs |= map(if .number == 771 then .state = "merged" else . end)'
+eq "GC77 the PR merged meanwhile -> done, not in-review" '["transition gc77-moved approved->done"]' \
+  "$(jq -c '[.[] | select(.id == "gc77-moved") | "\(.op) \(.id) \(.from)->\(.to)"]' "$tmp/out")"
+
 # --- rule 6: stale human claims ----------------------------------------------------------
 run_sparse gc44
 eq "GC44 human claim idle 73h: one ping when pinged_at is null, none when set; never released" \
@@ -340,7 +369,11 @@ task blocked in-review reconcile 1
 promote ready in-review reconcile 1
 task ready in-review agent 0
 task ready in-review human 0
-task approved in-review reconcile 0
+task approved in-review reconcile 1
+task approved in-review agent 0
+task approved in-review human 0
+task approved in-review promote 0
+promote approved in-review promote 0
 promote blocked in-review reconcile 1
 epic ready in-review reconcile 0
 external blocked in-review reconcile 0
@@ -375,6 +408,10 @@ eq "the stale-reclaim rows: claimed (plus claimant release) and every later open
   '[["claimed"],["approved","changes-requested","in-review","ready"]]' \
   "$(jq -c -n -L "$lib" 'include "transitions";
       [transitions[] | select(.to == "ready" and any(.actors[]; . == "reconcile") and (.from != ["blocked"])) | .from | sort]')"
+eq "the review-at-head row: approved -> in-review, reconcile only (GC77)" \
+  '[{"from":["approved"],"to":"in-review","actors":["reconcile"]}]' \
+  "$(jq -c -n -L "$lib" 'include "transitions";
+      [transitions[] | select(.to == "in-review" and any(.from[]; . == "approved")) | {from, to, actors}]')"
 eq "the merged-PR row covers every open status" \
   '["approved","blocked","changes-requested","claimed","in-review","ready"]' \
   "$(jq -c -n -L "$lib" 'include "transitions";

@@ -10,7 +10,7 @@
            {"id": "t-r1", "status": "in-review"},
            {"id": "t-r2", "status": "in-review"},
            {"id": "t-ready"}],
- "prs": [{"number": 50, "task_id": "t-merge"},
+ "prs": [{"number": 50, "task_id": "t-merge", "reviewed_at_head": true},
          {"number": 51, "task_id": "t-human-pr", "labels": ["agent-authored", "needs-human"]},
          {"number": 52, "task_id": "t-flagged"},
          {"number": 53, "task_id": "t-reviewed", "reviewed_at_head": true},

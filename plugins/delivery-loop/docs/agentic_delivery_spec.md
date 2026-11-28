@@ -202,6 +202,10 @@ blocked ──deps done──▶ ready ──claim──▶ claimed
            └──────────▶ in-review   (≤3 patch iterations, then needs-human)
 ```
 
+An approval covers one head: `approved` returns to `in-review` when the PR's
+head moves afterwards (reconcile rule 9, §5.1), so every head is reviewed before
+it merges.
+
 The complete transition table (`lib/transitions.jq`; `graph.sh transition`
 validates every move against it and exits 2 on an illegal one without writing,
 and reconcile's own fix records are validated against it before being applied):
@@ -218,6 +222,7 @@ and reconcile's own fix records are validated against it before being applied):
 | in-review | changes-requested | agent (reviewer) | verdict REQUEST_CHANGES |
 | changes-requested | in-review | agent (patcher) | fixes pushed |
 | in-review | approved | agent (reviewer) | verdict APPROVE |
+| approved | in-review | reconcile | the open agent PR's head moved since its approval (no verdict at the current head): it is re-reviewed before any merge. No other actor may make this move |
 | any open status | done | reconcile | an agent PR linked to the node merged into the node's `target_branch` |
 | ready | done | reconcile | `epic` only: an open epic with ≥ 1 child, every child `done` or `cancelled` |
 | claimed | done | promote | promote node whose target and promote-to branches have identical trees (§17) |
@@ -241,7 +246,7 @@ node was created (`forge.sh pr-list`), computes fix records with
 `lib/reconcile.jq`, and applies each through the backend as a compare-and-set
 against the node as the plan saw it. Records cascade, so applying stops at the
 first record not applied (exit 4: the board changed; re-run). The rules, numbered as
-in `lib/reconcile.jq` and evaluated in the order 3, 7, 4, 1, 2, 5, 6, 8 (a node gets at
+in `lib/reconcile.jq` and evaluated in the order 3, 7, 4, 9, 1, 2, 5, 6, 8 (a node gets at
 most one record per pass: the first rule that fires wins):
 
 1. `blocked → ready` when every dep is `done` (never while `needs_human`).
@@ -252,6 +257,7 @@ most one record per pass: the first rule that fires wins):
 6. **Stale human claims** (§5.2): a human claim untouched for > 72h gets one ping; it is never released.
 7. **Fully delivered epics.** An open epic is a tracker: once it has ≥ 1 child and every child is `done` or `cancelled`, it is set `done` (closed on github). The `≥ 1` guard keeps a freshly created epic whose tasks are not filed yet from closing itself vacuously.
 8. **Warnings, never mutations**, on stderr: a dep that is cancelled or unknown, and one `cycle: <id> → … → <id>` per dependency cycle.
+9. **Approved at an older head → in-review.** An `approved` task whose open agent PR has no verdict at its current head (`reviewed_at_head` false: the head moved after the approval, by a push or by the loop's own rebase) goes back to `in-review`, with `fix: transition <id> approved -> in-review: PR #<n> head moved to <sha7> since its approval`. The tick then re-reviews the new head; nothing merges unreviewed.
 
 ### 5.2 Claims: human vs agent, and staleness
 
@@ -267,9 +273,9 @@ One orchestrator tick (`delivery-tick`):
 
 1. **Reconcile.** `graph.sh reconcile --fix` (§5.1). Exit 4 (board changed) or 75 (local backend busy) is re-run, up to 3 passes; any other failure stops the tick — never plan over a board that could not be reconciled.
 2. **Plan.** `tick-plan.sh [--parallel N] [--auto-merge]` reads every node and the open PRs and prints `{mode, actions, board, waiting}` (`lib/tick-plan.jq`). It changes nothing. Its rules, in priority order, only ever act on open agent PRs linked to a node, and never on a `needs-human` node or PR (those become `waiting` lines):
-   1. **merge** (only with `--auto-merge`) — an `approved` task whose PR is mergeable-clean, with checks `success` or `none`, based on the node's `target_branch`; at most one merge per task (the lowest PR number). Promotion PRs never merge.
+   1. **merge** (only with `--auto-merge`) — an `approved` task whose PR is reviewed at its current head and mergeable-clean, with checks `success` or `none`, based on the node's `target_branch`; at most one merge per task (the lowest PR number). Promotion PRs never merge.
    2. **patch** — a `changes-requested` task.
-   3. **rebase** — an `approved` task whose PR conflicts, under the patch budget (§8.2).
+   3. **rebase** — an `approved` task whose PR (reviewed at its head) conflicts, under the patch budget (§8.2). An approved PR whose head moved past its approval gets no action, only a `waiting` line, until reconcile returns it to `in-review` (§5.1 rule 9).
    4. **review** — an `in-review` task with no verdict at the PR's current head.
    5. **promote** — a `ready` promote node (§17).
    6. **start** — the ready set (§7.1) in order, never a node that already has an open agent PR, filling `cap − in-flight` (serial: only the top ready task, cap 2), with at most one in-flight task per `(target_branch, module)` (§8).
@@ -355,8 +361,8 @@ Many codebases have a few **central registration files** that every new module t
 
 * Module ownership and the union driver (§8.1) prevent most collisions, but a PR that was already **approved** can still conflict when a sibling merges ahead of it — a non-append edit the union driver cannot auto-resolve. Such a PR falls through the loop: it is out of the review cycle (already approved) yet not mergeable, so absent intervention it stalls until a human hand-dispatches a fix.
 * The orchestrator tick closes the gap. `tick-plan.sh` emits a **`rebase`** action (rule 3, after patches, before reviews and starts) for an open agent PR whose node is `approved` and whose forge mergeability is `conflicting`, while the PR is under the patch budget and not `needs-human`. The name is historical: the action is carried out by **merging**.
-* The rebase-only patch (`patch-task` in rebase-only mode) is mechanical: **merge** `origin/<target_branch>` into the task branch in its worktree, resolve conflicts there, re-run the gate, and push with a plain `git push`. It never rebases a pushed branch and **never force-pushes**. It **preserves `approved`** (the approval still stands after a mechanical catch-up; the node is not sent back to review), comments `Patch iteration: <n+1>/3 (rebase)` so repeated re-conflicts stay bounded, and the PR re-emerges mergeable.
-* **Optional auto-merge (`--auto-merge`, opt-in, off by default).** By default the now-mergeable approved PR is handed to a human — the merge authority the rest of this spec assumes. Run the loop with `--auto-merge` and the plan carries `merge` actions (rule 1, highest priority) for every agent PR whose node is an `approved` task, that is mergeable-clean with checks `success` or `none` (no checks counts as green), not `needs-human`, and based on the node's `target_branch`. The tick runs each through `tick-merge.sh <pr> <sha>`, one at a time, which:
+* The rebase-only patch (`patch-task` in rebase-only mode) is mechanical: **merge** `origin/<target_branch>` into the task branch in its worktree, resolve conflicts there, re-run the gate, and push with a plain `git push`. It never rebases a pushed branch and **never force-pushes**. It does not transition the node itself and comments `Patch iteration: <n+1>/3 (rebase)` so repeated re-conflicts stay bounded. The push moves the head past the approval, so the next tick's reconcile returns the node to `in-review` (§5.1 rule 9) and a fresh reviewer judges the caught-up head: the merge resolution is code no reviewer has seen. Once that head is approved the PR re-emerges mergeable.
+* **Optional auto-merge (`--auto-merge`, opt-in, off by default).** By default the now-mergeable approved PR is handed to a human — the merge authority the rest of this spec assumes. Run the loop with `--auto-merge` and the plan carries `merge` actions (rule 1, highest priority) for every agent PR whose node is an `approved` task, that is reviewed at its current head, mergeable-clean with checks `success` or `none` (no checks counts as green), not `needs-human`, and based on the node's `target_branch`. The tick runs each through `tick-merge.sh <pr> <sha>`, one at a time, which:
   1. re-reads the PR (re-polling an `unknown` mergeability), refuses a moved head or a promotion PR, and re-applies the merge rule over fresh state;
   2. runs `GATE_CMD` on the **merged result** — a fresh detached worktree of `origin/<base>` with the head merged in — because two PRs green on their own can be red together, and a forge reports a behind PR as clean when nothing requires it to be up to date. The gate runs with the config keys unset, so the merged tree's own `.claude/delivery.conf` governs it;
   3. refuses if `origin/<base>` moved while the gate ran;

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests for promote.sh and tick-merge.sh (docs/delivery_graph_spec.md §9, §10):
-# golden cases GC49, GC50, GC51, GC52, GC39 (the tick-merge refusal) and GC59
+# golden cases GC49, GC50, GC51, GC52, GC39 (the tick-merge refusal), GC77 (the
+# tick-merge refusal of a head no verdict covers, issue #102) and GC59
 # (the promote.sh part) — §17 row E4 — plus the merged-result gate of
 # tick-merge (a PR green alone but red merged with its base is not merged: it
 # gets a rebase action; at the patch budget it escalates to needs-human), a
@@ -265,12 +266,14 @@ eq "conf case (promote): the tree's conf wins; caller env/conf values do not lea
 
 # --- tick-merge ---------------------------------------------------------------------
 M="$tmp/sm"
-for t in x y z w h v c b m p; do
+for t in x y z w h v c b m p r; do
   g "$M" create "{\"id\":\"$t\",\"kind\":\"task\",\"title\":\"task $t\",\"size\":\"S\",\"status\":\"approved\"}"
 done
 g "$M" create '{"id":"pp","kind":"promote","title":"Promote release/x","target_branch":"release/x","promote_to":"main","status":"in-review"}'
 
-# mkpr <n> <head> <sha> <base> <conclusion> <task> [extra-label]
+# mkpr <n> <head> <sha> <base> <conclusion> <task> [extra-label]: an open agent
+# PR carrying an APPROVE verdict at its head (`Reviewed-Head: <sha>`), as an
+# approved task's PR does.
 mkpr() {
   jq --arg n "$1" --arg head "$2" --arg sha "$3" --arg base "$4" --arg c "$5" --arg task "$6" --arg extra "${7:-}" \
     '.[$n] = {number: ($n | tonumber), url: "https://github.com/example/repo/pull/\($n)", state: "OPEN",
@@ -279,7 +282,8 @@ mkpr() {
       statusCheckRollup: [{__typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: $c}],
       body: "Delivery-Task: \($task)",
       labels: ([{name: "agent-authored"}] + (if $extra == "" then [] else [{name: $extra}] end)),
-      comments: [], reviews: [], author: {login: "agent"}, closingIssuesReferences: [], mergedAt: null}' \
+      comments: [{body: "## Adversarial review — verdict: APPROVE\n\nReviewed-Head: \($sha)", author: {login: "agent"}}],
+      reviews: [], author: {login: "agent"}, closingIssuesReferences: [], mergedAt: null}' \
     "$tmp/shim/prs.json" > "$tmp/shim/prs.new"
   mv "$tmp/shim/prs.new" "$tmp/shim/prs.json"
 }
@@ -295,7 +299,13 @@ mkpr 208 task/c--cnf "$c_sha" main SUCCESS c
 mkpr 209 task/x--ok "$x_sha" main SUCCESS b
 mkpr 210 task/x--ok "$x_sha" main SUCCESS m
 mkpr 211 task/y--red "$y_sha" main SUCCESS p
-jq '.["211"].comments = [{body: "Patch iteration: 3/3", author: {login: "agent"}}]' "$tmp/shim/prs.json" > "$tmp/shim/prs.new"
+mkpr 212 task/x--ok "$x_sha" main SUCCESS r
+# 211 is at the patch budget; 212's only verdict is at an older head (y's), so
+# nothing reviewed the head it now has.
+jq --arg old "$y_sha" '
+  .["211"].comments += [{body: "Patch iteration: 3/3", author: {login: "agent"}}]
+  | .["212"].comments = [{body: "## Adversarial review — verdict: APPROVE\n\nReviewed-Head: \($old)", author: {login: "agent"}}]' \
+  "$tmp/shim/prs.json" > "$tmp/shim/prs.new"
 mv "$tmp/shim/prs.new" "$tmp/shim/prs.json"
 
 runs0=$(gate_runs)
@@ -313,6 +323,14 @@ expect "GC39: no merge request" '! log_has "pr merge"'
 
 r tick-merge.sh "$M" -- 206 "$x_sha"
 expect "a needs-human PR -> exit 1, no merge request" '[ "$rc" = 1 ] && grep -q "needs-human" <<<"$err" && ! log_has "pr merge"'
+
+# GC77: an approved node whose PR head has no verdict (reviewed_at_head false).
+r tick-merge.sh "$M" -- 212 "$x_sha"
+expect "GC77: approved node, head not reviewed -> exit 1" \
+  '[ "$rc" = 1 ] && grep -q "PR #212 (r) is approved at an older head" <<<"$err"'
+expect "GC77: head not reviewed -> no merge request" '! log_has "pr merge"'
+eq "GC77: head not reviewed -> nothing on stdout, the node stays approved for reconcile" \
+  '|"approved"' "$out|$(field "$M" r .status)"
 eq "no gate ran for an ineligible PR" "$runs0" "$(gate_runs)"
 
 r tick-merge.sh "$M" -- 202 "$y_sha"

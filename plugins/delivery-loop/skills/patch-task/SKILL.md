@@ -41,9 +41,9 @@ Every graph read or write goes through `graph.sh`, every PR read or post through
 The orchestrator (`delivery-tick`, spec §8.2) dispatches this skill as a "rebase" on an **already-approved** PR that conflicts with (or is red against) its target branch after a sibling merged ahead of it. Same protocol, with three differences:
 
 - **No review findings to fix** — steps 3/5 have nothing to address; the work *is* step 6: merge `origin/<target_branch>` into the branch, resolve conflicts in the worktree, re-verify with `GATE_CMD` (step 7), and push plainly (step 8). Still never rebase and never force-push.
-- **Preserve the approval.** Do NOT transition the node: it stays `approved` — never send it back to `in-review`. Comment `Patch iteration: <n+1>/3 (rebase)` so repeated re-conflicts stay bounded.
+- **Do NOT transition the node.** Leave it `approved`: your push moves the head past the approval, so the next tick's reconcile returns it to `in-review` and the new head is re-reviewed before any merge (only reconcile may make that move). Comment `Patch iteration: <n+1>/3 (rebase)` so repeated re-conflicts stay bounded.
 - **Same iteration budget** (step 2): at `3/3`, or if the node is already `needs_human`, escalate and STOP instead of updating again — no rebase loop.
 
 ## Exit condition
 
-Push + iteration comment + node back `in-review` (or, in rebase-only mode, approval preserved), or a `needs-human` escalation with summary.
+Push + iteration comment + node back `in-review` (in rebase-only mode: node left as it is, for reconcile to return to review), or a `needs-human` escalation with summary.

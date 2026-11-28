@@ -49,6 +49,8 @@ def transitions: [
    when: "patcher pushed fixes"},
   {from: ["in-review"], to: "approved", actors: ["agent"],
    when: "reviewer verdict APPROVE"},
+  {from: ["approved"], to: "in-review", actors: ["reconcile"],
+   when: "the open agent PR's head moved since its approval (reviewed_at_head false): it is re-reviewed before any merge (reconcile rule 9, GC77)"},
   {from: open_statuses, to: "done", actors: ["reconcile"],
    when: "PR with this task_id merged into the node's target_branch (GC42); claimed covers a merge that lands before the label edit, blocked/ready cover label drift and human-driven PRs (reconcile rule 3: any open status)"},
   {from: ["ready"], to: "done", actors: ["reconcile"], kinds: ["epic"],

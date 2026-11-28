@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Tests for lib/tick-plan.jq and tick-plan.sh (docs/delivery_graph_spec.md §5
 # `tick-plan.jq`, §9): golden cases GC12–GC20, GC39 (plan assertion), GC62, GC70,
+# GC77 (issue #102: review at head; its rebase -> reconcile -> review chain runs
+# lib/reconcile.jq between two plans),
 # the inert `external` node kind (§4.1/§5) and the `tick-plan.sh` part of GC59 (§12; §17 row A6, hardened by issue #47).
 #
 # Offline. The plan cases run tick_plan over the sparse fixtures in
@@ -81,6 +83,52 @@ waits_for "GC16 the PR is listed in waiting" gc16 \
   "PR #21 (t-capped) is approved but conflicting at patch iteration 3/3"
 eq "GC16 control: at patch_iteration 2 it is rebased" '["rebase 21"]' \
   "$(acts gc16 '.prs[0].patch_iteration = 2')"
+
+# GC77 (issue #102): an approved task's PR merges, or is rebased, only while it
+# is reviewed at its head. t-moved's head moved past its approval: no merge.
+eq "GC77 --auto-merge: the PR reviewed at its head merges, the moved head does not" \
+  '["merge 83","rebase 82"]' "$(acts gc77)"
+waits_for "GC77 the moved head is listed in waiting" gc77 \
+  "PR #81 (t-moved) is approved at an older head: awaiting reconcile/re-review"
+waits_for "GC77 without --auto-merge it is not offered to a human as approved either" gc77 \
+  "PR #81 (t-moved) is approved at an older head: awaiting reconcile/re-review" '.flags = {}'
+eq "GC77 without --auto-merge: one 'awaiting a human merge' line, for the reviewed PR" \
+  '["PR #83 (t-ok) is approved: awaiting a human merge (mergeable=clean, checks=success)"]' \
+  "$(plan gc77 '[.waiting[] | select(test("awaiting a human merge"))]' '.flags = {}')"
+eq "GC77 approved + conflicting at an unreviewed head: no rebase, it waits for the re-review" \
+  '["merge 83","rebase 82"]|true' \
+  "$(acts gc77 '.prs[0].mergeable = "conflicting"')|$(plan gc77 \
+     'any(.waiting[]; . == "PR #81 (t-moved) is approved at an older head: awaiting reconcile/re-review")' \
+     '.prs[0].mergeable = "conflicting"')"
+# The rebase chain. Tick 1 rebases #82 (above). The rebase pushed a new head:
+# clean, but no verdict covers it.
+rebased='.prs[1] |= (.head_sha = "eeeeeee000000000000000000000000000000000"
+                     | .mergeable = "clean" | .reviewed_at_head = false)'
+eq "GC77 after the rebase pushed a new head: no merge of #82 even before reconcile ran" \
+  '["merge 83"]' "$(acts gc77 "$rebased")"
+# Tick 2: reconcile first (rule 9), then the plan over the repaired board.
+recs=$(jq -c -L "$lib" -L "$fx" "include \"expand\"; include \"reconcile\";
+  $rebased | full_input | reconcile_plan | .records" "$fx/gc77.json")
+eq "GC77 tick 2 reconcile: the rebased task (and the moved one) go back to in-review" \
+  '["t-moved approved->in-review: PR #81 head moved to d4c5c18 since its approval","t-rebase approved->in-review: PR #82 head moved to eeeeeee since its approval"]' \
+  "$(jq -c 'map("\(.id) \(.from)->\(.to): \(.reason)")' <<<"$recs")"
+# reconciled: the sparse input with the records applied to its nodes.
+reconciled="$rebased | (\$recs | map({key: .id, value: .to}) | from_entries) as \$to
+            | .nodes |= map(.status = (\$to[.id] // .status))"
+tick2() {
+  jq -c -L "$lib" -L "$fx" --argjson recs "$recs" "include \"expand\"; include \"tick-plan\";
+    $reconciled | ${2:-.} | full_input | tick_plan | $1" "$fx/gc77.json"
+}
+eq "GC77 tick 2 plan: the new head is reviewed before any merge of it" \
+  '["merge 83","review 81","review 82"]' \
+  "$(tick2 '[.actions[] | "\(.action) \(.pr // .id)"]' '.flags.parallel = 3')"
+eq "GC77 the review action is at the new head" '"in review, no verdict at head eeeeeee"' \
+  "$(tick2 '.actions[] | select(.pr == 82) | .reason' '.flags.parallel = 3')"
+# Tick 3: the reviewer approved the new head; only now does #82 merge, at that head.
+eq "GC77 tick 3: approved at the new head -> merged at the new head" \
+  '["eeeeeee000000000000000000000000000000000"]' \
+  "$(tick2 '[.actions[] | select(.action == "merge" and .pr == 82) | .sha]' \
+       '.nodes[1].status = "approved" | .prs[1].reviewed_at_head = true')"
 
 eq "GC18 same module, different target_branch -> both started" \
   '["start t-main","start t-rel"]' "$(acts gc18)"
@@ -262,7 +310,7 @@ done <<'EOF'
 EOF
 
 jq '.[0].status = "approved"' "$tmp/stub/graph.json" >"$tmp/g" && mv "$tmp/g" "$tmp/stub/graph.json"
-jq '.[0].mergeable = "clean" | .[0].checks = "success"' "$tmp/stub/forge.json" >"$tmp/f" \
+jq '.[0].mergeable = "clean" | .[0].checks = "success" | .[0].reviewed_at_head = true' "$tmp/stub/forge.json" >"$tmp/f" \
   && mv "$tmp/f" "$tmp/stub/forge.json"
 run_sh -- --parallel --auto-merge
 eq "tick-plan.sh --auto-merge enables merge actions" '"merge"' "$(jq -c '.actions[0].action' <<<"$out")"
